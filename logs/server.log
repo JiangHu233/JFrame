@@ -1,0 +1,3 @@
+2026-06-28 13:08:17.267 [main] WARN - 类 io.github.JiangHu.jframe.event.test.fixture.NoExtractorWrapper 无 @KeyExtractor 方法，无法提取身份，注册被拒绝。请声明至少一个 @KeyExtractor static 方法。
+2026-06-28 13:08:17.340 [main] INFO - [WrapperScanner] 已注册包装类: io.github.JiangHu.jframe.event.test.fixture.ScanTargetWrapper
+2026-06-28 13:08:17.340 [main] INFO - [WrapperScanner] 扫描完成，共注册 1 个包装类。

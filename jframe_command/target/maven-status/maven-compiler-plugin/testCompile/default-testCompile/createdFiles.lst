@@ -1,0 +1,4 @@
+io\github\JiangHu\jframe\command\test\CommandLogicTest.class
+io\github\JiangHu\jframe\command\test\FakeCommandSender.class
+io\github\JiangHu\jframe\command\example\GuildController.class
+io\github\JiangHu\jframe\command\example\ShopController.class
