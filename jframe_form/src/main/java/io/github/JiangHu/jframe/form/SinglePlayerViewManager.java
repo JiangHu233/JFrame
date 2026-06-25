@@ -12,10 +12,10 @@ import java.util.Stack;
  * 栈顶元素即为当前向玩家展示的界面。通过压栈 / 出栈操作，
  * 可以实现「进入子菜单」「返回上一级」等界面导航逻辑。
  * <p>
- * 通常由 {@link ViewService} 为每位玩家创建并管理一个实例。
+ * 通常由 {@link ViewAPI} 为每位玩家创建并管理一个实例。
  *
  * @see FormView
- * @see ViewService
+ * @see ViewAPI
  */
 public class SinglePlayerViewManager {
 

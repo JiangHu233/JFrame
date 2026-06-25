@@ -5,12 +5,13 @@ import cn.nukkit.command.Command;
 import cn.nukkit.command.CommandSender;
 import cn.nukkit.item.Item;
 import cn.nukkit.plugin.PluginBase;
+import io.github.JiangHu.jframe.command.CommandAPI;
 import io.github.JiangHu.jframe.core.module.PluginAware;
-import io.github.JiangHu.jframe.event.EventService;
+import io.github.JiangHu.jframe.event.EventAPI;
 import io.github.JiangHu.jframe.example.view.MainMenuView;
 import io.github.JiangHu.jframe.example.wrapper.ThunderSwordWrapper;
-import io.github.JiangHu.jframe.form.ViewService;
-import io.github.JiangHu.jframe.thread.ThreadService;
+import io.github.JiangHu.jframe.form.ViewAPI;
+import io.github.JiangHu.jframe.thread.ThreadAPI;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
 
 /**
@@ -18,9 +19,10 @@ import org.springframework.context.support.ClassPathXmlApplicationContext;
  * <p>
  * 本类演示如何「使用框架各模块」搭建一个完整的 Nukkit 插件：
  * <ol>
- *   <li>启动 Spring 容器，加载 event / form / thread 三个模块的服务 Bean</li>
- *   <li>绑定插件实例到所有 {@link PluginAware} Bean</li>
+ *   <li>启动 Spring 容器，加载 event / form / thread / command 四个模块的服务 Bean</li>
+ *   <li>绑定插件实例到所有 {@link PluginAware} Bean（含 EventEngine 与 CommandEngine）</li>
  *   <li>注册事件包装类</li>
+ *   <li>注册声明式命令控制器（{@code /kit} 及其子命令）</li>
  *   <li>通过 {@code /jframe} 命令打开表单菜单</li>
  * </ol>
  *
@@ -39,9 +41,10 @@ public class ExamplePlugin extends PluginBase {
     /** Spring 应用上下文：持有 event / form / thread 三个模块的 Bean。 */
     private ClassPathXmlApplicationContext applicationContext;
 
-    private EventService eventService;
-    private ViewService viewService;
-    private ThreadService threadService;
+    private EventAPI eventAPI;
+    private ViewAPI viewAPI;
+    private ThreadAPI threadAPI;
+    private CommandAPI commandAPI;
 
     @Override
     public void onEnable() {
@@ -49,18 +52,20 @@ public class ExamplePlugin extends PluginBase {
         ClassLoader serverClassLoader = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
         try {
-            // 1. 启动 Spring 容器：加载 event / form / thread 三个模块的 XML
-            //    event 模块内部为单向 DAG（EventEngine → HandlerRegistry → EventService），无循环依赖
+            // 1. 启动 Spring 容器：加载 event / form / thread / command 四个模块的 XML
+            //    各模块内部均为单向 DAG，无循环依赖
             applicationContext = new ClassPathXmlApplicationContext(
                     "event-spring.xml",
                     "form-spring.xml",
-                    "thread-spring.xml"
+                    "thread-spring.xml",
+                    "command-spring.xml"
             );
 
             // 2. 获取各模块的服务 Bean
-            eventService = applicationContext.getBean("eventService", EventService.class);
-            viewService = applicationContext.getBean("viewService", ViewService.class);
-            threadService = applicationContext.getBean("threadService", ThreadService.class);
+            eventAPI = applicationContext.getBean("eventAPI", EventAPI.class);
+            viewAPI = applicationContext.getBean("viewService", ViewAPI.class);
+            threadAPI = applicationContext.getBean("threadAPI", ThreadAPI.class);
+            commandAPI = applicationContext.getBean("commandAPI", CommandAPI.class);
 
             // 3. 绑定插件实例：扫描容器中所有 PluginAware Bean（即 EventEngine）并注入插件实例。
             //    EventEngine 需要插件实例才能向 Nukkit 注册事件监听。
@@ -70,10 +75,15 @@ public class ExamplePlugin extends PluginBase {
 
             // 4. 包扫描注册：自动发现 wrapper 包下所有 @Wrapper 类并注册
             //    （类似 Spring 的 @ComponentScan，无需逐个手动 register）
-            eventService.scan("io.github.JiangHu.jframe.example.wrapper");
+            eventAPI.scan("io.github.JiangHu.jframe.example.wrapper");
 
-            // 5. 创建一个名为 "example" 的串行任务队列，供表单中的异步任务使用
-            threadService.createThreadTask("example");
+            // 5. 命令模块：扫描 command 包下所有 @CommandController 类并注册。
+            //    CommandEngine 已在第 3 步作为 PluginAware Bean 被绑定插件实例，
+            //    因此注册的根命令（如 /kit）会立即同步到 Nukkit，无需在 plugin.yml 声明。
+            commandAPI.scan(getClass().getClassLoader(), "io.github.JiangHu.jframe.example.command");
+
+            // 6. 创建一个名为 "example" 的串行任务队列，供表单中的异步任务使用
+            threadAPI.createThreadTask("example");
 
             getLogger().info("JFrame 示例插件已启用，在游戏内输入 /jframe 打开菜单");
         } finally {
@@ -89,8 +99,8 @@ public class ExamplePlugin extends PluginBase {
                 sender.sendMessage("§c该命令只能由玩家在游戏内执行");
                 return true;
             }
-            // 打开主菜单：ViewService 会自动为该玩家创建视图管理器
-            viewService.sendForm(new MainMenuView(threadService, player), player);
+            // 打开主菜单：ViewAPI 会自动为该玩家创建视图管理器
+            viewAPI.sendForm(new MainMenuView(threadAPI, player), player);
             return true;
         }
         if (name.equalsIgnoreCase("sword")) {
@@ -110,8 +120,8 @@ public class ExamplePlugin extends PluginBase {
     @Override
     public void onDisable() {
         // 先关闭线程池，再关闭 Spring 容器
-        if (threadService != null) {
-            threadService.stopAll();
+        if (threadAPI != null) {
+            threadAPI.stopAll();
         }
         if (applicationContext != null) {
             applicationContext.close();

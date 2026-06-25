@@ -1,4 +1,5 @@
 io\github\JiangHu\jframe\event\annotation\Wrapper.class
+io\github\JiangHu\jframe\event\EventAPI.class
 io\github\JiangHu\jframe\event\scan\WrapperScanner.class
 io\github\JiangHu\jframe\event\annotation\EventRoute.class
 io\github\JiangHu\jframe\event\EventEngine.class
@@ -9,7 +10,6 @@ io\github\JiangHu\jframe\event\annotation\KeyExtractor.class
 io\github\JiangHu\jframe\event\routing\HandlerRegistry$BoundHandler.class
 io\github\JiangHu\jframe\event\annotation\InstanceProvider.class
 io\github\JiangHu\jframe\event\EventConsumer.class
-io\github\JiangHu\jframe\event\EventService.class
 io\github\JiangHu\jframe\event\annotation\EventHandler.class
 io\github\JiangHu\jframe\event\routing\HandlerRegistry.class
 io\github\JiangHu\jframe\event\config\EventSpringConfig.class

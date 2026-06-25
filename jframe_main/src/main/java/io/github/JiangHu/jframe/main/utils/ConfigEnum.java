@@ -1,5 +1,6 @@
 package io.github.JiangHu.jframe.main.utils;
 
+import io.github.JiangHu.jframe.command.config.CommandSpringConfig;
 import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
 import io.github.JiangHu.jframe.event.config.EventSpringConfig;
 import io.github.JiangHu.jframe.form.config.FormSpringConfig;
@@ -19,6 +20,7 @@ public enum ConfigEnum {
     THREAD(ThreadSpringConfig.class),
     FORM(FormSpringConfig.class),
     EVENT(EventSpringConfig.class),
+    COMMAND(CommandSpringConfig.class),
     ;
 
     @Getter

@@ -6,11 +6,11 @@
 
     <!--
         事件模块 Bean 装配（单向 DAG，无循环依赖）：
-        创建顺序：eventEngine → handlerRegistry → eventService
+        创建顺序：eventEngine → handlerRegistry → eventAPI
 
         eventEngine   : 无依赖（最先创建）
         handlerRegistry : 构造器依赖 eventEngine
-        eventService  : 构造器依赖 handlerRegistry + eventEngine（最后创建）
+        eventAPI  : 构造器依赖 handlerRegistry + eventEngine（最后创建）
     -->
 
     <!-- 事件引擎（内部）：对接 Nukkit 底层事件系统，按类型订阅和分发 -->
@@ -22,7 +22,7 @@
     </bean>
 
     <!-- 事件服务（公开入口）：register/unregister/evict 委托给 handlerRegistry，subscribe 转发给 eventEngine -->
-    <bean class="io.github.JiangHu.jframe.event.EventService" id="eventService">
+    <bean class="io.github.JiangHu.jframe.event.EventAPI" id="eventAPI">
         <constructor-arg name="handlerRegistry" ref="handlerRegistry"/>
         <constructor-arg name="engine" ref="eventEngine"/>
     </bean>

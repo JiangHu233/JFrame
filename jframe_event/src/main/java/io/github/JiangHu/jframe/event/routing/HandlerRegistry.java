@@ -458,7 +458,7 @@ public class HandlerRegistry {
     // ========== 工具方法 ==========
 
     /**
-     * 将 Registration 添加到核心存储，并为每个事件类型订阅 EventService。
+     * 将 Registration 添加到核心存储，并为每个事件类型订阅 EventAPI。
      */
     private void addToRegistry(WrapperRegistration reg) {
         // 收集所有涉及的事件类型（handlers 和 extractors 的并集）
@@ -473,7 +473,7 @@ public class HandlerRegistry {
     }
 
     /**
-     * 确保已向 EventService 订阅指定事件类型。
+     * 确保已向 EventAPI 订阅指定事件类型。
      * 每个事件类型只订阅一次。
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -482,7 +482,7 @@ public class HandlerRegistry {
 
         EventConsumer consumer = event -> {
             dispatch(eventType, event);
-            return false; // EventService 层面非独占，独占逻辑由 HandlerRegistry 内部管理
+            return false; // EventAPI 层面非独占，独占逻辑由 HandlerRegistry 内部管理
         };
         engine.subscribe(eventType, (EventConsumer) consumer);
     }

@@ -79,7 +79,7 @@ SinglePlayerViewManager.send() 在 onClicked 回调后会自动重新发送栈�
 
 【收益】
 示例 StatsView 的「返回主菜单」按钮可从
-    replaceThis(new MainMenuView(threadService, player));
+    replaceThis(new MainMenuView(threadAPI, player));
 简化为
     goBack();
 无需重新构造主菜单视图，且能保留主菜单的原始状态。
@@ -159,11 +159,11 @@ ExamplePlugin.onEnable 已采用上述方式规避（见该方法的注释），
 
 【现象】
 示例插件在真实 Nukkit 服务器运行时报：
-    NoSuchBeanDefinitionException: No bean named 'eventService' available
+    NoSuchBeanDefinitionException: No bean named 'eventAPI' available
 尽管 Spring 容器 refresh 成功、event-spring.xml 也加载了。
 通过诊断程序打印容器内全部 Bean 名，发现：
-    beans = [..., springConfig, threadService]
-即四个模块的业务 Bean（eventService / viewService 等）全部丢失，只剩最后一个
+    beans = [..., springConfig, threadAPI]
+即四个模块的业务 Bean（eventAPI / viewService 等）全部丢失，只剩最后一个
 模块（thread）的 Bean。
 
 【根因】
@@ -212,15 +212,15 @@ ExamplePlugin 仍直接用 ClassPathXmlApplicationContext 加载各模块的 *-s
 【根因】
 event-spring.xml 中两个 Bean 互相引用，且注入方式形成「构造器 ↔ setter」循环：
 
-    <bean id="eventService" class="...EventService">
+    <bean id="eventAPI" class="...EventService">
         <property name="handlerRegistry" ref="handlerRegistry"/>   ← setter 注入
     </bean>
     <bean id="handlerRegistry" class="...HandlerRegistry">
-        <constructor-arg ref="eventService"/>                      ← 构造器注入
+        <constructor-arg ref="eventAPI"/>                      ← 构造器注入
     </bean>
 
 对应源码：
-  - HandlerRegistry 持有 final EventService eventService（必须构造器注入）；
+  - HandlerRegistry 持有 final EventService eventAPI（必须构造器注入）；
   - EventService 持有非 final HandlerRegistry handlerRegistry（setter 注入）。
 
 Spring 无法解析「构造器注入」参与的循环依赖（构造器注入不能被代理/延迟），
@@ -230,7 +230,7 @@ Spring 无法解析「构造器注入」参与的循环依赖（构造器注入�
 框架级缺陷：任何通过 Spring XML 加载 event 模块的代码都会触发。
 
 【当时给出的候选方案】
-  A) 将 HandlerRegistry 的 eventService 由 final + 构造器注入，改为 setter 注入
+  A) 将 HandlerRegistry 的 eventAPI 由 final + 构造器注入，改为 setter 注入
      （去掉 final，提供 setEventService），使双方都走 setter，Spring 即可解析；
   B) 在其中一方的注入点加 @Lazy；
   C) 重构两者关系，消除互相依赖（拆分出独立组件，形成单向 DAG）。
@@ -259,7 +259,7 @@ Spring 无法解析「构造器注入」参与的循环依赖（构造器注入�
     - 修改 jframe_event/.../resources/event-spring.xml（三 Bean 单向装配）
 
 【当前示例的处理】
-ExamplePlugin 现已通过 Spring 直接加载 event-spring.xml 获取 eventService Bean，
+ExamplePlugin 现已通过 Spring 直接加载 event-spring.xml 获取 eventAPI Bean，
 不再需要手动构造。三个模块（event/form/thread）统一由 ClassPathXmlApplicationContext 装配。
 
 

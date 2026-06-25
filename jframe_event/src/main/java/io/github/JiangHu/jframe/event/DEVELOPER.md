@@ -149,12 +149,12 @@ Spring 容器启动
           └── 构造注入 EventService
 ```
 
-> **注意：** 框架不再自动扫描 Spring Bean。所有处理器都必须通过 `eventService.register(Class)` 手动注册。
+> **注意：** 框架不再自动扫描 Spring Bean。所有处理器都必须通过 `eventAPI.register(Class)` 手动注册。
 
 ### 3.2 对象级注册阶段（手动调用 register(Class)）
 
 ```
-用户调用 eventService.register(PlayerWrapper.class)
+用户调用 eventAPI.register(PlayerWrapper.class)
     │
     ├── scanExtractors() → 扫描 @KeyExtractor static 方法
     │     └── 按事件类型分组
@@ -177,7 +177,7 @@ Spring 容器启动
 
 ```
 插件主类 onEnable()
-    └── eventService.bindPlugin(this)
+    └── eventAPI.bindPlugin(this)
         ├── 设置 this.plugin
         └── 遍历 pendingRegistrations
             └── doRegister(eventType)
@@ -587,7 +587,7 @@ unregister(Class) → 不清理工厂的缓存（需工厂自行清理）
 for (int i = 1; i < args.length; i++) {
     Class<?> paramType = matched.getParameterTypes()[i];
     if (paramType == EventService.class) {
-        args[i] = eventService;
+        args[i] = eventAPI;
     } else if (paramType == HandlerRegistry.class) {
         args[i] = this;
     } else if (paramType == SomeService.class) {

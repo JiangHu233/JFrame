@@ -1,7 +1,7 @@
 package io.github.JiangHu.jframe.event.scan;
 
 import cn.nukkit.Server;
-import io.github.JiangHu.jframe.event.EventService;
+import io.github.JiangHu.jframe.event.EventAPI;
 import io.github.JiangHu.jframe.event.annotation.Wrapper;
 
 import org.springframework.beans.factory.config.BeanDefinition;
@@ -20,7 +20,7 @@ import java.util.Set;
  * 基于 Spring 的 {@link ClassPathScanningCandidateComponentProvider} 实现，
  * 类似 Spring 的 {@code ClassPathBeanDefinitionScanner}：给定一个或多个<b>基础包</b>，
  * 递归扫描其下（含子包）的所有 {@code .class} 文件，找出标注 {@code @Wrapper} 的具体类，
- * 交由 {@link EventService#register} 注册。
+ * 交由 {@link EventAPI#register} 注册。
  *
  * <h3>实现原理</h3>
  * <p>
@@ -50,36 +50,36 @@ import java.util.Set;
  *
  * <h3>使用示例</h3>
  * <pre>{@code
- * // 方式一：通过 EventService 便捷方法（推荐）
- * eventService.scan("io.github.JiangHu.jframe.example.wrapper");
+ * // 方式一：通过 EventAPI 便捷方法（推荐）
+ * eventAPI.scan("io.github.JiangHu.jframe.example.wrapper");
  *
  * // 方式二：直接使用 WrapperScanner
- * WrapperScanner scanner = new WrapperScanner(eventService);
+ * WrapperScanner scanner = new WrapperScanner(eventAPI);
  * List<Class<?>> registered = scanner.scan("com.myplugin.features");
  * }</pre>
  *
  * <h3>容错性</h3>
  * <p>
- * 单个类的注册失败（如缺少 {@code @KeyExtractor}）由 {@link EventService#register} 内部
+ * 单个类的注册失败（如缺少 {@code @KeyExtractor}）由 {@link EventAPI#register} 内部
  * 处理并记录，不会中断整体扫描。
  *
  * @see Wrapper
- * @see EventService#scan
- * @see EventService#register
+ * @see EventAPI#scan
+ * @see EventAPI#register
  * @see ClassPathScanningCandidateComponentProvider
  */
 public class WrapperScanner {
 
     /** 事件服务：扫描到的类通过它注册 */
-    private final EventService eventService;
+    private final EventAPI eventAPI;
 
     /**
      * 构造扫描器。
      *
-     * @param eventService 事件服务（用于注册扫描到的包装类）
+     * @param eventAPI 事件服务（用于注册扫描到的包装类）
      */
-    public WrapperScanner(EventService eventService) {
-        this.eventService = eventService;
+    public WrapperScanner(EventAPI eventAPI) {
+        this.eventAPI = eventAPI;
     }
 
     /**
@@ -122,7 +122,7 @@ public class WrapperScanner {
                 String className = bd.getBeanClassName();
                 try {
                     Class<?> clazz = Class.forName(className, false, classLoader);
-                    eventService.register(clazz);
+                    eventAPI.register(clazz);
                     registered.add(clazz);
                     Server.getInstance().getLogger().info(
                             "[WrapperScanner] 已注册包装类: " + className);

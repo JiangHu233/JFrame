@@ -1,5 +1,7 @@
 package io.github.JiangHu.jframe.event.annotation;
 
+import io.github.JiangHu.jframe.event.EventAPI;
+
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -48,7 +50,7 @@ import java.lang.annotation.Target;
  * @see KeyExtractor
  * @see EventHandler
  * @see io.github.JiangHu.jframe.event.scan.WrapperScanner
- * @see io.github.JiangHu.jframe.event.EventService#scan
+ * @see EventAPI#scan
  */
 
 @Target(ElementType.TYPE)

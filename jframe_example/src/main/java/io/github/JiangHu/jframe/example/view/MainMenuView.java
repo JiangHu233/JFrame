@@ -3,7 +3,7 @@ package io.github.JiangHu.jframe.example.view;
 import cn.nukkit.Player;
 import io.github.JiangHu.jframe.example.wrapper.PlayerStatWrapper;
 import io.github.JiangHu.jframe.form.FormView;
-import io.github.JiangHu.jframe.thread.ThreadService;
+import io.github.JiangHu.jframe.thread.ThreadAPI;
 import moe.him188.gui.window.FormSimple;
 
 /**
@@ -18,11 +18,11 @@ import moe.him188.gui.window.FormSimple;
  */
 public class MainMenuView extends FormView {
 
-    private final ThreadService threadService;
+    private final ThreadAPI threadAPI;
     private final Player player;
 
-    public MainMenuView(ThreadService threadService, Player player) {
-        this.threadService = threadService;
+    public MainMenuView(ThreadAPI threadAPI, Player player) {
+        this.threadAPI = threadAPI;
         this.player = player;
     }
 
@@ -48,7 +48,7 @@ public class MainMenuView extends FormView {
     @Override
     protected void onClicked(int id) {
         switch (id) {
-            case 0 -> addStack(new StatsView(threadService, player)); // 进入子菜单
+            case 0 -> addStack(new StatsView(threadAPI, player)); // 进入子菜单
             case 1 -> runAsyncTask();                                 // 提交异步任务
             default -> { /* 未知按钮，忽略 */ }
         }
@@ -61,7 +61,7 @@ public class MainMenuView extends FormView {
      * 注意：跨线程仅发送简单文本消息；若需操作主线程 API，应调度回主线程。
      */
     private void runAsyncTask() {
-        threadService.pushTask("example", () -> {
+        threadAPI.pushTask("example", () -> {
             try {
                 Thread.sleep(1000); // 模拟耗时计算
             } catch (InterruptedException e) {

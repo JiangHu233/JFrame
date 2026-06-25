@@ -15,6 +15,7 @@
         <module>jframe_main</module>
         <module>jframe_event</module>
         <module>jframe_example</module>
+        <module>jframe_command</module>
     </modules>
 
     <properties>

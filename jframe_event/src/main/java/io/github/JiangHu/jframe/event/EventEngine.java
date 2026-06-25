@@ -21,7 +21,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p>
  * 本类是事件系统的 L1 引擎层，只负责"按类型订阅"和"转发给消费者"，
  * <b>不包含</b>面向用户的注册 API（{@code register/unregister/evict}）。
- * 用户应通过 {@link EventService} 间接使用本类。
+ * 用户应通过 {@link EventAPI} 间接使用本类。
  * <p>
  * <b>优先级排序和独占逻辑由上层 {@link HandlerRegistry} 管理</b>，
  * 本类以固定 {@link EventPriority#LOWEST} 优先级向 Nukkit 注册，
@@ -39,12 +39,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *       ↑
  *   HandlerRegistry（构造器依赖 EventEngine）
  *       ↑
- *   EventService（公开门面，依赖两者）
+ *   EventAPI（公开门面，依赖两者）
  * </pre>
- * 这种单向依赖（DAG）避免了原先 EventService ↔ HandlerRegistry 的循环依赖，
+ * 这种单向依赖（DAG）避免了原先 EventAPI ↔ HandlerRegistry 的循环依赖，
  * 使得三者均可使用构造器注入，Spring 能正常创建。
  *
- * @see EventService
+ * @see EventAPI
  * @see EventConsumer
  * @see HandlerRegistry
  */

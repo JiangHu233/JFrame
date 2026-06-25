@@ -20,7 +20,7 @@
     <dependencies>
         <!--
           依赖 jframe_main：它会聚合引入 core / thread / form / event 全部子模块，
-          因此本示例可以直接使用框架的所有服务（EventService / ViewService / ThreadService）。
+          因此本示例可以直接使用框架的所有服务（EventAPI / ViewAPI / ThreadAPI）。
         -->
         <dependency>
             <groupId>io.github.JiangHu.jframe</groupId>

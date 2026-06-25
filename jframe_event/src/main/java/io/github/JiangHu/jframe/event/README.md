@@ -67,8 +67,8 @@
 @Override
 public void onEnable() {
     ApplicationContext ctx = ...;
-    EventService eventService = ctx.getBean(EventService.class);
-    eventService.bindPlugin(this);  // 必须！
+    EventService eventAPI = ctx.getBean(EventService.class);
+    eventAPI.bindPlugin(this);  // 必须！
 }
 ```
 
@@ -83,11 +83,11 @@ public void onEnable() {
 public class PlayerWrapper {
 
     private final Player player;
-    private final EventService eventService;
+    private final EventService eventAPI;
 
-    public PlayerWrapper(Player player, EventService eventService) {
+    public PlayerWrapper(Player player, EventService eventAPI) {
         this.player = player;
-        this.eventService = eventService;
+        this.eventAPI = eventAPI;
     }
 
     // ① 身份提取器：从事件提取 Player（必需）
@@ -107,7 +107,7 @@ public class PlayerWrapper {
     @EventHandler
     @EventRoute
     public void onSelfQuit(PlayerQuitEvent event) {
-        eventService.evict(PlayerWrapper.class, player);
+        eventAPI.evict(PlayerWrapper.class, player);
     }
 }
 ```
@@ -116,11 +116,11 @@ public class PlayerWrapper {
 
 ```java
 // 在 onEnable 中注册类
-eventService.register(PlayerWrapper.class);
+eventAPI.register(PlayerWrapper.class);
 
 // 之后无需任何手动创建代码！
-// 玩家A移动 → extractPlayer 提取 playerA → new PlayerWrapper(playerA, eventService) → 缓存 → 调用 onMove
-// 玩家B移动 → extractPlayer 提取 playerB → new PlayerWrapper(playerB, eventService) → 缓存 → 调用 onMove
+// 玩家A移动 → extractPlayer 提取 playerA → new PlayerWrapper(playerA, eventAPI) → 缓存 → 调用 onMove
+// 玩家B移动 → extractPlayer 提取 playerB → new PlayerWrapper(playerB, eventAPI) → 缓存 → 调用 onMove
 ```
 
 **工作原理：**
@@ -178,7 +178,7 @@ public class MagicSwordWrapper {
 
 **注册：**
 ```java
-eventService.register(MagicSwordWrapper.class);
+eventAPI.register(MagicSwordWrapper.class);
 MagicSwordWrapper.registerSword(magicSwordItem);
 ```
 

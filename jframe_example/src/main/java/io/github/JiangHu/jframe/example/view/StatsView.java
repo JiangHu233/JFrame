@@ -3,7 +3,7 @@ package io.github.JiangHu.jframe.example.view;
 import cn.nukkit.Player;
 import io.github.JiangHu.jframe.example.wrapper.PlayerStatWrapper;
 import io.github.JiangHu.jframe.form.FormView;
-import io.github.JiangHu.jframe.thread.ThreadService;
+import io.github.JiangHu.jframe.thread.ThreadAPI;
 import moe.him188.gui.window.FormSimple;
 
 /**
@@ -14,11 +14,11 @@ import moe.him188.gui.window.FormSimple;
  */
 public class StatsView extends FormView {
 
-    private final ThreadService threadService;
+    private final ThreadAPI threadAPI;
     private final Player player;
 
-    public StatsView(ThreadService threadService, Player player) {
-        this.threadService = threadService;
+    public StatsView(ThreadAPI threadAPI, Player player) {
+        this.threadAPI = threadAPI;
         this.player = player;
     }
 
@@ -40,6 +40,6 @@ public class StatsView extends FormView {
     @Override
     protected void onClicked(int id) {
         // 用新的主菜单替换当前视图：弹出本视图、压入主菜单，框架随后会重新发送主菜单
-        replaceThis(new MainMenuView(threadService, player));
+        replaceThis(new MainMenuView(threadAPI, player));
     }
 }
