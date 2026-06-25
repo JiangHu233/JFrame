@@ -1,0 +1,4 @@
+io\github\JiangHu\jframe\core\config\SpringConfig.class
+io\github\JiangHu\jframe\core\module\PluginAware.class
+io\github\JiangHu\jframe\core\annotation\RuntimeData.class
+io\github\JiangHu\jframe\core\annotation\SerializableData.class

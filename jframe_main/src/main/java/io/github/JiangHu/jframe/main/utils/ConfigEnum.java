@@ -14,6 +14,7 @@ public enum ConfigEnum {
     CORE(io.github.JiangHu.jframe.core.config.SpringConfig.class),
     THREAD(io.github.JiangHu.jframe.thread.config.SpringConfig.class),
     FORM(io.github.JiangHu.jframe.form.config.SpringConfig.class),
+    EVENT(io.github.JiangHu.jframe.event.config.SpringConfig.class),
     ;
 
     @Getter

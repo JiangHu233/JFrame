@@ -1,0 +1,449 @@
+# 事件系统 (Event System)
+
+> 基于 Nukkit + Spring 的高性能、面向对象的事件路由框架。
+>
+> 通过 **4 个注解** 声明事件处理器，框架自动完成类型过滤、身份提取、实例创建和优先级分发。
+
+---
+
+## 📖 这个框架是干什么的？
+
+让服务器里的各种事件（玩家移动、聊天、放方块等）自动找到正确的处理代码去执行，并且：
+
+- **没人监听的事件类型完全不触发**（Nukkit 原生按类型注册）
+- **每个对象（玩家/方块/实体）拥有独立实例**，只收到属于自己的事件
+- **高优先级处理器可独占事件**，阻止低优先级处理器执行
+
+### 核心概念：4 个注解
+
+| 注解 | 作用 | 标注位置 | 必填 |
+|------|------|----------|------|
+| [`@EventHandler`](annotation/EventHandler.java) | 标记方法为事件处理器，声明**优先级**和**独占** | 实例方法 | ✅ |
+| [`@EventRoute`](annotation/EventRoute.java) | 声明处理**什么事件**、在**什么条件**下处理 | 实例方法 | ✅（可与 @EventHandler 合并省略） |
+| [`@KeyExtractor`](annotation/KeyExtractor.java) | 标记 **static 方法**为身份提取器（从事件提取身份标识） | static 方法 | ❌ |
+| [`@InstanceProvider`](annotation/InstanceProvider.java) | 标记 **static 方法**为实例工厂（按需创建/查找实例） | static 方法 | ❌ |
+
+> **为什么拆成 4 个注解？** 职责分离：`@EventRoute` 管"匹配"（事件类型+条件），`@EventHandler` 管"执行"（优先级+独占），`@KeyExtractor` 管"身份提取"，`@InstanceProvider` 管"实例创建"。每个注解只做一件事。
+
+---
+
+## 🏗️ 整体架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  用户代码层                                               │
+│  @EventHandler + @EventRoute + @KeyExtractor +          │
+│  @InstanceProvider                                      │
+├─────────────────────────────────────────────────────────┤
+│  路由引擎层                                               │
+│  HandlerRegistry —— 身份匹配、实例创建、优先级分发、独占    │
+├─────────────────────────────────────────────────────────┤
+│  身份提取层                                               │
+│  KeyExtractorRegistry —— 全局预置提取器（Player/Block…）  │
+├─────────────────────────────────────────────────────────┤
+│  事件引擎层                                               │
+│  EventService —— 对接 Nukkit，按事件类型精准注册          │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 各层职责
+
+| 层 | 类 | 职责 |
+|----|----|------|
+| L1 | [`EventService`](EventService.java) | 向 Nukkit 注册真正有人监听的事件类型，固定 LOWEST 优先级 |
+| L2 | [`KeyExtractorRegistry`](routing/KeyExtractorRegistry.java) | 预置 Player/Block/Entity/Inventory 的全局身份提取器 |
+| L3 | [`HandlerRegistry`](routing/HandlerRegistry.java) | 身份匹配、实例创建、按优先级排序、跨优先级独占分发 |
+| L4 | 4 个注解 + [`EventBeanPostProcessor`](spring/EventBeanPostProcessor.java) | 用户声明 + Spring 自动扫描 |
+
+---
+
+## 🚀 快速上手
+
+### 前置：初始化框架
+
+在插件主类 `onEnable()` 中设置 Plugin 实例：
+
+```java
+@Override
+public void onEnable() {
+    ApplicationContext ctx = ...;
+    EventService eventService = ctx.getBean(EventService.class);
+    eventService.setPlugin(this);  // 必须！
+}
+```
+
+---
+
+### 用法一：全局监听器（最简单）
+
+监听所有玩家的某个事件（如全服聊天记录）。
+
+```java
+@Component  // ← Spring 单例 Bean
+public class ChatLogger {
+
+    @EventHandler
+    @EventRoute  // 不填 value，自动从参数推断事件类型
+    public void onChat(PlayerChatEvent event) {
+        System.out.println(event.getPlayer().getName() + ": " + event.getMessage());
+    }
+}
+```
+
+**就这样！** Spring 启动时 [`EventBeanPostProcessor`](spring/EventBeanPostProcessor.java) 自动扫描所有 `@Component` 中的 `@EventHandler` 方法并注册。
+
+> **💡 简写：** 如果只写 `@EventHandler` 不写 `@EventRoute`，框架会用默认的 `@EventRoute`（自动推断事件类型、无条件）。
+
+---
+
+### 用法二：条件过滤（SpEL 表达式）
+
+只在满足特定条件时处理事件。
+
+```java
+@Component
+public class CreativeOnlyListener {
+
+    // SpEL 条件：只在创造模式时处理
+    @EventHandler
+    @EventRoute(condition = "#event.player.gamemode == 1")
+    public void onCreativePlayer(PlayerEvent event) {
+        event.getPlayer().sendMessage("你是创造模式！");
+    }
+
+    // SpEL 条件：只在右键点击方块时处理
+    @EventHandler
+    @EventRoute(condition = "#event.action.name() == 'RIGHT_CLICK_BLOCK'")
+    public void onRightClickBlock(PlayerInteractEvent event) {
+        // 只有右键方块才会进来
+    }
+}
+```
+
+**SpEL 表达式说明：**
+- `#event` — 事件对象本身
+- `#target` — 处理器对象（即 `this`）
+- 可调用任何 getter：`#event.player`、`#event.message`
+- 支持比较运算：`==`、`!=`、`>`、`<`、`and`、`or`
+- 表达式在**注册时解析一次**并缓存，运行时反复求值，开销极小
+
+---
+
+### 用法三：复杂条件过滤（filter 方法引用）⭐
+
+条件逻辑太复杂，SpEL 写不下时，用 `filter` 引用一个 Java 方法。
+
+```java
+@Component
+public class ChatFilter {
+
+    // filter = "isNotSpam" 引用下面的 isNotSpam 方法
+    @EventHandler
+    @EventRoute(filter = "isNotSpam")
+    public void onNormalChat(PlayerChatEvent event) {
+        System.out.println("正常消息: " + event.getMessage());
+    }
+
+    // 筛选方法：复杂判断写在 Java 方法里
+    // 要求：参数类型兼容事件类型，返回 boolean，可以是 private
+    private boolean isNotSpam(PlayerChatEvent event) {
+        String msg = event.getMessage();
+        if (msg.length() < 2) return false;
+        return !isAllSameChar(msg);
+    }
+
+    private boolean isAllSameChar(String msg) { /* ... */ return false; }
+}
+```
+
+**`condition` vs `filter` 对比：**
+
+| | `condition`（SpEL） | `filter`（方法引用） |
+|---|---|---|
+| 适合 | 简单属性比较 | 复杂多条件逻辑 |
+| IDE 补全 | ❌ | ✅ |
+| 编译检查 | ❌ 运行时发现错误 | ✅ 编译时发现 |
+| 性能 | SpEL 求值（略慢） | 直接方法调用（最快） |
+
+> **⚠️ `condition` 和 `filter` 不能同时使用。**
+
+---
+
+### 用法四：优先级与独占 ⭐ 核心特性
+
+高优先级处理器可以**独占**事件，阻止低优先级处理器执行。
+
+```java
+@Component
+public class ChatGuard {
+
+    // HIGH 优先级 + 独占：执行后，NORMAL 及以下的处理器都不会执行
+    @EventHandler(priority = EventPriority.HIGH, exclusive = true)
+    @EventRoute
+    public void onChatHigh(PlayerChatEvent event) {
+        if (isBannedWord(event.getMessage())) {
+            event.setCancelled(true);
+            // exclusive = true → 低优先级处理器被跳过
+        }
+    }
+
+    // 默认：NORMAL 优先级，非独占
+    @EventHandler
+    @EventRoute
+    public void onChatNormal(PlayerChatEvent event) {
+        // 如果上面的 HIGH 处理器声明了独占，这里不会执行
+    }
+}
+```
+
+**优先级顺序**（从先到后执行）：
+```
+HIGHEST → HIGH → NORMAL → LOW → LOWEST → MONITOR
+```
+
+**独占语义：**
+- `exclusive = true` 的处理器**执行后**（通过条件检查），所有**更低优先级**的处理器都不会执行
+- **同一优先级**内的多个处理器，执行顺序不明确（如需明确顺序请用不同优先级）
+- 独占只影响比当前优先级更低的处理器，同级其他处理器仍会执行
+
+> **💡 为什么独占是跨优先级的？** 因为优先级高低是定义时明确的，而同级顺序不明确。高优先级独占确保"最重要的处理器先处理，处理完就不再打扰低优先级"。
+
+---
+
+### 用法五：对象级监听器（每个玩家独立实例）⭐ 核心功能
+
+每个玩家/方块/实体需要独立的处理逻辑和数据。
+
+#### 方式 A：默认缓存 + 全局提取器（最简单）
+
+```java
+// 注意：不加 @Component！这是动态创建的对象
+public class PlayerWrapper {
+
+    private final Player player;
+    private final HandlerRegistry registry;
+
+    // 构造函数：第一个参数是身份标识（Player）
+    // 第二个参数 HandlerRegistry 由框架自动注入
+    public PlayerWrapper(Player player, HandlerRegistry registry) {
+        this.player = player;
+        this.registry = registry;
+    }
+
+    // 只会收到【这个玩家】的移动事件
+    @EventHandler
+    @EventRoute
+    public void onMove(PlayerMoveEvent event) {
+        player.sendMessage("你走到了 " + event.getTo());
+    }
+
+    // 玩家退出时清理缓存
+    @EventHandler
+    @EventRoute
+    public void onSelfQuit(PlayerQuitEvent event) {
+        registry.evict(PlayerWrapper.class, player);
+    }
+}
+```
+
+**注册（只需一次）：**
+
+```java
+// 在 onEnable 中注册类
+handlerRegistry.register(PlayerWrapper.class);
+
+// 之后无需任何手动创建代码！
+// 玩家A移动 → 框架自动 new PlayerWrapper(playerA, registry) → 缓存 → 调用 onMove
+// 玩家B移动 → 框架自动 new PlayerWrapper(playerB, registry) → 缓存 → 调用 onMove
+```
+
+**工作原理：**
+1. 框架注册 `PlayerWrapper.class` 时扫描所有 `@EventHandler` 方法
+2. `PlayerMoveEvent` 继承自 `PlayerEvent`，全局提取器自动调用 `getPlayer()` 提取 Player 身份
+3. 首次收到某玩家事件时，框架通过构造函数 `new PlayerWrapper(player, registry)` 创建实例并缓存
+4. 后续事件从缓存获取实例（O(1)）
+5. 玩家退出时调用 `evict()` 清理缓存
+
+> **💡 全局提取器预置了 4 种事件的身份提取：**
+> `PlayerEvent` → `getPlayer()`、`BlockEvent` → `getBlock()`、`EntityEvent` → `getEntity()`、`InventoryEvent` → `getInventory()`
+
+---
+
+#### 方式 B：自定义 @KeyExtractor + @InstanceProvider 工厂
+
+当你要路由的对象不是事件自带的"主体"（如手中的物品、所在区域），需要自定义提取器和工厂。
+
+```java
+public class MagicSwordWrapper {
+
+    private static final Map<Item, MagicSwordWrapper> SWORDS = new ConcurrentHashMap<>();
+    private final Item sword;
+
+    public MagicSwordWrapper(Item sword) { this.sword = sword; }
+
+    // 注册一把魔法剑到静态表
+    public static MagicSwordWrapper registerSword(Item sword) {
+        MagicSwordWrapper w = new MagicSwordWrapper(sword);
+        SWORDS.put(sword, w);
+        return w;
+    }
+
+    // ① 自定义提取器：从事件提取 Item（替代默认的 getPlayer）
+    @KeyExtractor
+    public static Item extractItem(PlayerInteractEvent event) {
+        return event.getItem();
+    }
+
+    // ② 实例工厂：根据 Item 查找已注册的魔法剑
+    @InstanceProvider
+    public static MagicSwordWrapper findByItem(Item item) {
+        return item == null ? null : SWORDS.get(item);
+    }
+
+    // 只有拿着【这把剑】右键方块才会触发
+    @EventHandler
+    @EventRoute(filter = "isRightClickBlock")
+    public void onUse(PlayerInteractEvent event) {
+        System.out.println("触发魔法效果！");
+    }
+
+    private boolean isRightClickBlock(PlayerInteractEvent event) {
+        return event.getAction().name().equals("RIGHT_CLICK_BLOCK");
+    }
+}
+```
+
+**注册：**
+```java
+handlerRegistry.register(MagicSwordWrapper.class);
+MagicSwordWrapper.registerSword(magicSwordItem);
+```
+
+---
+
+### 用法六：多槽位身份提取（OR 语义）
+
+一个事件可能包含多个同类型对象（如攻击者和受害者都是 Entity）。
+
+```java
+public class CombatantWrapper {
+
+    // 槽位 1：作为攻击者
+    @KeyExtractor
+    public static Entity asDamager(EntityDamageByEntityEvent event) {
+        return event.getDamager();
+    }
+
+    // 槽位 2：作为受害者
+    @KeyExtractor
+    public static Entity asVictim(EntityDamageByEntityEvent event) {
+        return event.getEntity();
+    }
+
+    // 无论是作为攻击者还是受害者，都会触发（OR 语义，先匹配的先执行）
+    @EventHandler
+    @EventRoute
+    public void onCombat(EntityDamageByEntityEvent event) { ... }
+}
+```
+
+框架逐一尝试每个 `@KeyExtractor`，任一匹配即路由到对应实例。
+
+---
+
+## 📚 所有 API 详解
+
+### `@EventHandler`（执行层）
+
+| 属性 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `priority` | `EventPriority` | `NORMAL` | 执行优先级，HIGHEST → LOWEST 降序分发 |
+| `exclusive` | `boolean` | `false` | 跨优先级独占：执行后停止所有低优先级处理器 |
+
+---
+
+### `@EventRoute`（匹配层）
+
+| 属性 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `value` | `Class<? extends Event>` | 自动推断 | 事件类型，不填时从方法参数推断 |
+| `condition` | `String` (SpEL) | `""` | SpEL 过滤条件，满足才执行 |
+| `filter` | `String` | `""` | 引用类中的筛选方法名（与 condition 互斥） |
+
+---
+
+### `@KeyExtractor`（身份提取）
+
+标记一个 **static 方法**为身份提取器。
+
+**规则：**
+- 必须 `static`（提取身份时实例尚未创建）
+- 签名：`static IdentityType extract(EventType event)`
+- 返回值 = 身份标识；返回 `null` = 该事件不含此槽位，跳过
+- 同一事件类型可有多个 `@KeyExtractor`（OR 语义）
+
+---
+
+### `@InstanceProvider`（实例工厂）
+
+标记一个 **static 方法**为实例工厂。
+
+**规则：**
+- 必须 `static`（工厂在实例创建之前调用）
+- 签名：`static WrapperType create(IdentityType identity)`
+- 参数类型与 `@KeyExtractor` 返回值一致
+- 返回值 = 实例；返回 `null` = 不路由
+- 无 `@InstanceProvider` 时，框架使用默认缓存（通过构造函数创建）
+
+**何时需要 `@InstanceProvider`？**
+- 实例需要额外参数（如箱子格子序号）
+- 实例需要从外部注册表查找（如已注册的区域）
+- 需要自定义缓存策略（如外部缓存、一次性实例）
+
+---
+
+### `HandlerRegistry`（路由引擎）
+
+| 方法 | 说明 |
+|------|------|
+| `register(Object bean)` | 注册 Spring Bean 为全局处理器（自动调用） |
+| `register(Class<?> wrapperClass)` | 注册包装类为对象处理器 |
+| `unregister(Class<?> wrapperClass)` | 注销整个包装类 |
+| `evict(Class<?> wrapperClass, Object identity)` | 从默认缓存驱逐特定身份的实例 |
+
+---
+
+### `KeyExtractorRegistry`（全局提取器）
+
+框架预置了以下事件的提取器：
+
+| 事件基类 | 提取方法 | 提取出的 Key |
+|----------|----------|-------------|
+| `PlayerEvent` | `getPlayer()` | `Player` |
+| `BlockEvent` | `getBlock()` | `Block` |
+| `EntityEvent` | `getEntity()` | `Entity` |
+| `InventoryEvent` | `getInventory()` | `Inventory` |
+
+**自定义全局提取器：**
+```java
+@Component
+public class MyConfig {
+    public MyConfig(KeyExtractorRegistry registry) {
+        registry.register(MyCustomEvent.class, event -> event.getOwner());
+    }
+}
+```
+
+---
+
+## 📂 完整示例
+
+| 示例 | 场景 | 路由方式 | 关键特性 |
+|------|------|---------|---------|
+| [`GlobalChatLogger`](../../../test/java/example/GlobalChatLogger.java) | 全服聊天记录 | 全局 | SpEL + filter + 优先级独占 |
+| [`PlayerWrapper`](../../../test/java/example/PlayerWrapper.java) | 每个玩家独立处理 | 全局提取器 | 默认缓存 + 自动实例化 |
+| [`MagicSwordWrapper`](../../../test/java/example/MagicSwordWrapper.java) | 特定物品右键触发 | @KeyExtractor | 自定义提取器 + 工厂 |
+| [`ChestSlotWrapper`](../../../test/java/example/ChestSlotWrapper.java) | 箱子第 N 格监听 | 全局提取器 | 工厂 + 复杂 filter |
+| [`PvpRegionWrapper`](../../../test/java/example/PvpRegionWrapper.java) | 区域内 PvP 监听 | 全局提取器 | 工厂 + 坐标判断 |
+
+> 维护者文档请看 [DEVELOPER.md](DEVELOPER.md)。

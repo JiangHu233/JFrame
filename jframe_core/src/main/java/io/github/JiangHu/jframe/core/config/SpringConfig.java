@@ -8,5 +8,4 @@ import org.springframework.context.annotation.ImportResource;
 @ComponentScan("io.github.JiangHu.jframe.core")
 @ImportResource("classpath:core-spring.xml")
 public class SpringConfig {
-
 }

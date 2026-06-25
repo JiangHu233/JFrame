@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+       http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!-- 具体的配置内容 -->
+    <bean class="io.github.JiangHu.jframe.event.routing.HandlerRegistry" id="handlerRegistry">
+        <constructor-arg name="eventService" ref="eventService"/>
+        <constructor-arg name="globalExtractorRegistry" ref="keyExtractorRegistry"/>
+    </bean>
+
+    <bean class="io.github.JiangHu.jframe.event.routing.KeyExtractorRegistry" id="keyExtractorRegistry">
+    </bean>
+
+    <bean class="io.github.JiangHu.jframe.event.spring.EventBeanPostProcessor" id="eventBeanPostProcessor">
+        <constructor-arg name="handlerRegistry" ref="handlerRegistry"/>
+    </bean>
+
+    <bean class="io.github.JiangHu.jframe.event.EventService" id="eventService">
+    </bean>
+
+</beans>
