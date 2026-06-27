@@ -1,5 +1,9 @@
 package io.github.JiangHu.jframe.main.utils;
 
+import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
+import io.github.JiangHu.jframe.event.config.EventSpringConfig;
+import io.github.JiangHu.jframe.form.config.FormSpringConfig;
+import io.github.JiangHu.jframe.thread.config.ThreadSpringConfig;
 import lombok.Getter;
 import io.github.JiangHu.jframe.main.JFrameMain;
 /**
@@ -11,10 +15,10 @@ import io.github.JiangHu.jframe.main.JFrameMain;
  * @see JFrameMain
  */
 public enum ConfigEnum {
-    CORE(io.github.JiangHu.jframe.core.config.SpringConfig.class),
-    THREAD(io.github.JiangHu.jframe.thread.config.SpringConfig.class),
-    FORM(io.github.JiangHu.jframe.form.config.SpringConfig.class),
-    EVENT(io.github.JiangHu.jframe.event.config.SpringConfig.class),
+    CORE(CoreSpringConfig.class),
+    THREAD(ThreadSpringConfig.class),
+    FORM(FormSpringConfig.class),
+    EVENT(EventSpringConfig.class),
     ;
 
     @Getter

@@ -8,10 +8,13 @@ import java.lang.annotation.Target;
 import io.github.JiangHu.jframe.event.annotation.InstanceProvider;
 
 /**
- * 身份提取方法标记注解。
+ * 身份提取方法标记注解（<b>必需</b>）。
  * <p>
  * 标记一个 <b>static 方法</b>为身份提取器。框架在分发事件时调用此方法，
  * 从事件中提取身份标识，用于路由到正确的包装类实例。
+ * <p>
+ * <b>每个包装类必须声明至少一个 {@code @KeyExtractor}</b>，否则框架无法提取身份，
+ * 该类的注册将被拒绝（参见 {@link io.github.JiangHu.jframe.event.routing.HandlerRegistry#register}）。
  *
  * <h3>规则</h3>
  * <ul>

@@ -4,12 +4,11 @@ import cn.nukkit.Server;
 import cn.nukkit.event.Event;
 import cn.nukkit.event.EventPriority;
 import io.github.JiangHu.jframe.event.EventConsumer;
-import io.github.JiangHu.jframe.event.EventService;
+import io.github.JiangHu.jframe.event.EventEngine;
 import io.github.JiangHu.jframe.event.annotation.EventHandler;
 import io.github.JiangHu.jframe.event.annotation.EventRoute;
 import io.github.JiangHu.jframe.event.annotation.InstanceProvider;
 import io.github.JiangHu.jframe.event.annotation.KeyExtractor;
-import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
@@ -25,11 +24,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * 核心路由引擎：统一管理全局/对象处理器的注册、身份匹配、优先级分发。
+ * 核心路由引擎：统一管理对象处理器的注册、身份匹配、优先级分发。
  * <p>
  * 替代旧版 {@code ObjectEventRouter}。核心改进：
  * <ul>
  *   <li><b>类级注册</b>：{@code register(Class)} 而非 {@code register(Class, identity)}</li>
+ *   <li><b>强制身份提取</b>：每个包装类必须声明 {@link KeyExtractor}，无提取器则无法路由</li>
  *   <li><b>工厂模式</b>：实例在分发时通过 {@link InstanceProvider} 或默认缓存按需创建</li>
  *   <li><b>跨优先级独占</b>：高优先级 exclusive=true 停止所有低优先级处理器</li>
  *   <li><b>多槽位提取</b>：同一事件类型可有多个 {@link KeyExtractor}，OR 语义</li>
@@ -39,36 +39,27 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <pre>
  * 事件到达
  *   ↓
- * ① 预提取全局 Key（KeyExtractorRegistry，只提取一次）
+ * ① 遍历每个 WrapperRegistration：
+ *   └── 调用其 @KeyExtractor（static）提取身份 → 获取/创建实例
  *   ↓
- * ② 遍历每个 WrapperRegistration：
- *   ├── 全局处理器 → 直接使用单例实例
- *   ├── 有自定义 @KeyExtractor → 逐个调用（static），获取实例
- *   └── 无自定义 @KeyExtractor → 用全局 Key 获取实例
+ * ② 收集所有匹配的 (instance, HandlerTemplate) 对
  *   ↓
- * ③ 收集所有匹配的 (instance, HandlerTemplate) 对
+ * ③ 按优先级降序排序（HIGHEST → LOWEST）
  *   ↓
- * ④ 按优先级降序排序（HIGHEST → LOWEST）
- *   ↓
- * ⑤ 分组分发 + 跨优先级独占检查
+ * ④ 分组分发 + 跨优先级独占检查
  * </pre>
  *
  * @see HandlerTemplate
- * @see KeyExtractorRegistry
  * @see EventService
  */
 
 public class HandlerRegistry {
-    /** 全局身份常量：无 @KeyExtractor 的目标使用此身份 */
-    static final Object GLOBAL = new Object();
 
     /**
      * 类注册信息：一个包装类的完整元数据。
      * 同一 Registration 会被引用在多个事件类型的列表中。
      *
      * @param wrapperClass      包装类
-     * @param isGlobal          true = Spring Bean 单例（全局处理器）
-     * @param singletonInstance 全局处理器的固定实例（null = 对象处理器）
      * @param instanceProvider  @InstanceProvider 方法（null = 默认缓存）
      * @param defaultCache      默认缓存（instanceProvider == null 时使用）
      * @param extractors        @KeyExtractor 方法（按事件类型分组）
@@ -76,8 +67,6 @@ public class HandlerRegistry {
      */
     record WrapperRegistration(
             Class<?> wrapperClass,
-            boolean isGlobal,
-            Object singletonInstance,
             Method instanceProvider,
             ConcurrentHashMap<Object, Object> defaultCache,
             Map<Class<? extends Event>, List<Method>> extractors,
@@ -97,57 +86,23 @@ public class HandlerRegistry {
     /** 已订阅的事件类型集合 */
     private final Set<Class<? extends Event>> subscribed = ConcurrentHashMap.newKeySet();
 
-    private final EventService eventService;
-    private final KeyExtractorRegistry globalExtractorRegistry;
+    private final EventEngine engine;
 
-    public HandlerRegistry(EventService eventService, KeyExtractorRegistry globalExtractorRegistry) {
-        this.eventService = eventService;
-        this.globalExtractorRegistry = globalExtractorRegistry;
+    public HandlerRegistry(EventEngine engine) {
+        this.engine = engine;
     }
 
     // ========== 注册 ==========
-
-    /**
-     * 注册 Spring Bean 为全局处理器。
-     * <p>
-     * 扫描 Bean 中的 {@link EventHandler} 方法，注册为全局处理器（身份 = GLOBAL）。
-     * 如果 Bean 含有 {@link KeyExtractor} 方法，会打印警告（全局处理器不使用身份提取）。
-     *
-     * @param bean Spring Bean 实例
-     */
-    public void register(Object bean) {
-        Class<?> clazz = bean.getClass();
-
-        // 扫描 @EventHandler + @EventRoute 方法
-        Map<Class<? extends Event>, List<HandlerTemplate>> handlers = scanHandlers(clazz, clazz);
-        if (handlers.isEmpty()) {
-            return; // 无处理器方法，跳过
-        }
-
-        // 检查是否有 @KeyExtractor（全局处理器不应有）
-        Map<Class<? extends Event>, List<Method>> extractors = scanExtractors(clazz);
-        if (!extractors.isEmpty()) {
-            Server.getInstance().getLogger().warning(
-                    "全局处理器 " + clazz.getName() + " 含有 @KeyExtractor 方法，"
-                            + "全局处理器不使用身份提取，这些方法将被忽略。"
-                            + "如需对象级路由，请使用 register(Class) 注册。");
-        }
-
-        WrapperRegistration reg = new WrapperRegistration(
-                clazz, true, bean, null, null,
-                Map.of(),  // 全局处理器无提取器
-                handlers
-        );
-
-        classToReg.put(clazz, reg);
-        addToRegistry(reg);
-    }
 
     /**
      * 注册包装类为对象处理器。
      * <p>
      * 扫描类中的 {@link KeyExtractor}、{@link InstanceProvider}、{@link EventHandler} 方法，
      * 创建类级注册。实例在分发时通过工厂方法或默认缓存按需创建。
+     * <p>
+     * <b>必须声明至少一个 {@link KeyExtractor}</b>，否则无法从事件中提取身份，注册将被拒绝。
+     * <p>
+     * <b>内部 API</b>：用户应通过 {@link EventService#register} 调用，本类作为内部实现。
      *
      * @param wrapperClass 包装类
      * @param <T>          包装类型
@@ -155,6 +110,14 @@ public class HandlerRegistry {
     public <T> void register(Class<T> wrapperClass) {
         // 扫描 @KeyExtractor 方法（static）
         Map<Class<? extends Event>, List<Method>> extractors = scanExtractors(wrapperClass);
+
+        // 强制要求 @KeyExtractor：无提取器则无法路由
+        if (extractors.isEmpty()) {
+            Server.getInstance().getLogger().warning(
+                    "类 " + wrapperClass.getName() + " 无 @KeyExtractor 方法，无法提取身份，注册被拒绝。"
+                            + "请声明至少一个 @KeyExtractor static 方法。");
+            return;
+        }
 
         // 扫描 @InstanceProvider 方法（static）
         Method instanceProvider = scanInstanceProvider(wrapperClass);
@@ -172,7 +135,7 @@ public class HandlerRegistry {
                 instanceProvider == null ? new ConcurrentHashMap<>() : null;
 
         WrapperRegistration reg = new WrapperRegistration(
-                wrapperClass, false, null,
+                wrapperClass,
                 instanceProvider, defaultCache,
                 extractors, handlers
         );
@@ -185,6 +148,8 @@ public class HandlerRegistry {
 
     /**
      * 注销整个包装类的所有处理器。
+     * <p>
+     * <b>内部 API</b>：用户应通过 {@link EventService#unregister} 调用。
      *
      * @param wrapperClass 要注销的包装类
      */
@@ -208,6 +173,8 @@ public class HandlerRegistry {
      * <p>
      * 仅对使用默认缓存（无 @InstanceProvider）的包装类有效。
      * 使用自定义 @InstanceProvider 的包装类需自行管理缓存清理。
+     * <p>
+     * <b>内部 API</b>：用户应通过 {@link EventService#evict} 调用。
      *
      * @param wrapperClass 包装类
      * @param identity     要驱逐的身份标识
@@ -234,38 +201,24 @@ public class HandlerRegistry {
         CopyOnWriteArrayList<WrapperRegistration> regs = registry.get(eventType);
         if (regs == null || regs.isEmpty()) return;
 
-        // ① 预提取全局 Key（只提取一次，所有用全局提取器的 Registration 共享）
-        Object globalKey = null;
-        KeyExtractorRegistry.Extractor globalExtractor = globalExtractorRegistry.findExtractor(eventType);
-        if (globalExtractor != null) {
-            globalKey = globalExtractor.extract(event);
-        }
-
-        // ② 收集所有匹配的 (instance, template) 对
+        // ① 收集所有匹配的 (instance, template) 对
         List<BoundHandler> matched = new ArrayList<>();
         Set<Object> dispatched = Collections.newSetFromMap(new IdentityHashMap<>());
 
         for (WrapperRegistration reg : regs) {
-            if (reg.isGlobal()) {
-                // 全局处理器：直接使用单例实例
-                if (dispatched.add(reg.singletonInstance())) {
-                    addHandlers(matched, reg.singletonInstance(), reg, eventType);
-                }
-            } else {
-                // 对象处理器：提取身份 → 获取/创建实例
-                collectObjectHandlers(matched, dispatched, reg, eventType, event, globalKey);
-            }
+            // 对象处理器：提取身份 → 获取/创建实例
+            collectObjectHandlers(matched, dispatched, reg, eventType, event);
         }
 
         if (matched.isEmpty()) return;
 
-        // ③ 按优先级降序排序（HIGHEST 在前）
+        // ② 按优先级降序排序（HIGHEST 在前）
         matched.sort(Comparator.comparing(
                 (BoundHandler bh) -> bh.template().getPriority(),
                 Comparator.reverseOrder()
         ));
 
-        // ④ 分组分发 + 跨优先级独占
+        // ③ 分组分发 + 跨优先级独占
         EventPriority currentGroup = null;
         boolean exclusiveClaimed = false;
 
@@ -302,35 +255,29 @@ public class HandlerRegistry {
      */
     private void collectObjectHandlers(List<BoundHandler> matched, Set<Object> dispatched,
                                        WrapperRegistration reg,
-                                       Class<? extends Event> eventType, Event event,
-                                       Object globalKey) {
+                                       Class<? extends Event> eventType, Event event) {
         List<Method> extractors = reg.extractors().get(eventType);
 
-        if (extractors != null && !extractors.isEmpty()) {
-            // 自定义提取器：逐个尝试，每个产生不同实例都可能匹配
-            for (Method extractor : extractors) {
-                try {
-                    Object key = extractor.invoke(null, event); // static 方法
-                    if (key == null) continue;
+        if (extractors == null || extractors.isEmpty()) {
+            return; // 该事件类型无 @KeyExtractor，无法路由到此 wrapper
+        }
 
-                    Object instance = getOrCreateInstance(reg, key);
-                    if (instance != null && dispatched.add(instance)) {
-                        addHandlers(matched, instance, reg, eventType);
-                    }
-                } catch (Exception e) {
-                    Server.getInstance().getLogger().error(
-                            "KeyExtractor 调用失败: " + reg.wrapperClass().getName()
-                                    + "." + extractor.getName(), e);
+        // 提取器：逐个尝试，每个产生不同实例都可能匹配（OR 语义）
+        for (Method extractor : extractors) {
+            try {
+                Object key = extractor.invoke(null, event); // static 方法
+                if (key == null) continue;
+
+                Object instance = getOrCreateInstance(reg, key);
+                if (instance != null && dispatched.add(instance)) {
+                    addHandlers(matched, instance, reg, eventType);
                 }
-            }
-        } else if (globalKey != null) {
-            // 全局提取器快速路径
-            Object instance = getOrCreateInstance(reg, globalKey);
-            if (instance != null && dispatched.add(instance)) {
-                addHandlers(matched, instance, reg, eventType);
+            } catch (Exception e) {
+                Server.getInstance().getLogger().error(
+                        "KeyExtractor 调用失败: " + reg.wrapperClass().getName()
+                                + "." + extractor.getName(), e);
             }
         }
-        // 无提取器且无全局提取器 → 该事件类型无法路由到此 wrapper
     }
 
     /**
@@ -391,7 +338,8 @@ public class HandlerRegistry {
      * 通过构造函数创建实例。
      * <p>
      * 查找第一个参数兼容身份类型的构造函数。
-     * 额外参数：HandlerRegistry 类型自动注入 this。
+     * 额外参数：{@link EventEngine} / {@link HandlerRegistry} 类型自动注入
+     * （用户应优先注入 {@code EventEngine} 作为内部引擎入口）。
      */
     private Object constructViaConstructor(Class<?> wrapperClass, Object identity) throws Exception {
         Constructor<?> matched = null;
@@ -417,7 +365,9 @@ public class HandlerRegistry {
         // 注入额外依赖
         for (int i = 1; i < args.length; i++) {
             Class<?> paramType = matched.getParameterTypes()[i];
-            if (paramType == HandlerRegistry.class) {
+            if (paramType == EventEngine.class) {
+                args[i] = engine;
+            } else if (paramType == HandlerRegistry.class) {
                 args[i] = this;
             }
             // 其他类型暂留 null（可扩展 Spring DI）
@@ -534,7 +484,7 @@ public class HandlerRegistry {
             dispatch(eventType, event);
             return false; // EventService 层面非独占，独占逻辑由 HandlerRegistry 内部管理
         };
-        eventService.subscribe(eventType, (EventConsumer) consumer);
+        engine.subscribe(eventType, (EventConsumer) consumer);
     }
 
     /**

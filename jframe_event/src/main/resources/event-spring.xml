@@ -4,20 +4,27 @@
        xsi:schemaLocation="http://www.springframework.org/schema/beans
        http://www.springframework.org/schema/beans/spring-beans.xsd">
 
-    <!-- 具体的配置内容 -->
+    <!--
+        事件模块 Bean 装配（单向 DAG，无循环依赖）：
+        创建顺序：eventEngine → handlerRegistry → eventService
+
+        eventEngine   : 无依赖（最先创建）
+        handlerRegistry : 构造器依赖 eventEngine
+        eventService  : 构造器依赖 handlerRegistry + eventEngine（最后创建）
+    -->
+
+    <!-- 事件引擎（内部）：对接 Nukkit 底层事件系统，按类型订阅和分发 -->
+    <bean class="io.github.JiangHu.jframe.event.EventEngine" id="eventEngine"/>
+
+    <!-- 核心路由引擎：对象处理器注册、身份匹配、优先级分发 -->
     <bean class="io.github.JiangHu.jframe.event.routing.HandlerRegistry" id="handlerRegistry">
-        <constructor-arg name="eventService" ref="eventService"/>
-        <constructor-arg name="globalExtractorRegistry" ref="keyExtractorRegistry"/>
+        <constructor-arg name="engine" ref="eventEngine"/>
     </bean>
 
-    <bean class="io.github.JiangHu.jframe.event.routing.KeyExtractorRegistry" id="keyExtractorRegistry">
-    </bean>
-
-    <bean class="io.github.JiangHu.jframe.event.spring.EventBeanPostProcessor" id="eventBeanPostProcessor">
-        <constructor-arg name="handlerRegistry" ref="handlerRegistry"/>
-    </bean>
-
+    <!-- 事件服务（公开入口）：register/unregister/evict 委托给 handlerRegistry，subscribe 转发给 eventEngine -->
     <bean class="io.github.JiangHu.jframe.event.EventService" id="eventService">
+        <constructor-arg name="handlerRegistry" ref="handlerRegistry"/>
+        <constructor-arg name="engine" ref="eventEngine"/>
     </bean>
 
 </beans>

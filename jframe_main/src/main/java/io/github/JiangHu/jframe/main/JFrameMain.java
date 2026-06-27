@@ -1,8 +1,9 @@
 package io.github.JiangHu.jframe.main;
 
 import cn.nukkit.plugin.PluginBase;
+import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
 import io.github.JiangHu.jframe.core.module.PluginAware;
-import io.github.JiangHu.jframe.main.config.SpringConfig;
+import io.github.JiangHu.jframe.main.config.MainSpringConfig;
 import io.github.JiangHu.jframe.main.utils.ConfigEnum;
 import lombok.Getter;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
@@ -17,7 +18,7 @@ import java.util.Set;
  * <p>
  * 框架入口，负责加载核心模块。
  * <p>
- * 框架启动时，会自动加载核心模块（{@link io.github.JiangHu.jframe.core.config.SpringConfig}），
+ * 框架启动时，会自动加载核心模块（{@link CoreSpringConfig}），
  * 并注册其他模块的 SpringConfig。
  *
  */
@@ -33,7 +34,7 @@ public class JFrameMain extends PluginBase {
     private Set<ConfigEnum> modules = new HashSet<ConfigEnum>(List.of(ConfigEnum.CORE));
 
     private JFrameMain() {
-        this.applicationContext = new AnnotationConfigApplicationContext(SpringConfig.class);
+        this.applicationContext = new AnnotationConfigApplicationContext(MainSpringConfig.class);
     }
 
     /**

@@ -6,7 +6,6 @@ import io.github.JiangHu.jframe.event.annotation.EventHandler;
 import io.github.JiangHu.jframe.event.annotation.EventRoute;
 import io.github.JiangHu.jframe.event.annotation.InstanceProvider;
 import io.github.JiangHu.jframe.event.annotation.KeyExtractor;
-import io.github.JiangHu.jframe.event.routing.HandlerRegistry;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,19 +15,19 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * 场景：一把带有特定 NBT 标签的魔法剑，当玩家手持它右键方块时触发特殊效果。
  * <p>
- * <b>核心难点</b>：{@code PlayerInteractEvent} 的全局提取器按 {@code Player} 路由，
- * 但我们需要按 {@code Item}（手中的剑）路由——只有拿着这把特定剑的右键才触发。
+ * <b>核心难点</b>：需要按 {@code Item}（手中的剑）路由，而非按玩家路由——
+ * 只有拿着这把特定剑的右键才触发。
  * <p>
  * <b>新设计解决方案</b>：
  * <ul>
- *   <li>{@link KeyExtractor} — static 方法，从 PlayerInteractEvent 中提取 Item（替代全局的 getPlayer）</li>
+ *   <li>{@link KeyExtractor} — static 方法，从 PlayerInteractEvent 中提取 Item（按物品路由）</li>
  *   <li>{@link InstanceProvider} — static 工厂方法，根据 Item 查找已注册的魔法剑 Wrapper</li>
  * </ul>
  *
  * <h3>注册方式</h3>
  * <pre>{@code
  * // 1. 启动时注册类（只需一次）
- * handlerRegistry.register(MagicSwordWrapper.class);
+ * eventService.register(MagicSwordWrapper.class);
  *
  * // 2. 创建魔法剑时，将其注册到静态表
  * Item magicSword = Item.get(Item.DIAMOND_SWORD);
@@ -88,7 +87,7 @@ public class MagicSwordWrapper {
      * 自定义提取器：从 PlayerInteractEvent 中提取 Item（手中的物品）。
      * <p>
      * <b>必须是 static</b>：提取时实例尚未创建，无法调用实例方法。
-     * 替代全局提取器的 getPlayer()，改为按 Item 路由。
+     * 按 Item 路由（而非按玩家路由）。
      *
      * @param event 玩家交互事件
      * @return 手中的 Item，或 null（手中无物品）

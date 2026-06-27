@@ -17,4 +17,75 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
+    <dependencies>
+        <!--
+          依赖 jframe_main：它会聚合引入 core / thread / form / event 全部子模块，
+          因此本示例可以直接使用框架的所有服务（EventService / ViewService / ThreadService）。
+        -->
+        <dependency>
+            <groupId>io.github.JiangHu.jframe</groupId>
+            <artifactId>jframe_main</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+
+        <!--
+          GUI 库（表单模块依赖）。system 作用域不会传递，因此这里需要显式声明，
+          以便编译表单视图（FormSimple 等）。
+          注意：system 作用域不会被 maven-shade-plugin 打入 fat jar。
+          若测试服已安装 GUI（作为独立插件 / 放在服务端 libs），表单即可正常工作；
+          否则请将 libs/gui-1.15.1.jar 放到服务端类路径下。详见 README.md。
+        -->
+        <dependency>
+            <groupId>moe.him188.gui</groupId>
+            <artifactId>GUI</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>${project.artifactId}</finalName>
+        <plugins>
+            <!--
+              maven-shade-plugin：把 jframe 各模块与 Spring 打包成单个可部署的插件 jar。
+              Nukkit（服务端）与 Lombok（编译期）不打包；GUI 默认不打包（system 作用域）。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <excludes>
+                                    <!-- 由服务端提供 -->
+                                    <exclude>cn.nukkit:Nukkit</exclude>
+                                    <!-- 编译期注解处理器，运行时不需要 -->
+                                    <exclude>org.projectlombok:lombok</exclude>
+                                    <!-- GUI 为 system 作用域，由服务端类路径提供，不打包 -->
+                                    <exclude>moe.him188.gui:GUI</exclude>
+                                </excludes>
+                            </artifactSet>
+                            <transformers>
+                                <!-- 合并 META-INF/services（Spring 等可能用到） -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <!-- 合并 Spring 的 schema/handlers 映射，避免 XML 解析失败 -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/spring.handlers</resource>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/spring.schemas</resource>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
 </project>

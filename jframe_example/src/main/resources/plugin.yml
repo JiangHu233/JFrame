@@ -1,0 +1,21 @@
+name: JFrameExample
+main: io.github.JiangHu.jframe.example.ExamplePlugin
+version: "1.0.0"
+api: ["1.0.0"]
+author: JiangHu
+description: JFrame 框架示例插件，演示事件 / 表单 / 线程模块的用法。
+
+commands:
+  jframe:
+    description: "打开 JFrame 示例菜单"
+    usage: "/jframe"
+    permission: jframe.example.use
+  sword:
+    description: "获得一把名为 aaa 的闪电钻石剑"
+    usage: "/sword"
+    permission: jframe.example.use
+
+permissions:
+  jframe.example.use:
+    description: "允许使用 /jframe 命令"
+    default: true

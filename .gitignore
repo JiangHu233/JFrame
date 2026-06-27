@@ -38,3 +38,9 @@ build/
 ### Mac OS ###
 .DS_Store
 /.idea/
+/jframe_thread/target/
+/jframe_main/target/
+/jframe_form/target/
+/jframe_example/target/
+/jframe_event/target/
+/jframe_core/target/
