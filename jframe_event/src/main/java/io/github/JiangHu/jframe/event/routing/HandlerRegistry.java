@@ -10,6 +10,8 @@ import io.github.JiangHu.jframe.event.annotation.EventRoute;
 import io.github.JiangHu.jframe.event.annotation.InstanceProvider;
 import io.github.JiangHu.jframe.event.annotation.KeyExtractor;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -67,11 +69,30 @@ public class HandlerRegistry {
      */
     record WrapperRegistration(
             Class<?> wrapperClass,
-            Method instanceProvider,
+            MethodRef instanceProvider,
             ConcurrentHashMap<Object, Object> defaultCache,
-            Map<Class<? extends Event>, List<Method>> extractors,
+            Map<Class<? extends Event>, List<MethodRef>> extractors,
             Map<Class<? extends Event>, List<HandlerTemplate>> handlers
     ) {}
+
+    /**
+     * 方法引用：同时持有 {@link Method}（日志/调试）和 {@link MethodHandle}（高效调用）。
+     * <p>
+     * MethodHandle 经 JIT 编译后接近直接调用，比 {@code Method.invoke} 快 5~50 倍。
+     */
+    record MethodRef(Method method, MethodHandle handle) {
+        static MethodRef of(Method method) {
+            try {
+                method.setAccessible(true);
+                MethodHandle handle = MethodHandles.lookup().unreflect(method);
+                return new MethodRef(method, handle);
+            } catch (IllegalAccessException e) {
+                throw new IllegalArgumentException(
+                        "无法为方法创建 MethodHandle: " + method.getDeclaringClass().getName()
+                                + "." + method.getName(), e);
+            }
+        }
+    }
 
     /** 已绑定的处理器：实例 + 模板 */
     private record BoundHandler(Object instance, HandlerTemplate template) {}
@@ -87,6 +108,12 @@ public class HandlerRegistry {
     private final Set<Class<? extends Event>> subscribed = ConcurrentHashMap.newKeySet();
 
     private final EventEngine engine;
+
+    // ========== ThreadLocal 缓冲区（避免每次事件分配 ArrayList/IdentityHashMap） ==========
+    private static final ThreadLocal<ArrayList<BoundHandler>> MATCHED_BUFFER =
+            ThreadLocal.withInitial(ArrayList::new);
+    private static final ThreadLocal<Set<Object>> DISPATCHED_BUFFER =
+            ThreadLocal.withInitial(() -> Collections.newSetFromMap(new IdentityHashMap<>()));
 
     public HandlerRegistry(EventEngine engine) {
         this.engine = engine;
@@ -108,8 +135,8 @@ public class HandlerRegistry {
      * @param <T>          包装类型
      */
     public <T> void register(Class<T> wrapperClass) {
-        // 扫描 @KeyExtractor 方法（static）
-        Map<Class<? extends Event>, List<Method>> extractors = scanExtractors(wrapperClass);
+        // 扫描 @KeyExtractor 方法（static）→ MethodRef（含 MethodHandle）
+        Map<Class<? extends Event>, List<MethodRef>> extractors = scanExtractors(wrapperClass);
 
         // 强制要求 @KeyExtractor：无提取器则无法路由
         if (extractors.isEmpty()) {
@@ -119,8 +146,8 @@ public class HandlerRegistry {
             return;
         }
 
-        // 扫描 @InstanceProvider 方法（static）
-        Method instanceProvider = scanInstanceProvider(wrapperClass);
+        // 扫描 @InstanceProvider 方法（static）→ MethodRef（含 MethodHandle）
+        MethodRef instanceProvider = scanInstanceProvider(wrapperClass);
 
         // 扫描 @EventHandler + @EventRoute 方法
         Map<Class<? extends Event>, List<HandlerTemplate>> handlers = scanHandlers(wrapperClass, wrapperClass);
@@ -201,51 +228,59 @@ public class HandlerRegistry {
         CopyOnWriteArrayList<WrapperRegistration> regs = registry.get(eventType);
         if (regs == null || regs.isEmpty()) return;
 
-        // ① 收集所有匹配的 (instance, template) 对
-        List<BoundHandler> matched = new ArrayList<>();
-        Set<Object> dispatched = Collections.newSetFromMap(new IdentityHashMap<>());
+        // ① 收集所有匹配的 (instance, template) 对 —— 复用 ThreadLocal 缓冲区（零分配）
+        List<BoundHandler> matched = MATCHED_BUFFER.get();
+        Set<Object> dispatched = DISPATCHED_BUFFER.get();
+        matched.clear();   // 安全清理（防止上次异常残留）
+        dispatched.clear();
 
-        for (WrapperRegistration reg : regs) {
-            // 对象处理器：提取身份 → 获取/创建实例
-            collectObjectHandlers(matched, dispatched, reg, eventType, event);
-        }
+        try {
+            for (WrapperRegistration reg : regs) {
+                // 对象处理器：提取身份 → 获取/创建实例
+                collectObjectHandlers(matched, dispatched, reg, eventType, event);
+            }
 
-        if (matched.isEmpty()) return;
+            if (matched.isEmpty()) return;
 
-        // ② 按优先级降序排序（HIGHEST 在前）
-        matched.sort(Comparator.comparing(
-                (BoundHandler bh) -> bh.template().getPriority(),
-                Comparator.reverseOrder()
-        ));
+            // ② 按优先级降序排序（HIGHEST 在前）
+            matched.sort(Comparator.comparing(
+                    (BoundHandler bh) -> bh.template().getPriority(),
+                    Comparator.reverseOrder()
+            ));
 
-        // ③ 分组分发 + 跨优先级独占
-        EventPriority currentGroup = null;
-        boolean exclusiveClaimed = false;
+            // ③ 分组分发 + 跨优先级独占
+            EventPriority currentGroup = null;
+            boolean exclusiveClaimed = false;
 
-        for (BoundHandler bh : matched) {
-            EventPriority handlerPriority = bh.template().getPriority();
+            for (BoundHandler bh : matched) {
+                EventPriority handlerPriority = bh.template().getPriority();
 
-            // 检查是否进入新的优先级组
-            if (currentGroup != null && handlerPriority != currentGroup) {
-                if (exclusiveClaimed) {
-                    break; // 上一组有独占声明，停止所有低优先级
+                // 检查是否进入新的优先级组
+                if (currentGroup != null && handlerPriority != currentGroup) {
+                    if (exclusiveClaimed) {
+                        break; // 上一组有独占声明，停止所有低优先级
+                    }
+                    currentGroup = handlerPriority;
+                    exclusiveClaimed = false;
                 }
-                currentGroup = handlerPriority;
-                exclusiveClaimed = false;
-            }
-            if (currentGroup == null) {
-                currentGroup = handlerPriority;
-            }
-
-            try {
-                if (bh.template().handle(bh.instance(), event)) {
-                    exclusiveClaimed = true;
+                if (currentGroup == null) {
+                    currentGroup = handlerPriority;
                 }
-            } catch (Exception e) {
-                Server.getInstance().getLogger().error(
-                        "事件处理器异常: " + bh.instance().getClass().getName()
-                                + "." + bh.template().getMethod().getName(), e);
+
+                try {
+                    if (bh.template().handle(bh.instance(), event)) {
+                        exclusiveClaimed = true;
+                    }
+                } catch (Exception e) {
+                    Server.getInstance().getLogger().error(
+                            "事件处理器异常: " + bh.instance().getClass().getName()
+                                    + "." + bh.template().getMethod().getName(), e);
+                }
             }
+        } finally {
+            // 清理缓冲区，供下次复用
+            matched.clear();
+            dispatched.clear();
         }
     }
 
@@ -256,26 +291,28 @@ public class HandlerRegistry {
     private void collectObjectHandlers(List<BoundHandler> matched, Set<Object> dispatched,
                                        WrapperRegistration reg,
                                        Class<? extends Event> eventType, Event event) {
-        List<Method> extractors = reg.extractors().get(eventType);
+        List<MethodRef> extractors = reg.extractors().get(eventType);
 
         if (extractors == null || extractors.isEmpty()) {
             return; // 该事件类型无 @KeyExtractor，无法路由到此 wrapper
         }
 
         // 提取器：逐个尝试，每个产生不同实例都可能匹配（OR 语义）
-        for (Method extractor : extractors) {
+        for (MethodRef extractor : extractors) {
             try {
-                Object key = extractor.invoke(null, event); // static 方法
+                // MethodHandle 直接调用（static 方法无需 receiver 参数）
+                Object key = extractor.handle().invoke(event);
                 if (key == null) continue;
 
                 Object instance = getOrCreateInstance(reg, key);
                 if (instance != null && dispatched.add(instance)) {
                     addHandlers(matched, instance, reg, eventType);
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                // MethodHandle 直接传播异常（不像反射包装为 InvocationTargetException）
                 Server.getInstance().getLogger().error(
                         "KeyExtractor 调用失败: " + reg.wrapperClass().getName()
-                                + "." + extractor.getName(), e);
+                                + "." + extractor.method().getName(), e);
             }
         }
     }
@@ -307,10 +344,10 @@ public class HandlerRegistry {
      */
     private Object getOrCreateInstance(WrapperRegistration reg, Object identity) {
         if (reg.instanceProvider() != null) {
-            // 自定义工厂
+            // 自定义工厂 —— MethodHandle 直接调用（static 方法无需 receiver）
             try {
-                return reg.instanceProvider().invoke(null, identity);
-            } catch (Exception e) {
+                return reg.instanceProvider().handle().invoke(identity);
+            } catch (Throwable e) {
                 Server.getInstance().getLogger().error(
                         "InstanceProvider 调用失败: " + reg.wrapperClass().getName(), e);
                 return null;
@@ -383,8 +420,8 @@ public class HandlerRegistry {
      *
      * @return 事件类型 → 提取方法列表
      */
-    private Map<Class<? extends Event>, List<Method>> scanExtractors(Class<?> clazz) {
-        Map<Class<? extends Event>, List<Method>> result = new HashMap<>();
+    private Map<Class<? extends Event>, List<MethodRef>> scanExtractors(Class<?> clazz) {
+        Map<Class<? extends Event>, List<MethodRef>> result = new HashMap<>();
         Class<?> current = clazz;
         while (current != null && current != Object.class) {
             for (Method method : current.getDeclaredMethods()) {
@@ -394,9 +431,9 @@ public class HandlerRegistry {
                             "@KeyExtractor 方法必须是 static: " + current.getName()
                                     + "." + method.getName());
                 }
-                method.setAccessible(true);
                 Class<? extends Event> eventType = resolveEventTypeFromParam(method);
-                result.computeIfAbsent(eventType, k -> new ArrayList<>()).add(method);
+                // MethodRef.of 内部完成 setAccessible + unreflect（创建 MethodHandle）
+                result.computeIfAbsent(eventType, k -> new ArrayList<>()).add(MethodRef.of(method));
             }
             current = current.getSuperclass();
         }
@@ -408,7 +445,7 @@ public class HandlerRegistry {
      *
      * @return 工厂方法，或 null（无 @InstanceProvider）
      */
-    private Method scanInstanceProvider(Class<?> clazz) {
+    private MethodRef scanInstanceProvider(Class<?> clazz) {
         Class<?> current = clazz;
         while (current != null && current != Object.class) {
             for (Method method : current.getDeclaredMethods()) {
@@ -418,8 +455,8 @@ public class HandlerRegistry {
                             "@InstanceProvider 方法必须是 static: " + current.getName()
                                     + "." + method.getName());
                 }
-                method.setAccessible(true);
-                return method;
+                // MethodRef.of 内部完成 setAccessible + unreflect
+                return MethodRef.of(method);
             }
             current = current.getSuperclass();
         }
@@ -451,6 +488,11 @@ public class HandlerRegistry {
                 result.computeIfAbsent(template.getEventType(), k -> new ArrayList<>()).add(template);
             }
             current = current.getSuperclass();
+        }
+
+        // 预排序：按优先级降序（HIGHEST 在前），避免每次 dispatch 重复排序
+        for (List<HandlerTemplate> list : result.values()) {
+            list.sort(Comparator.comparing(HandlerTemplate::getPriority, Comparator.reverseOrder()));
         }
         return result;
     }

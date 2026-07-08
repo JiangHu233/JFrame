@@ -1,0 +1,6 @@
+name: Test
+main: io.github.JiangHu.test.Main
+version: 1.0.0
+
+depend:
+  - FakeInventories

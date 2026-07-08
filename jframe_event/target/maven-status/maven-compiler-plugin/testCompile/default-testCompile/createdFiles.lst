@@ -10,6 +10,7 @@ io\github\JiangHu\jframe\event\test\fixture\MultiSlotWrapper.class
 io\github\JiangHu\jframe\event\test\fixture\ScanTargetWrapper.class
 io\github\JiangHu\jframe\event\test\NukkitTestBootstrap.class
 io\github\JiangHu\jframe\event\test\fixture\NoExtractorWrapper.class
+io\github\JiangHu\jframe\event\test\fixture\StaticFilterWrapper.class
 io\github\JiangHu\jframe\event\test\fixture\FilterWrapper.class
 io\github\JiangHu\jframe\event\test\fixture\TestEvents$MoveEvent.class
 io\github\JiangHu\jframe\event\test\fixture\ExclusiveWrapper.class

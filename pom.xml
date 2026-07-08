@@ -16,6 +16,7 @@
         <module>jframe_event</module>
         <module>jframe_example</module>
         <module>jframe_command</module>
+        <module>jframe_inventory</module>
     </modules>
 
     <properties>
@@ -27,13 +28,7 @@
 
     <dependencyManagement>
         <dependencies>
-            <dependency>
-                <groupId>moe.him188.gui</groupId>
-                <artifactId>GUI</artifactId>
-                <version>1.0.0</version>
-                <scope>system</scope>
-                <systemPath>${maven.multiModuleProjectDirectory}/libs/gui-1.15.1.jar</systemPath>
-            </dependency>
+
         </dependencies>
     </dependencyManagement>
 

@@ -27,18 +27,21 @@
             <artifactId>jframe_main</artifactId>
             <version>1.0-SNAPSHOT</version>
         </dependency>
-
         <!--
-          GUI 库（表单模块依赖）。system 作用域不会传递，因此这里需要显式声明，
-          以便编译表单视图（FormSimple 等）。
-          注意：system 作用域不会被 maven-shade-plugin 打入 fat jar。
-          若测试服已安装 GUI（作为独立插件 / 放在服务端 libs），表单即可正常工作；
-          否则请将 libs/gui-1.15.1.jar 放到服务端类路径下。详见 README.md。
+          fakeinventories：第三方假方块箱子库，用于对比演示。
+          采用 system 作用域直接引用 libs/ 下的 jar，不安装到本地仓库。
+          shade 插件默认不打包 system 作用域依赖——该 jar 本身是独立 Nukkit 插件，
+          运行时需单独放入服务器 plugins 目录，故不打包进 jframe_example。
+          ${maven.multiModuleProjectDirectory} 指向 reactor 根目录（JFrame/），从根目录构建时路径有效。
         -->
         <dependency>
-            <groupId>moe.him188.gui</groupId>
-            <artifactId>GUI</artifactId>
+            <groupId>com.nukkitx</groupId>
+            <artifactId>fakeinventories</artifactId>
+            <version>1.0.3-MOT-SNAPSHOT</version>
+            <scope>system</scope>
+            <systemPath>${maven.multiModuleProjectDirectory}/libs/fakeinventories-1.0.3-MOT-SNAPSHOT.jar</systemPath>
         </dependency>
+
     </dependencies>
 
     <build>
@@ -66,8 +69,6 @@
                                     <exclude>cn.nukkit:Nukkit</exclude>
                                     <!-- 编译期注解处理器，运行时不需要 -->
                                     <exclude>org.projectlombok:lombok</exclude>
-                                    <!-- GUI 为 system 作用域，由服务端类路径提供，不打包 -->
-                                    <exclude>moe.him188.gui:GUI</exclude>
                                 </excludes>
                             </artifactSet>
                             <transformers>

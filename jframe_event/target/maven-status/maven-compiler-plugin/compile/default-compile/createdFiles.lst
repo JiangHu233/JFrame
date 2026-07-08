@@ -12,4 +12,5 @@ io\github\JiangHu\jframe\event\annotation\InstanceProvider.class
 io\github\JiangHu\jframe\event\EventConsumer.class
 io\github\JiangHu\jframe\event\annotation\EventHandler.class
 io\github\JiangHu\jframe\event\routing\HandlerRegistry.class
+io\github\JiangHu\jframe\event\routing\HandlerRegistry$MethodRef.class
 io\github\JiangHu\jframe\event\config\EventSpringConfig.class
