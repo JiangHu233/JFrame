@@ -33,7 +33,7 @@
           shade 插件默认不打包 system 作用域依赖——该 jar 本身是独立 Nukkit 插件，
           运行时需单独放入服务器 plugins 目录，故不打包进 jframe_example。
           ${maven.multiModuleProjectDirectory} 指向 reactor 根目录（JFrame/），从根目录构建时路径有效。
-        -->
+
         <dependency>
             <groupId>com.nukkitx</groupId>
             <artifactId>fakeinventories</artifactId>
@@ -41,6 +41,7 @@
             <scope>system</scope>
             <systemPath>${maven.multiModuleProjectDirectory}/libs/fakeinventories-1.0.3-MOT-SNAPSHOT.jar</systemPath>
         </dependency>
+        -->
 
     </dependencies>
 

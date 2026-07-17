@@ -63,15 +63,6 @@ public class ExamplePlugin extends PluginBase {
     private CommandAPI commandAPI;
     private InventoryAPI inventoryAPI;
 
-    /**
-     * 第三方 fakeinventories 服务，用于 {@code /inv fake} 对比演示。
-     * <p>
-     * <b>必须通过 {@code ServiceManager} 获取</b>（由 FakeInventoriesPlugin 在 onEnable 时注册），
-     * 而非 {@code new FakeInventories()}。因为假方块的放置/移除与 ContainerOpenPacket 的时序协调
-     * 由 FakeInventoriesPlugin 自己注册的 FakeInventoriesListener 负责；自行 new 的实例不会关联
-     * 该监听器，会导致「假方块生成但界面不弹」。
-     */
-    private FakeInventories fakeInventories;
 
     @Override
     public void onEnable() {
@@ -118,19 +109,6 @@ public class ExamplePlugin extends PluginBase {
         } finally {
             Thread.currentThread().setContextClassLoader(serverClassLoader);
         }
-
-        // 7. 通过官方 ServiceManager 获取 FakeInventories 服务（用于 /inv fake 对比演示）。
-        //    放在类加载器还原之后执行：此调用不依赖 Spring 资源加载。
-        //    FakeInventoriesPlugin（独立插件，load: STARTUP）已先于本插件加载并注册该服务。
-        RegisteredServiceProvider<FakeInventories> provider = getServer().getServiceManager().getProvider(FakeInventories.class);
-
-        if (provider == null || provider.getProvider() == null) {
-            getLogger().error("FakeInventories not found!");
-            getServer().getPluginManager().disablePlugin(this);
-            return;
-        }
-
-        FakeInventories fakeInventories = provider.getProvider();
     }
 
     @Override
@@ -196,39 +174,6 @@ public class ExamplePlugin extends PluginBase {
                     inventoryAPI.openView(player, new ShopInventoryView());
                     player.sendMessage("§a已用 §bjframe_inventory§a 框架打开箱子（声明式组件）");
                 }
-                case "fake" -> {
-                    ChestFakeInventory menu = new ChestFakeInventory(null, "My Menu");
-
-                    // Set menu items
-                    menu.setItem(0, Item.get(Item.DIAMOND).setCustomName("Option 1"));
-                    menu.setItem(1, Item.get(Item.EMERALD).setCustomName("Option 2"));
-                    menu.setItem(2, Item.get(Item.GOLD_INGOT).setCustomName("Option 3"));
-
-                    // Handle clicks
-                    menu.addListener(event -> {
-                        event.setCancelled(); // Prevent taking items
-
-                        Player p = event.getPlayer();
-                        int slot = event.getAction().getSlot();
-
-                        switch (slot) {
-                            case 0:
-                                p.sendMessage("Selected Option 1");
-                                break;
-                            case 1:
-                                p.sendMessage("Selected Option 2");
-                                break;
-                            case 2:
-                                p.sendMessage("Selected Option 3");
-                                break;
-                        }
-
-                        p.removeWindow(event.getInventory()); // Close menu
-                    });
-
-                    // 延迟 10 tick 后再打开（与参考插件 FakeInventoryCommand 一致，避免界面打不开）
-                    getServer().getScheduler().scheduleDelayedTask(this, () -> player.addWindow(menu), 10);
-                }
             }
             return true;
         }
@@ -236,55 +181,8 @@ public class ExamplePlugin extends PluginBase {
         return false;
     }
 
-    /**
-     * 使用第三方 {@code com.nukkitx:fakeinventories} 库打开一个演示箱子（{@code /inv fake}）。
-     * <p>
-     * 遵循官方用法：
-     * <ol>
-     *   <li>通过 ServiceManager 获取 {@link FakeInventories} 服务（在 onEnable 完成）</li>
-     *   <li>用 {@code new ChestFakeInventory(null, title)} 创建箱子</li>
-     *   <li>{@code setItem} 填充、{@code addListener} 监听点击、{@code addWindow} 打开</li>
-     * </ol>
-     * 与 {@code jframe_inventory} 框架的对比要点：
-     * <ul>
-     *   <li>直接继承 Nukkit {@code ContainerInventory}，需手动 {@code setItem} 填充每个格子</li>
-     *   <li>点击通过 {@link com.nukkitx.fakeinventories.inventory.FakeInventoryListener} 回调，
-     *       需手动 {@code setCancelled} 阻止物品被拿走</li>
-     *   <li>无声明式组件、无布局管理器，所有交互逻辑需手写</li>
-     *   <li>假方块放置/移除由库内部 {@code onOpenBlock} 自动完成（与 jframe 的 FakeBlockHelper 思路一致）</li>
-     * </ul>
-     *
-     * @param player 目标玩家
-     */
-    private void openFakeInventory(Player player) {
-        if (fakeInventories == null) {
-            player.sendMessage("§cFakeInventories 服务未加载，无法打开。请检查 fakeinventories 插件是否已安装");
-            return;
-        }
 
-        // 若玩家已有打开的 fake 界面（上次未正常关闭），先清理，避免 "Inventory was already open"
-        fakeInventories.getFakeInventory(player).ifPresent(player::removeWindow);
 
-        // 官方用法：new ChestFakeInventory(holder, title)
-        ChestFakeInventory inv = new ChestFakeInventory(null, "§6§lFakeInventories 演示");
-
-        // 手动填充示例物品（无组件抽象，逐格 setItem）
-        inv.setItem(0, Item.get(Item.DIAMOND).setCustomName("§b钻石"));
-        inv.setItem(4, Item.get(Item.GOLDEN_APPLE).setCustomName("§6金苹果"));
-        inv.setItem(8, Item.get(Item.REDSTONE).setCustomName("§c红石 (点击我)"));
-
-        // 点击监听：禁止拿走物品，仅提示所点击的槽位
-        inv.addListener(event -> {
-            event.setCancelled();
-            player.sendMessage("§7[fake] 你点击了槽位 §f" + event.getAction().getSlot());
-        });
-
-        // 延迟 10 tick 后再打开（与参考插件 FakeInventoryCommand 一致，避免界面打不开）
-        getServer().getScheduler().scheduleDelayedTask(this, () -> {
-            player.addWindow(inv);
-            player.sendMessage("§a已用 §bnukkitx fakeinventories§a 库打开箱子（原生 API）");
-        }, 10);
-    }
 
     @Override
     public void onDisable() {

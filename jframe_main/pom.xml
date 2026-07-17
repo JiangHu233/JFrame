@@ -54,4 +54,50 @@
         </dependency>
     </dependencies>
 
+    <build>
+        <finalName>${project.artifactId}</finalName>
+        <plugins>
+            <!--
+              maven-shade-plugin：把 jframe 各子模块与 Spring 打包成单个可部署的「前置插件」jar。
+              Nukkit（服务端）与 Lombok（编译期）不打包。
+              产物 jframe_main.jar 可直接放入服务器 plugins 目录，供其他插件 depend 使用。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <excludes>
+                                    <!-- 由服务端提供 -->
+                                    <exclude>cn.nukkit:Nukkit</exclude>
+                                    <!-- 编译期注解处理器，运行时不需要 -->
+                                    <exclude>org.projectlombok:lombok</exclude>
+                                </excludes>
+                            </artifactSet>
+                            <transformers>
+                                <!-- 合并 META-INF/services（Spring 等可能用到） -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <!-- 合并 Spring 的 schema/handlers 映射，避免 XML 解析失败 -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/spring.handlers</resource>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/spring.schemas</resource>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
 </project>

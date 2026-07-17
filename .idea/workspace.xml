@@ -4,157 +4,44 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="ee7e2ca8-b552-4a0c-aeb5-a245fbe15427" name="更改" comment="core(jframe)">
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/command/KitController.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/inventory/ShopInventoryView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/BuildStrategyDemoView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/CustomFormDemoView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/DataBusDemoView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/FormDemoView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/IconDemoView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/ModalFormDemoView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/NavigationDemoView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/NavigationReplacedView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/NavigationSubView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/OnDataDemoView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/OnDataDetailView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/ShopSubView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/DEVELOPER.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/ViewManager.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/data/ViewDataBus.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/element/DropdownElement.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/element/FormElement.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/element/InputElement.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/element/LabelElement.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/element/SliderElement.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/element/StepSliderElement.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/element/ToggleElement.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/response/ButtonClick.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/response/FormResult.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/window/Button.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/window/CustomForm.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/window/FormIcon.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/window/JForm.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/window/ModalForm.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/window/SimpleForm.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/pom.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/DEVELOPER.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/InventoryAPI.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/README.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/component/Button.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/component/Filler.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/component/IconLabel.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/component/InventoryComponent.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/component/Panel.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/component/StorageBox.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/config/InventorySpringConfig.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/layout/BorderLayout.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/layout/GridLayout.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/layout/Layout.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/layout/ManualLayout.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/manager/InventoryManager.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/model/SlotAppearance.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/model/SlotType.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/model/event/ClickEvent.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/model/event/StoreEvent.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/view/FakeBlockHelper.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/view/InventoryView.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/view/RenderContext.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/view/SlotData.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/view/VirtualInventory.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/src/main/resources/inventory-spring.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/inventory-spring.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/InventoryAPI.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/component/Button.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/component/Filler.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/component/IconLabel.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/component/InventoryComponent.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/component/Panel.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/component/StorageBox.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/config/InventorySpringConfig.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/layout/BorderLayout$Constraint.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/layout/BorderLayout.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/layout/GridLayout.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/layout/Layout.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/layout/ManualLayout.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/manager/InventoryManager$1.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/manager/InventoryManager.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/model/SlotAppearance$Builder.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/model/SlotAppearance.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/model/SlotType.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/model/event/ClickEvent.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/model/event/StoreEvent.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/view/FakeBlockHelper$1.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/view/FakeBlockHelper.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/view/InventoryView.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/view/RenderContext.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/view/SlotData.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/classes/io/github/JiangHu/jframe/inventory/view/VirtualInventory.class" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/jframe_inventory/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/libs/fakeinventories-1.0.3-MOT-SNAPSHOT.jar" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/reference/Test/.gitignore" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/reference/Test/.idea/.gitignore" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/reference/Test/.idea/encodings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/reference/Test/.idea/misc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/reference/Test/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/reference/Test/pom.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/reference/Test/src/main/java/io/github/JiangHu/test/FakeInventoryCommand.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/reference/Test/src/main/java/io/github/JiangHu/test/Main.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/reference/Test/src/main/resources/plugin.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/compiler.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/compiler.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/encodings.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/encodings.xml" afterDir="false" />
+    <list default="true" id="ee7e2ca8-b552-4a0c-aeb5-a245fbe15427" name="更改" comment="feat(form): 添加表单系统和边框布局功能&#10;&#10;- 实现了 BorderLayout 类，支持 NORTH、SOUTH、CENTER、EAST、WEST 五个区域布局&#10;- 添加了面向对象的 Button 类，支持文本、图标和点击回调，消除传统索引分发&#10;- 创建了完整的表单系统，包括 CustomForm、SimpleForm、ModalForm 等多种表单类型&#10;- 实现了表单元素系统，支持 InputElement、DropdownElement、SliderElement 等六种输入元素&#10;- 添加了 ViewDataBus 数据总线功能，支持跨视图数据共享和响应式更新&#10;- 实现了 BuildStrategy 构建策略，支持 ON_DEMAND 按需构建优化性能&#10;- 创建了 ButtonClick 点击事件上下文，提供便捷的导航方法如 goBack、refresh 等&#10;- 添加了 FormResult 结果处理机制，支持类型安全的数据读取&#10;- 实现了表单生命周期管理，包括打开、关闭、重建等状态控制&#10;- 创建了丰富的表单演示示例，涵盖各种使用场景和交互模式">
+      <change afterPath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/README.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/map/AbstractFunctionalMap.java" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/map/LruCacheMap.java" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/map/PlayerDataMap.java" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/Entangled.java" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledChannel.java" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledEvent.java" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledValue.java" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/Role.java" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_command/target/jframe_command-1.0-SNAPSHOT.jar" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_command/target/jframe_command-1.0-SNAPSHOT.jar" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_command/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_command/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_command/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/createdFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_command/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/createdFiles.lst" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_core/target/jframe_core-1.0-SNAPSHOT.jar" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_core/target/jframe_core-1.0-SNAPSHOT.jar" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_core/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/createdFiles.lst" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/src/main/java/io/github/JiangHu/jframe/event/DEVELOPER.md" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/src/main/java/io/github/JiangHu/jframe/event/DEVELOPER.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/src/main/java/io/github/JiangHu/jframe/event/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/src/main/java/io/github/JiangHu/jframe/event/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/src/main/java/io/github/JiangHu/jframe/event/routing/HandlerRegistry.java" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/src/main/java/io/github/JiangHu/jframe/event/routing/HandlerRegistry.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/src/main/java/io/github/JiangHu/jframe/event/routing/HandlerTemplate.java" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/src/main/java/io/github/JiangHu/jframe/event/routing/HandlerTemplate.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/target/classes/io/github/JiangHu/jframe/event/routing/HandlerRegistry$1.class" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/target/classes/io/github/JiangHu/jframe/event/routing/HandlerRegistry$1.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/target/classes/io/github/JiangHu/jframe/event/routing/HandlerRegistry$BoundHandler.class" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/target/classes/io/github/JiangHu/jframe/event/routing/HandlerRegistry$BoundHandler.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/target/classes/io/github/JiangHu/jframe/event/routing/HandlerRegistry$WrapperRegistration.class" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/target/classes/io/github/JiangHu/jframe/event/routing/HandlerRegistry$WrapperRegistration.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/target/classes/io/github/JiangHu/jframe/event/routing/HandlerRegistry.class" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/target/classes/io/github/JiangHu/jframe/event/routing/HandlerRegistry.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/target/classes/io/github/JiangHu/jframe/event/routing/HandlerTemplate.class" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/target/classes/io/github/JiangHu/jframe/event/routing/HandlerTemplate.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/target/jframe_event-1.0-SNAPSHOT.jar" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/target/jframe_event-1.0-SNAPSHOT.jar" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/createdFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/createdFiles.lst" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_event/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/inputFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_event/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/inputFiles.lst" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/annotation/RuntimeData.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_core/src/main/java/io/github/JiangHu/jframe/core/annotation/SerializableData.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_core/target/classes/io/github/JiangHu/jframe/core/annotation/RuntimeData.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_core/target/classes/io/github/JiangHu/jframe/core/annotation/SerializableData.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_core/target/jframe_core-1.0-SNAPSHOT.jar" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_core/target/maven-archiver/pom.properties" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_core/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_core/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_core/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_core/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_core/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/inputFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_core/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/inputFiles.lst" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/jframe_example/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/pom.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/MainMenuView.java" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/MainMenuView.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/StatsView.java" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/src/main/java/io/github/JiangHu/jframe/example/view/StatsView.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_example/src/main/resources/plugin.yml" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/src/main/resources/plugin.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/ExamplePlugin.class" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/ExamplePlugin.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/view/MainMenuView.class" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/view/MainMenuView.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/view/StatsView.class" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/view/StatsView.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/plugin.yml" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/target/classes/plugin.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_example/target/jframe_example.jar" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/target/jframe_example.jar" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/ExamplePlugin.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/view/MainMenuView.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/view/StatsView.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/wrapper/ChatGuardWrapper.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/wrapper/PlayerStatWrapper.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/wrapper/Template$Identifier.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/wrapper/Template.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/wrapper/ThunderSwordWrapper$SwordId.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_example/target/classes/io/github/JiangHu/jframe/example/wrapper/ThunderSwordWrapper.class" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/jframe_example/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_example/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_example/target/original-jframe_example.jar" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_example/target/original-jframe_example.jar" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_form/pom.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/FormView.java" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/FormView.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/SinglePlayerViewManager.java" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/ViewAPI.java" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_form/src/main/java/io/github/JiangHu/jframe/form/ViewAPI.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/target/classes/io/github/JiangHu/jframe/form/FormView.class" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_form/target/classes/io/github/JiangHu/jframe/form/FormView.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/target/classes/io/github/JiangHu/jframe/form/SinglePlayerViewManager.class" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/target/jframe_form-1.0-SNAPSHOT.jar" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/target/maven-archiver/pom.properties" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_form/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_form/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/createdFiles.lst" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_form/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/inputFiles.lst" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/jframe_main/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_main/pom.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_main/target/jframe_main-1.0-SNAPSHOT.jar" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_main/target/jframe_main-1.0-SNAPSHOT.jar" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_thread/target/jframe_thread-1.0-SNAPSHOT.jar" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_thread/target/jframe_thread-1.0-SNAPSHOT.jar" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/jframe_thread/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_thread/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/logs/server.log" beforeDir="false" afterPath="$PROJECT_DIR$/logs/server.log" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/pom.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/jframe_main/target/classes/io/github/JiangHu/jframe/main/JFrameMain.class" beforeDir="false" afterPath="$PROJECT_DIR$/jframe_main/target/classes/io/github/JiangHu/jframe/main/JFrameMain.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/libs/fakeinventories-1.0.3-MOT-SNAPSHOT.jar" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/libs/gui-1.15.1.jar" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/建议的框架改进.txt" beforeDir="false" afterPath="$PROJECT_DIR$/建议的框架改进.txt" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -265,7 +152,7 @@
       <recent name="com.jframe.annotation" />
     </key>
   </component>
-  <component name="RunManager" selected="应用程序.EventRoutingTest">
+  <component name="RunManager" selected="应用程序.main">
     <configuration name="CommandLogicTest" type="Application" factoryName="Application" temporary="true" nameIsGenerated="true">
       <option name="MAIN_CLASS_NAME" value="io.github.JiangHu.jframe.command.test.CommandLogicTest" />
       <module name="jframe_command" />
@@ -307,9 +194,9 @@
     </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="应用程序.main" />
         <item itemvalue="应用程序.EventRoutingTest" />
         <item itemvalue="应用程序.CommandLogicTest" />
-        <item itemvalue="应用程序.main" />
         <item itemvalue="应用程序.main" />
         <item itemvalue="应用程序.main" />
       </list>
@@ -355,7 +242,13 @@
       <workItem from="1783425568529" duration="2168000" />
       <workItem from="1783427766913" duration="8464000" />
       <workItem from="1783488839667" duration="9924000" />
-      <workItem from="1783506547375" duration="6595000" />
+      <workItem from="1783506547375" duration="6782000" />
+      <workItem from="1783847398490" duration="19000" />
+      <workItem from="1783852197906" duration="12000" />
+      <workItem from="1783858182189" duration="12000" />
+      <workItem from="1784203720605" duration="9747000" />
+      <workItem from="1784275046951" duration="11253000" />
+      <workItem from="1784286357118" duration="1470000" />
     </task>
     <task id="LOCAL-00001" summary="feat(core): 初始化项目基础架构与核心功能模块&#10;&#10;- 添加 Git 忽略文件配置，排除 IDE 和构建产物&#10;- 创建 Maven 多模块项目结构，包含 core、thread、form 等模块&#10;- 集成 Spring 框架配置，支持依赖注入和组件扫描&#10;- 实现事件服务系统，支持基于 Nukkit 的动态事件分发&#10;- 添加表单界面管理功能，支持多层级界面导航&#10;- 实现线程任务服务，提供命名线程池管理能力&#10;- 创建运行时数据和可序列化数据注解标记&#10;- 添加测试代码验证各模块基本功能">
       <option name="closed" value="true" />
@@ -421,7 +314,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782559327278</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="feat(form): 添加表单系统和边框布局功能&#10;&#10;- 实现了 BorderLayout 类，支持 NORTH、SOUTH、CENTER、EAST、WEST 五个区域布局&#10;- 添加了面向对象的 Button 类，支持文本、图标和点击回调，消除传统索引分发&#10;- 创建了完整的表单系统，包括 CustomForm、SimpleForm、ModalForm 等多种表单类型&#10;- 实现了表单元素系统，支持 InputElement、DropdownElement、SliderElement 等六种输入元素&#10;- 添加了 ViewDataBus 数据总线功能，支持跨视图数据共享和响应式更新&#10;- 实现了 BuildStrategy 构建策略，支持 ON_DEMAND 按需构建优化性能&#10;- 创建了 ButtonClick 点击事件上下文，提供便捷的导航方法如 goBack、refresh 等&#10;- 添加了 FormResult 结果处理机制，支持类型安全的数据读取&#10;- 实现了表单生命周期管理，包括打开、关闭、重建等状态控制&#10;- 创建了丰富的表单演示示例，涵盖各种使用场景和交互模式">
+      <option name="closed" value="true" />
+      <created>1783525492986</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1783525492986</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -457,7 +358,8 @@
     <MESSAGE value="Initial commit" />
     <MESSAGE value="core()" />
     <MESSAGE value="core(jframe)" />
-    <option name="LAST_COMMIT_MESSAGE" value="core(jframe)" />
+    <MESSAGE value="feat(form): 添加表单系统和边框布局功能&#10;&#10;- 实现了 BorderLayout 类，支持 NORTH、SOUTH、CENTER、EAST、WEST 五个区域布局&#10;- 添加了面向对象的 Button 类，支持文本、图标和点击回调，消除传统索引分发&#10;- 创建了完整的表单系统，包括 CustomForm、SimpleForm、ModalForm 等多种表单类型&#10;- 实现了表单元素系统，支持 InputElement、DropdownElement、SliderElement 等六种输入元素&#10;- 添加了 ViewDataBus 数据总线功能，支持跨视图数据共享和响应式更新&#10;- 实现了 BuildStrategy 构建策略，支持 ON_DEMAND 按需构建优化性能&#10;- 创建了 ButtonClick 点击事件上下文，提供便捷的导航方法如 goBack、refresh 等&#10;- 添加了 FormResult 结果处理机制，支持类型安全的数据读取&#10;- 实现了表单生命周期管理，包括打开、关闭、重建等状态控制&#10;- 创建了丰富的表单演示示例，涵盖各种使用场景和交互模式" />
+    <option name="LAST_COMMIT_MESSAGE" value="feat(form): 添加表单系统和边框布局功能&#10;&#10;- 实现了 BorderLayout 类，支持 NORTH、SOUTH、CENTER、EAST、WEST 五个区域布局&#10;- 添加了面向对象的 Button 类，支持文本、图标和点击回调，消除传统索引分发&#10;- 创建了完整的表单系统，包括 CustomForm、SimpleForm、ModalForm 等多种表单类型&#10;- 实现了表单元素系统，支持 InputElement、DropdownElement、SliderElement 等六种输入元素&#10;- 添加了 ViewDataBus 数据总线功能，支持跨视图数据共享和响应式更新&#10;- 实现了 BuildStrategy 构建策略，支持 ON_DEMAND 按需构建优化性能&#10;- 创建了 ButtonClick 点击事件上下文，提供便捷的导航方法如 goBack、refresh 等&#10;- 添加了 FormResult 结果处理机制，支持类型安全的数据读取&#10;- 实现了表单生命周期管理，包括打开、关闭、重建等状态控制&#10;- 创建了丰富的表单演示示例，涵盖各种使用场景和交互模式" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
