@@ -17,6 +17,7 @@
         <module>jframe_example</module>
         <module>jframe_command</module>
         <module>jframe_inventory</module>
+        <module>jframe_data</module>
     </modules>
 
     <properties>

@@ -23,6 +23,7 @@
         <module name="jframe_inventory" />
         <module name="jframe_form" />
         <module name="jframe_main" />
+        <module name="jframe_data" />
       </profile>
     </annotationProcessing>
   </component>
