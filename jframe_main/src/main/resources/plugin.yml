@@ -1,0 +1,10 @@
+name: JFrame
+main: io.github.JiangHu.jframe.main.JFrameMain
+version: "1.0.0"
+api: ["1.0.0"]
+author: JiangHu
+description: >-
+  JFrame 框架前置插件。提供事件 / 表单 / 线程 / 命令 / 箱子界面等模块的统一 API。
+  其他插件可通过 depend: [JFrame] 引用本插件，再通过
+  JFrameMain.getInstance().getXxxAPI() 或
+  Server.getServiceManager().getProvider(XxxAPI.class) 获取各模块服务。
