@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CompilerConfiguration">
+    <annotationProcessing>
+      <profile default="true" name="Default" enabled="true" />
+      <profile name="Maven default annotation processors profile" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+      </profile>
+      <profile name="Annotation profile for JFrame" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+        <processorPath useClasspath="false">
+          <entry name="$MAVEN_REPOSITORY$/org/projectlombok/lombok/1.18.42/lombok-1.18.42.jar" />
+        </processorPath>
+        <module name="jframe_core" />
+        <module name="jframe_event" />
+        <module name="jframe_command" />
+        <module name="jframe_thread" />
+        <module name="jframe_example" />
+        <module name="jframe_inventory" />
+        <module name="jframe_form" />
+        <module name="jframe_main" />
+        <module name="jframe_data" />
+      </profile>
+    </annotationProcessing>
+  </component>
+</project>

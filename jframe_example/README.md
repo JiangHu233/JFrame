@@ -1,6 +1,6 @@
 # JFrame 示例插件（jframe_example）
 
-这是一个完整的 **Nukkit（我的世界基岩版服务端）插件**样例，演示如何使用 JFrame 框架的 **事件 / 表单 / 线程** 三大模块搭建一个可运行、可测试的插件。
+这是一个完整的 **Nukkit（我的世界基岩版服务端）插件**样例，演示如何使用 JFrame 框架的 **事件 / 表单 / 线程 / 命令** 四大模块搭建一个可运行、可测试的插件。
 
 > 示例源码都在 `jframe_example` 内。为消除事件模块的 Spring 循环依赖，本次对 `jframe_event` 做了重构（拆分出内部 `EventEngine` + 公开 `EventService` 门面），详见根目录《建议的框架改进.txt》建议 6。
 
@@ -13,7 +13,9 @@ jframe_example/
 ├── pom.xml                                   # Maven 构建（含 shade 打 fat jar）
 └── src/main/
     ├── java/io/github/JiangHu/jframe/example/
-    │   ├── ExamplePlugin.java                # 插件主类：引导 Spring、绑定插件、注册包装类
+    │   ├── ExamplePlugin.java                # 插件主类：引导 Spring、绑定插件、注册包装类与命令
+    │   ├── command/
+    │   │   └── KitController.java              # 命令模块示例：声明式 /kit 子命令（路径变量/命名参数/权限）
     │   ├── wrapper/
     │   │   ├── PlayerStatWrapper.java        # 示例1：每个玩家独立的统计实例
     │   │   └── ChatGuardWrapper.java         # 示例2：全局单例聊天审核
@@ -77,6 +79,12 @@ mvn clean package
 | 栈式导航（进入子菜单） | [`MainMenuView`](src/main/java/io/github/JiangHu/jframe/example/view/MainMenuView.java) | `FormView.addStack()` |
 | 同层替换（返回主菜单） | [`StatsView`](src/main/java/io/github/JiangHu/jframe/example/view/StatsView.java) | `FormView.replaceThis()` |
 | 异步任务队列 | [`MainMenuView`](src/main/java/io/github/JiangHu/jframe/example/view/MainMenuView.java) | `ThreadService.pushTask()` |
+| 声明式命令路由（替代 onCommand 的 if/else） | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | `@CommandController` / `@CommandMapping` |
+| 路径变量 + 自动类型转换 | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | `@PathVariable`（`give {item} {count}`） |
+| 命名参数 + 默认值 / 布尔标记 | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | `@CommandParam`（`heal --amount` / `fly --on`） |
+| 贪婪变量（捕获剩余参数） | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | `{*msg}`（`broadcast {*msg}`） |
+| 仅玩家可用 + 权限校验 | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | `@Sender Player` + `permission` |
+| 根命令动态注册到 Nukkit | [`ExamplePlugin`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java) | `CommandAPI.scan()`（无需 plugin.yml） |
 
 ---
 
@@ -109,6 +117,26 @@ mvn clean package
 - **操作**：玩家发送包含违禁词（`fuck` / `shit` / `idiot`，不区分大小写）的消息
 - **预期**：消息被拦截，收到 `§c请文明发言！...`；且该条消息**不计入聊天次数**（验证 HIGH 独占阻止了 NORMAL 的统计处理器）
 - **对照**：发送正常消息时，聊天次数 +1（两个处理器都执行）
+
+### ⑦ 命令 - 声明式命令路由（`/kit`）
+
+命令模块用注解声明子命令，框架自动完成路由匹配、参数解析与类型转换，**无需手写 `onCommand` 的 `if/else`**。根命令 `/kit` 由 `CommandEngine` 在插件启用时动态注册到 Nukkit，**无需在 `plugin.yml` 声明**。
+
+| 操作 | 预期 | 验证能力 |
+|------|------|----------|
+| `/kit` | 显示帮助菜单 | 空路径匹配根命令本身 |
+| `/kit give 264 64` | 获得 64 个对应物品 | 路径变量 `{item}` + `{count}` 自动转 int |
+| `/kit give 264 abc` | 返回 `§c参数错误...` | 类型转换失败提示 |
+| `/kit sword` | 获得闪电钻石剑 | 与事件模块工具类结合 |
+| `/kit heal` | 生命值恢复至 20 | 命名参数默认值 |
+| `/kit heal --amount 10` | 生命值恢复至 10 | 命名参数 `--amount` |
+| `/kit fly --on` | 提示飞行已启用 | 布尔标记 |
+| `/kit broadcast 你好 世界` | 全服广播 `[广播] ...` | 贪婪变量 `{*msg}` 捕获剩余参数 |
+| `/kit whoami` | 显示名字/坐标/生命 | `@Sender Player`（仅玩家）+ 权限 |
+| 控制台执行 `/kit whoami` | 返回 `§c该命令只能由玩家在游戏内执行` | `@Sender Player` 类型约束 |
+| `/kit xyz`（未知子命令） | 返回 `§c未知的子命令...` | 路由未命中兜底 |
+
+> **特异性路由**：输入 `/kit give ...` 时，`give {item} {count}`（静态段多）会优先于 `/kit`（根命令帮助）命中，因此不会误触发帮助。
 
 ---
 

@@ -3,31 +3,33 @@ package io.github.JiangHu.jframe.example.view;
 import cn.nukkit.Player;
 import io.github.JiangHu.jframe.example.wrapper.PlayerStatWrapper;
 import io.github.JiangHu.jframe.form.FormView;
-import io.github.JiangHu.jframe.thread.ThreadService;
-import moe.him188.gui.window.FormSimple;
+import io.github.JiangHu.jframe.form.window.JForm;
+import io.github.JiangHu.jframe.form.window.SimpleForm;
+import io.github.JiangHu.jframe.thread.ThreadAPI;
 
 /**
  * 主菜单界面。
  * <p>
- * 演示表单模块的用法：
+ * 演示新架构表单模块的用法：
  * <ul>
- *   <li>{@link #buildForm()} —— 每次发送前都会重新构建，因此内容始终展示最新统计</li>
- *   <li>{@link #onClicked(int)} —— 按钮回调，进入子菜单或提交异步任务</li>
- *   <li>{@link FormSimple} —— GUI 库的简单表单（标题 + 内容 + 按钮）</li>
+ *   <li>{@link #onBuild()} —— 面向对象构建，每次发送前都会重新执行，内容始终展示最新统计</li>
+ *   <li>{@link SimpleForm#button(String, java.util.function.Consumer)} —— 按钮自带回调，
+ *       无需 {@code switch(id)} 魔法索引</li>
+ *   <li>{@link #getData(String, Object)} —— 从数据总线读取共享状态</li>
  * </ul>
  */
 public class MainMenuView extends FormView {
 
-    private final ThreadService threadService;
+    private final ThreadAPI threadAPI;
     private final Player player;
 
-    public MainMenuView(ThreadService threadService, Player player) {
-        this.threadService = threadService;
+    public MainMenuView(ThreadAPI threadAPI, Player player) {
+        this.threadAPI = threadAPI;
         this.player = player;
     }
 
     @Override
-    public void buildForm() {
+    protected JForm onBuild() {
         // 直接读取事件系统维护的玩家统计（对象级处理器的实例数据）
         PlayerStatWrapper stat = PlayerStatWrapper.get(player);
         int move = stat == null ? 0 : stat.getMoveCount();
@@ -39,19 +41,23 @@ public class MainMenuView extends FormView {
                 + "§7━━━━━━━━━━━━━━━━\n"
                 + "§8（点击窗口右上角 X 可关闭菜单）";
 
-        // FormSimple(标题, 内容, 按钮...)，按钮索引从 0 开始
-        form = new FormSimple("§6§lJFrame 示例菜单", content,
-                "§a📊 查看详细统计",
-                "§b⚡ 执行异步任务");
+        // 面向对象构建：按钮自带回调，消除 switch(id) 魔法索引
+        return new SimpleForm("§6§lJFrame 示例菜单")
+                .content(content)
+                .button("§a📊 查看详细统计", ctx -> addStack(new StatsView(threadAPI, player)))
+                .button("§b⚡ 执行异步任务", ctx -> runAsyncTask())
+                .button("§9🧪 表单特性演示", ctx -> addStack(new FormDemoView(threadAPI, player)));
     }
 
+    /**
+     * 玩家点击窗口右上角 X 关闭菜单时，真正关闭整个界面（清空视图栈）。
+     * <p>
+     * 新架构下，关闭窗口后框架默认会重发栈顶（窗口弹回）；
+     * 此处主动调用 {@link #close()} 清空栈，从而真正关闭菜单。
+     */
     @Override
-    protected void onClicked(int id) {
-        switch (id) {
-            case 0 -> addStack(new StatsView(threadService, player)); // 进入子菜单
-            case 1 -> runAsyncTask();                                 // 提交异步任务
-            default -> { /* 未知按钮，忽略 */ }
-        }
+    protected void onCloseAttempt() {
+        close();
     }
 
     /**
@@ -61,7 +67,7 @@ public class MainMenuView extends FormView {
      * 注意：跨线程仅发送简单文本消息；若需操作主线程 API，应调度回主线程。
      */
     private void runAsyncTask() {
-        threadService.pushTask("example", () -> {
+        threadAPI.pushTask("example", () -> {
             try {
                 Thread.sleep(1000); // 模拟耗时计算
             } catch (InterruptedException e) {

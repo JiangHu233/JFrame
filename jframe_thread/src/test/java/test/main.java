@@ -1,25 +1,25 @@
 package test;
 
-import io.github.JiangHu.jframe.thread.ThreadService;
+import io.github.JiangHu.jframe.thread.ThreadAPI;
 
 public class main {
     public static void main(String[] args) {
-        ThreadService threadService = new ThreadService();
-        threadService.createThreadTask("test");
-        threadService.pushTask("test", () -> {
+        ThreadAPI threadAPI = new ThreadAPI();
+        threadAPI.createThreadTask("test");
+        threadAPI.pushTask("test", () -> {
             System.out.println("test");
         });
-        threadService.pushTask("test", () -> {
+        threadAPI.pushTask("test", () -> {
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
         });
-        threadService.pushTask("test", () -> {
+        threadAPI.pushTask("test", () -> {
             System.out.println("test3");
         });
 
-        threadService.stopAll();
+        threadAPI.stopAll();
     }
 }

@@ -10,7 +10,10 @@ import org.springframework.expression.Expression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 
 /**
  * 处理器模板：封装一个被 {@link EventRoute} + {@link EventHandler} 标注的方法。
@@ -33,8 +36,14 @@ public class HandlerTemplate {
     /** 声明此处理器的包装类（用于 filter 方法查找） */
     private final Class<?> declaringClass;
 
-    /** 要调用的方法（已设置 accessible） */
+    /** 要调用的方法（已设置 accessible，保留用于日志/调试） */
     private final Method method;
+
+    /** 方法的 MethodHandle（高效调用，替代反射） */
+    private final MethodHandle methodHandle;
+
+    /** 方法是否为 static（决定 invoke 时是否传入 target receiver） */
+    private final boolean handlerStatic;
 
     /** 处理的事件类型 */
     private final Class<? extends Event> eventType;
@@ -42,8 +51,14 @@ public class HandlerTemplate {
     /** 预编译的 SpEL 条件表达式，null 表示无 SpEL 条件 */
     private final Expression conditionExpression;
 
-    /** filter 筛选方法（已设置 accessible），null 表示无 filter */
+    /** filter 筛选方法（已设置 accessible，保留用于日志），null 表示无 filter */
     private final Method filterMethod;
+
+    /** filter 方法的 MethodHandle，null 表示无 filter */
+    private final MethodHandle filterHandle;
+
+    /** filter 方法是否为 static（决定 invoke 时是否传入 target receiver） */
+    private final boolean filterStatic;
 
     /** 事件优先级 */
     private final EventPriority priority;
@@ -67,6 +82,8 @@ public class HandlerTemplate {
         this.declaringClass = declaringClass;
         this.method = method;
         this.method.setAccessible(true);
+        this.methodHandle = createMethodHandle(method);
+        this.handlerStatic = Modifier.isStatic(method.getModifiers());
         this.priority = handler.priority();
         this.exclusive = handler.exclusive();
 
@@ -97,6 +114,12 @@ public class HandlerTemplate {
             this.conditionExpression = null;
             this.filterMethod = null;
         }
+
+        // 预编译 filter 的 MethodHandle（filterMethod 已在 resolveFilterMethod 中 setAccessible）
+        this.filterHandle = this.filterMethod != null ? createMethodHandle(this.filterMethod) : null;
+        // 预计算 filter 是否为 static：static 方法的 MethodHandle 不含 receiver 参数，
+        // invoke 时只能传 event，否则抛 WrongMethodTypeException
+        this.filterStatic = this.filterMethod != null && Modifier.isStatic(this.filterMethod.getModifiers());
     }
 
     /**
@@ -113,9 +136,17 @@ public class HandlerTemplate {
             if (!passesCondition(target, event)) {
                 return false; // 条件不满足，未执行，不独占
             }
-            method.invoke(target, event);
+            // MethodHandle 直接调用，JIT 可内联（替代反射 method.invoke）
+            // static 方法无 receiver，只需传入 event；实例方法需传入 target
+            if (handlerStatic) {
+                methodHandle.invoke(event);
+            } else {
+                methodHandle.invoke(target, event);
+            }
             return exclusive; // 执行了，返回 exclusive 标记
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // MethodHandle 直接传播目标方法异常（不像反射包装为 InvocationTargetException），
+            // 故用 catch(Throwable) 确保管线不被中断
             throw new RuntimeException(
                     "事件处理器执行失败: " + target.getClass().getName() + "." + method.getName(), e);
         }
@@ -131,12 +162,15 @@ public class HandlerTemplate {
         // filter 方法
         if (filterMethod != null) {
             try {
-                Object result = filterMethod.invoke(target, event);
+                // static filter 无 receiver，只需传入 event；实例 filter 需传入 target
+                Object result = filterStatic
+                        ? filterHandle.invoke(event)
+                        : filterHandle.invoke(target, event);
                 if (result instanceof Boolean b) {
                     return b;
                 }
                 return false;
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 Server.getInstance().getLogger().error(
                         "filter 方法执行失败: " + filterMethod.getName(), e);
                 return false;
@@ -157,6 +191,25 @@ public class HandlerTemplate {
     }
 
     // ========== 静态工具方法 ==========
+
+    /**
+     * 为方法创建 MethodHandle（高效调用替代反射）。
+     * <p>
+     * 方法必须已通过 {@code setAccessible(true)} 取消访问限制。
+     * MethodHandle 经 JIT 编译后接近直接调用，比 {@code Method.invoke} 快 5~50 倍。
+     *
+     * @param method 已设置 accessible 的方法
+     * @return 对应的 MethodHandle
+     */
+    private static MethodHandle createMethodHandle(Method method) {
+        try {
+            return MethodHandles.lookup().unreflect(method);
+        } catch (IllegalAccessException e) {
+            throw new IllegalArgumentException(
+                    "无法为方法创建 MethodHandle: " + method.getDeclaringClass().getName()
+                            + "." + method.getName(), e);
+        }
+    }
 
     /**
      * 从方法的第一个参数推断事件类型。

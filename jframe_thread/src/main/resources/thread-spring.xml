@@ -5,7 +5,7 @@
        http://www.springframework.org/schema/beans/spring-beans.xsd">
 
     <!-- 具体的配置内容 -->
-    <bean class="io.github.JiangHu.jframe.thread.ThreadService" id="threadService">
+    <bean class="io.github.JiangHu.jframe.thread.ThreadAPI" id="threadAPI">
     </bean>
 
 </beans>

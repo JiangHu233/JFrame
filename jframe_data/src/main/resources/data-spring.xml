@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+       http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!--
+        数据模块 Bean 装配（单向 DAG，无循环依赖）：
+        创建顺序：metadataCache → dataSaver
+
+        metadataCache : 无依赖（最先创建）
+        dataSaver     : 构造器依赖 metadataCache（最后创建）
+    -->
+
+    <!-- 元数据缓存（内部）：扫描 @SaveField 字段并缓存反射结果 -->
+    <bean class="io.github.JiangHu.jframe.data.core.MetadataCache" id="metadataCache"/>
+
+    <!-- 数据保存器（公开入口）：基于注解将对象序列化为 JSON 文件或反序列化回对象 -->
+    <bean class="io.github.JiangHu.jframe.data.DataSaver" id="dataSaver">
+        <constructor-arg name="cache" ref="metadataCache"/>
+    </bean>
+
+</beans>

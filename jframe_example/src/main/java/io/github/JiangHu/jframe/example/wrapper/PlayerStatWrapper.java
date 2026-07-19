@@ -89,7 +89,7 @@ public class PlayerStatWrapper {
     /**
      * 自定义工厂：按 Player 查找或创建统计实例。
      * <p>
-     * 因为使用了自定义 @InstanceProvider，{@code EventService.evict()} 不再生效，
+     * 因为使用了自定义 @InstanceProvider，{@code EventAPI.evict()} 不再生效，
      * 需在玩家退出时通过 {@link #remove(Player)} 自行清理。
      */
     @InstanceProvider
