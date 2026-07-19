@@ -2,8 +2,10 @@ package io.github.JiangHu.jframe.main.config;
 
 import io.github.JiangHu.jframe.command.config.CommandSpringConfig;
 import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
+import io.github.JiangHu.jframe.data.config.DataSpringConfig;
 import io.github.JiangHu.jframe.event.config.EventSpringConfig;
 import io.github.JiangHu.jframe.form.config.FormSpringConfig;
+import io.github.JiangHu.jframe.inventory.ui.config.InventorySpringConfig;
 import io.github.JiangHu.jframe.thread.config.ThreadSpringConfig;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -25,7 +27,9 @@ import org.springframework.context.annotation.ImportResource;
         CommandSpringConfig.class,
         ThreadSpringConfig.class,
         FormSpringConfig.class,
-        EventSpringConfig.class
+        EventSpringConfig.class,
+        DataSpringConfig.class,
+        InventorySpringConfig.class
 })
 public class MainSpringConfig {
 }

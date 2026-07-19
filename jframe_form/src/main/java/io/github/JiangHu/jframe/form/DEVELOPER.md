@@ -20,9 +20,11 @@
   - [4.1 发送表单的完整流程](#41-发送表单的完整流程)
   - [4.2 响应处理的完整流程](#42-响应处理的完整流程)
   - [4.3 统一重发机制](#43-统一重发机制)
+  - [4.4 健壮性保证（异常隔离与线程安全）](#44-健壮性保证异常隔离与线程安全)
 - [5. 设计模式](#5-设计模式)
-- [6. 扩展指南](#6-扩展指南)
-- [7. 从旧版迁移](#7-从旧版迁移)
+- [6. 动态修改代理对象属性](#6-动态修改代理对象属性)
+- [7. 扩展指南](#7-扩展指南)
+- [8. 从旧版迁移](#8-从旧版迁移)
 
 ---
 
@@ -98,7 +100,7 @@ io.github.JiangHu.jframe.form
 
 | 方法 | 说明 |
 |------|------|
-| `title()` | 表单标题 |
+| `title()` / `setTitle(String)` | 表单标题（getter / setter，可动态修改，下次 `toNukkit()` 生效） |
 | `type()` | 表单类型枚举（`SIMPLE` / `CUSTOM` / `MODAL`） |
 | `toNukkit()` | **模板方法**：调用 `buildWindow()` 转换为原生窗口并缓存 |
 | `buildResult(Player)` | 从缓存的原生窗口读取响应，构造 `FormResult` |
@@ -144,7 +146,7 @@ io.github.JiangHu.jframe.form
 | 方法 | 说明 |
 |------|------|
 | `Button(String)` / `Button(String, FormIcon)` | 构造函数 |
-| `text()` | 按钮文本 |
+| `text()` / `setText(String)` | 按钮文本（getter / setter，可动态修改，下次 `toNukkit()` 生效） |
 | `icon()` / `icon(FormIcon)` | 图标（getter / 链式 setter） |
 | `onClick(Consumer<ButtonClick>)` | 注册点击回调（链式） |
 | `hasHandler()` | 是否已注册回调 |
@@ -173,13 +175,20 @@ io.github.JiangHu.jframe.form
 
 | 方法 | 说明 |
 |------|------|
-| `label()` | 元素标签（显示文字） |
+| `key()` | 元素**唯一标识**（结果取值键，`final` 不可变） |
+| `label()` | 元素**显示标签**（可变，通过 `setLabel` 动态修改） |
+| `setLabel(String)` | 修改显示标签（Lombok 生成，下次 `toNukkit()` 生效） |
 | `toNukkit()` | 转换为 Nukkit `Element`（抽象） |
 | `read(FormResponseCustom, int)` | 按全局索引读取类型化值（抽象，**protected**） |
 | `readAndCache(response, index)` | 读取并缓存值（由 `CustomForm.buildResult` 调用） |
 | `value()` | 获取最近一次读取到的值（类型安全） |
 
 > 泛型 `<T>` 使取值类型安全：`InputElement.value()` 直接返回 `String`，无需强转。
+
+> **key 与 label 的职责分离**：`key` 是构造时确定的不可变唯一标识，
+> 用作 [`FormResult`](response/FormResult.java) 的取值键；`label` 是可变的显示文本。
+> 二者分离后，运行期修改 `label`（如切换语言、刷新提示）不会影响取值键的稳定性。
+> 未显式指定 `key` 时默认与 `label` 初始值相同，老代码 `result.get("昵称")` 仍可工作。
 
 #### 六个具体实现
 
@@ -209,8 +218,8 @@ io.github.JiangHu.jframe.form
 | `clickedIndex()` | SIMPLE | 被点击按钮的索引 |
 | `clickedButton1()` | MODAL | `true` = 点了第一个按钮 |
 | `clickedButton2()` | MODAL | `true` = 点了第二个按钮 |
-| `get(String label)` | CUSTOM | 按元素标签取值 |
-| `get(String, T default)` | CUSTOM | 按标签取值，带默认值 |
+| `get(String key)` | CUSTOM | 按元素 **key** 取值（key 默认 = label 初始值） |
+| `get(String, T default)` | CUSTOM | 按 key 取值，带默认值 |
 | `values()` | CUSTOM | 全部值的不可变 Map |
 
 #### [`ButtonClick`](response/ButtonClick.java)
@@ -300,7 +309,7 @@ io.github.JiangHu.jframe.form
 | `push(FormView, Object)` | 压栈 + 传递一次性数据 |
 | `pushAndSend(FormView)` | 压栈并立即发送 |
 | `pop()` | 弹出栈顶（触发 onClose） |
-| `goBack()` | 返回上一级（栈中 >1 时才弹出） |
+| `goBack()` | 返回上一级（弹出当前视图；若已是栈底则清空栈并不再发送） |
 
 **栈的增删改查**：
 
@@ -436,6 +445,64 @@ if (!isEmpty()) {
 | `replaceThis(new)` | 变为新视图 | ✅ 新视图 |
 | `close()` | 栈空 | ❌ 不重发（无界面） |
 
+### 4.4 健壮性保证（异常隔离与线程安全）
+
+`ViewManager` 的响应处理与发送链路经过加固，确保业务代码的异常或并发不会让表单系统卡死。
+以下保证对应 `jframe-form-bugs.md` 中的修复项：
+
+#### 4.4.1 业务异常不会卡死表单（Bug1 / Bug2）
+
+`onResult()` / `onCloseAttempt()` 中抛出的任何异常（如文件 IO、Gson 解析失败）都会被
+`handleResponse` 的 `catch (Throwable)` 捕获并记录日志，**不会**中断重发流程。
+重发逻辑（`doSend()`）位于 `finally` 块中，因此无论回调是否抛异常，只要栈不空就一定会重新发送栈顶：
+
+```java
+// ViewManager.handleResponse()
+try {
+    // 业务回调（可能抛异常）
+} catch (Throwable t) {
+    log().error("...", t);          // 吞掉异常，仅记录
+} finally {
+    handlingResponse = false;
+    if (!isEmpty()) {
+        try { doSend(); }           // ← 必然执行的重发
+        catch (Throwable t2) { log().error("...", t2); }
+    }
+}
+```
+
+> **字节码验证点**：修复后 `handleResponse` 的异常表会覆盖到每次 `doSend()` 调用
+> （`from=51 to=55`、`from=129 to=133`、`from=180 to=184`），而修复前仅覆盖 `from=5 to=39`，
+> 导致 `doSend()` 在异常路径下不可达。
+
+#### 4.4.2 发送链路全程异常隔离（Bug2）
+
+`doSendDirect()` 将「构建表单 → onShow → toNukkit → showFormWindow」整体包裹在 try-catch 中，
+任何环节抛异常都会被记录，不会传播到 Nukkit 网络线程被静默吞掉（修复前「看似发送、实则未发且无日志」）。
+
+#### 4.4.3 感知 Nukkit 的 formOpen 状态（Bug4）
+
+`Player.showFormWindow()` 在玩家已有表单打开（`formOpen==true`）时返回 `-1` 且不发包。
+`doSendDirect()` 会检查该返回值并记录告警，避免栈状态与实际显示不一致。
+
+#### 4.4.4 主线程发送，规避 HashMap 并发（Bug5）
+
+Nukkit 的 `Player.formWindows` 是普通 `HashMap`（非线程安全），而 `handleResponse` 运行在
+**网络线程**。`doSend()` 在检测到不在主线程时，会通过 `ServerScheduler.scheduleTask(Runnable)`
+将实际发送调度到主线程执行，确保所有 `showFormWindow` 调用串行发生在主线程上：
+
+```java
+// ViewManager.doSend()
+if (!server.isPrimaryThread()) {
+    server.getScheduler().scheduleTask(this::doSendDirect);  // 调度到主线程
+    return;
+}
+doSendDirect();
+```
+
+主线程调用时仍同步直接发送，行为不变。这意味着「玩家提交/关闭后重发」会延迟到下一个主线程 tick，
+但避免了与主线程发送操作的并发竞争。
+
 ---
 
 ## 5. 设计模式
@@ -451,9 +518,145 @@ if (!isEmpty()) {
 
 ---
 
-## 6. 扩展指南
+## 6. 动态修改代理对象属性
 
-### 6.1 添加新的表单元素类型
+### 6.1 原理：toNukkit() 是快照式读取
+
+[`JForm.toNukkit()`](window/JForm.java) 与各元素的 `toNukkit()` 在**每次发送前**都会被调用
+（见 [§4.1 发送流程](#41-发送表单的完整流程)），且是**读取代理对象当前属性值**来构造全新的
+Nukkit 原生对象。因此，只要在发送前修改代理对象的属性，下次 `toNukkit()` 就会读到新值并生效。
+
+> **与 Nukkit 的兼容性**：`toNukkit()` 仍然只用 `label`（显示文本）构造 Nukkit `Element`，
+> Nukkit 端看到的始终是显示文本。`key` 是 jframe_form 应用层概念，Nukkit 完全不感知。
+
+### 6.2 可动态修改的属性
+
+所有「展示类」属性均已通过 Lombok `@Setter` 暴露动态修改能力：
+
+| 对象 | 可变属性（setter） | 不可变属性（final） |
+|------|-------------------|---------------------|
+| [`JForm`](window/JForm.java) | `title` | `window`（转换缓存，框架内部） |
+| [`Button`](window/Button.java) | `text`、`icon`（链式 `icon()`） | — |
+| [`InputElement`](element/InputElement.java) | `label`、`placeholder`、`defaultText` | `key` |
+| [`DropdownElement`](element/DropdownElement.java) | `label`、`options`、`defaultIndex` | `key` |
+| [`SliderElement`](element/SliderElement.java) | `label`、`min`、`max`、`step`、`defaultValue` | `key` |
+| [`StepSliderElement`](element/StepSliderElement.java) | `label`、`steps`、`defaultIndex` | `key` |
+| [`ToggleElement`](element/ToggleElement.java) | `label`、`defaultValue` | `key` |
+| [`LabelElement`](element/LabelElement.java) | `label`、`text` | `key` |
+
+> **刻意不暴露 setter 的字段**：
+> - [`FormElement.value`](element/FormElement.java) —— 玩家提交后由 `readAndCache()` 回填的缓存，
+>   外部设置会破坏「值 = 玩家真实输入」语义。
+> - [`JForm.window`](window/JForm.java) —— `toNukkit()` 的转换缓存，外部设置会破坏
+>   `wasClosed()` / `buildResult()`。
+
+### 6.3 与构建策略的关系
+
+[`BuildStrategy`](FormView.java)（`ALWAYS` / `ON_DEMAND`）只控制 [`rebuild()`](FormView.java)
+（是否重新调用 `onBuild()` 产生新 `JForm`）的时机，**不影响** `toNukkit()` 的执行——
+后者每次发送都会执行。因此：
+
+| 场景 | `ALWAYS`（默认） | `ON_DEMAND` |
+|------|------------------|-------------|
+| 每次 send 是否重建 JForm | ✅ 是，`onBuild()` 产出全新对象 | ❌ 否，复用旧对象 |
+| 外部持有的元素引用 | 下次发送后失效（被新对象取代） | 持续有效 |
+| setter 修改能否跨发送保留 | ❌ 丢失（对象已被替换） | ✅ 保留 |
+
+**实践建议**：
+- `ALWAYS` 策略下，动态内容直接写在 `onBuild()` 里最简单（每次重建自然反映最新状态）。
+- 需要复用对象 + 动态微调时，切换到 `ON_DEMAND` 策略，修改属性后调用
+  [`refresh()`](FormView.java) 触发重发。
+
+### 6.4 示例：ON_DEMAND 下动态刷新元素
+
+```java
+public class SettingsView extends FormView {
+
+    private InputElement nameEl;
+    private ToggleElement pvpEl;
+
+    public SettingsView() {
+        buildStrategy(BuildStrategy.ON_DEMAND); // 复用对象，setter 才能跨发送生效
+    }
+
+    @Override
+    protected JForm onBuild() {
+        nameEl = new InputElement("昵称", "请输入");
+        pvpEl = new ToggleElement("开启 PvP", false);
+        return new CustomForm("设置")
+                .element(nameEl)
+                .element(pvpEl);
+    }
+
+    /** 外部调用：切换语言后更新显示文案（key 不变，取值键稳定） */
+    public void switchLanguage(String lang) {
+        nameEl.setLabel("en".equals(lang) ? "Name" : "昵称");
+        pvpEl.setLabel("en".equals(lang) ? "Enable PvP" : "开启 PvP");
+        refresh(); // 触发重发，下次 toNukkit() 读到新 label
+    }
+}
+```
+
+> 即使 `label` 被改成英文，`result.get("昵称")` 仍能取到值——因为取值键用的是不可变的 `key`
+> （此处 `key` 默认 = 初始 `label` = "昵称"）。
+
+### 6.5 回显上次输入（applyLastValue / applyValue）
+
+玩家提交表单后，若希望再次打开时自动预填上次的输入，可调用元素的回填方法：
+
+| 方法 | 说明 |
+|------|------|
+| `applyLastValue()` | 把自身缓存的 `value()`（上次提交值）写回默认值字段，下次 `toNukkit()` 即显示 |
+| `applyValue(T value)` | 从外部传入任意值写回默认值（用于预填初始值、从存档恢复等） |
+
+两者均返回元素自身（链式），且对 `null` 值安全（不操作）。
+
+**前提：元素对象必须跨多次显示复用**（同 6.3）。若每次 `onBuild` 都 `new` 新元素，缓存的值无处可存，回填无效。
+
+> 不同元素的「值 → 默认值」映射由各自内部封装，调用方无需关心类型转换：
+> - `InputElement` / `ToggleElement` / `SliderElement`：直接赋值
+> - `DropdownElement` / `StepSliderElement`：自动把选项**文本**转回**索引**（`options.indexOf` / `steps.indexOf`）
+> - `LabelElement`：空实现（纯展示，无可回填字段）
+
+```java
+public class EditView extends FormView {
+
+    private final InputElement nameEl = new InputElement("昵称", "请输入");
+    private final DropdownElement modeEl = new DropdownElement("模式", "生存", "创造");
+
+    public EditView() {
+        buildStrategy(BuildStrategy.ON_DEMAND); // 复用元素对象
+    }
+
+    @Override
+    protected JForm onBuild() {
+        return new CustomForm("编辑")
+                .element(nameEl)
+                .element(modeEl);
+    }
+
+    @Override
+    protected void onResult(FormResult result) {
+        // 回显上次输入：一行搞定，下拉框的文本→索引转换由元素内部处理
+        nameEl.applyLastValue();
+        modeEl.applyLastValue();
+        refresh(); // 重发，下次显示即预填上次值
+    }
+}
+```
+
+也可用 `applyValue(T)` 从外部回填（如从数据库恢复）：
+
+```java
+nameEl.applyValue(savedName);   // 预填存档中的昵称
+modeEl.applyValue(savedMode);   // 预填存档中的模式（文本，内部自动转索引）
+```
+
+---
+
+## 7. 扩展指南
+
+### 7.1 添加新的表单元素类型
 
 如果 Nukkit 新增了一种表单元素（或你需要自定义行为），按以下步骤扩展：
 
@@ -486,7 +689,7 @@ public class ColorElement extends FormElement<String> {
 
 然后在 `CustomForm` 中直接使用：`new CustomForm("设置").element(new ColorElement("颜色", "#FF0000"))`。
 
-### 6.2 直接操作视图栈（高级）
+### 7.2 直接操作视图栈（高级）
 
 通过 `ViewAPI.manager(player)` 获取 `ViewManager`，可直接操作栈：
 
@@ -504,7 +707,7 @@ if (mgr != null) {
 }
 ```
 
-### 6.3 替换底层 GUI 库
+### 7.3 替换底层 GUI 库
 
 适配层是唯一接触 Nukkit 的地方。若需迁移到其他服务端：
 
@@ -515,9 +718,9 @@ if (mgr != null) {
 
 ---
 
-## 7. 从旧版迁移
+## 8. 从旧版迁移
 
-### 7.1 依赖变更
+### 8.1 依赖变更
 
 **旧版** `pom.xml`：
 ```xml
@@ -532,7 +735,7 @@ if (mgr != null) {
 
 **新版**：无需额外依赖，`jframe_form` 自动引入 `jframe_core`。
 
-### 7.2 视图代码迁移
+### 8.2 视图代码迁移
 
 **旧版写法**（`switch(id)` 魔法索引）：
 
@@ -568,13 +771,13 @@ public class NewMenuView extends FormView {
 }
 ```
 
-### 7.3 返回导航迁移
+### 8.3 返回导航迁移
 
 **旧版**：`replaceThis(new MainMenuView(...))` —— 重新构造父界面，丢失状态。
 
 **新版**：`goBack()` —— 直接弹出栈顶，父界面状态完整保留。
 
-### 7.4 迁移检查清单
+### 8.4 迁移检查清单
 
 - [ ] `pom.xml` 中移除 `moe.him188.gui` 依赖与 shade 排除项
 - [ ] `extends FormView` 的类：`buildForm()` → `onBuild()`，返回类型 `FormSimple` → `JForm`

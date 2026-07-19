@@ -280,7 +280,8 @@ public abstract class FormView {
     /**
      * 返回上一级界面（弹出当前视图，显示栈中上一个界面）。
      * <p>
-     * 若当前已是栈底，则不做任何操作。
+     * 若当前已是栈底（栈中仅剩本视图），则弹出本视图并清空栈，
+     * 不再发送任何界面（真正关闭）。
      */
     public void goBack() {
         if (manager != null) {

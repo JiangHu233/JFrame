@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -24,6 +25,8 @@ import lombok.experimental.Accessors;
  * <h3>自动加载</h3>
  * {@link #getOrCreate} 在缓存未命中时调用 {@link #load} 加载并放入缓存；
  * {@link #load} 返回 {@code null} 时不缓存（避免缓存穿透），下次仍重试。
+ * {@link #load} 的默认实现委托基类 {@link #setLoader(Function) loader} 槽位——
+ * 通过 {@code setLoader(fn)} 注入即可启用自动加载，无需子类化。
  *
  * <h3>继承自基类的能力</h3>
  * 本类同时拥有 {@link AbstractFunctionalMap} 的 4 个功能槽位：
@@ -31,7 +34,7 @@ import lombok.experimental.Accessors;
  *   <li>{@link #setKeyExtractor} —— 启用 {@link #putValue(Object)}；</li>
  *   <li>{@link #setExpiryChecker} —— 启用过期惰性淘汰与 {@link #evictExpired()}；</li>
  *   <li>{@link #setOnEvict} —— 淘汰回调（容量超限 / 过期均会触发，替代旧版重写 {@code onEvict}）；</li>
- *   <li>{@link #setLoader} —— 注意：本类的 {@link #getOrCreate} 用 {@link #load} 而非 {@code loader} 槽位。</li>
+ *   <li>{@link #setLoader} —— 缓存缺失加载器，驱动 {@link #load}（进而驱动 {@link #getOrCreate}）。</li>
  * </ul>
  *
  * <pre>{@code
@@ -51,7 +54,7 @@ import lombok.experimental.Accessors;
  * @param <V> 值类型
  */
 @Accessors(chain = true)
-public abstract class LruCacheMap<K, V> extends AbstractFunctionalMap<K, V> {
+public class LruCacheMap<K, V> extends AbstractFunctionalMap<K, V> {
 
     /** 最大容量（可运行时通过 {@link #setMaxSize(int)} 动态调整）。 */
     @Getter
@@ -73,18 +76,26 @@ public abstract class LruCacheMap<K, V> extends AbstractFunctionalMap<K, V> {
     }
 
     /**
-     * 缓存未命中时加载对应键的值（子类实现）。
+     * 缓存未命中时加载对应键的值。
      *
      * <p>在 {@link #getOrCreate} 首次访问某键且缓存未命中时调用。
      * 返回 {@code null} 表示无法加载，此时<b>不</b>缓存（下次 {@link #getOrCreate} 仍会重试）。
      *
-     * <p>在 {@code getOrCreate} 持有的同步锁内执行，子类重写时应避免长时间阻塞
+     * <p><b>默认实现</b>委托基类 {@link #setLoader(Function) loader} 槽位：
+     * 若已通过 {@link #setLoader(Function)} 注入加载函数则调用之，否则返回 {@code null}。
+     * 因此<b>外部注入</b>（{@code setLoader(fn)}）与<b>子类重写</b>两种方式任选其一即可启用自动加载；
+     * 二者皆未提供时返回 {@code null}（不缓存）。重写本方法后 loader 槽位不再生效。
+     *
+     * <p>在 {@code getOrCreate} 持有的同步锁内执行，重写或注入的加载逻辑应避免长时间阻塞
      * （如耗时 IO），否则会阻塞其他线程访问本缓存。
      *
      * @param key 键
      * @return 加载的值，或 {@code null}（表示不存在/加载失败，不缓存）
      */
-    protected abstract V load(K key);
+    protected V load(K key) {
+        Function<K, V> l = getLoader();
+        return l != null ? l.apply(key) : null;
+    }
 
     /**
      * 取值并标记为最近使用；缓存未命中时通过 {@link #load} 加载并放入缓存。

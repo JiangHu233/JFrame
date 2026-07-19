@@ -5,9 +5,6 @@ import cn.nukkit.command.Command;
 import cn.nukkit.command.CommandSender;
 import cn.nukkit.item.Item;
 import cn.nukkit.plugin.PluginBase;
-import cn.nukkit.plugin.service.RegisteredServiceProvider;
-import com.nukkitx.fakeinventories.inventory.ChestFakeInventory;
-import com.nukkitx.fakeinventories.inventory.FakeInventories;
 import io.github.JiangHu.jframe.command.CommandAPI;
 import io.github.JiangHu.jframe.core.module.PluginAware;
 import io.github.JiangHu.jframe.event.EventAPI;
@@ -16,7 +13,7 @@ import io.github.JiangHu.jframe.example.inventory.ShopInventoryView;
 import io.github.JiangHu.jframe.example.view.MainMenuView;
 import io.github.JiangHu.jframe.example.wrapper.ThunderSwordWrapper;
 import io.github.JiangHu.jframe.form.ViewAPI;
-import io.github.JiangHu.jframe.inventory.InventoryAPI;
+import io.github.JiangHu.jframe.inventory.ui.InventoryAPI;
 import io.github.JiangHu.jframe.thread.ThreadAPI;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
 

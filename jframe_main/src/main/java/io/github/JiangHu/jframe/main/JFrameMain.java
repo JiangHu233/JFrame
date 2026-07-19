@@ -6,9 +6,10 @@ import cn.nukkit.plugin.service.ServicePriority;
 import io.github.JiangHu.jframe.command.CommandAPI;
 import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
 import io.github.JiangHu.jframe.core.module.PluginAware;
+import io.github.JiangHu.jframe.data.DataSaver;
 import io.github.JiangHu.jframe.event.EventAPI;
 import io.github.JiangHu.jframe.form.ViewAPI;
-import io.github.JiangHu.jframe.inventory.InventoryAPI;
+import io.github.JiangHu.jframe.inventory.ui.InventoryAPI;
 import io.github.JiangHu.jframe.main.config.MainSpringConfig;
 import io.github.JiangHu.jframe.main.utils.ConfigEnum;
 import io.github.JiangHu.jframe.thread.ThreadAPI;
@@ -56,7 +57,11 @@ public class JFrameMain extends PluginBase {
     @Getter
     protected Set<ConfigEnum> modules = new HashSet<ConfigEnum>(List.of(ConfigEnum.CORE));
 
-    protected JFrameMain() {
+    public static <T> T getBean(Class<T> beanType) {
+        return instance.applicationContext.getBean(beanType);
+    }
+
+    public JFrameMain() {
         this.applicationContext = createApplicationContext();
     }
 
@@ -160,6 +165,22 @@ public class JFrameMain extends PluginBase {
     }
 
     /**
+     * 数据保存模块入口。
+     * <p>
+     * 返回的 {@link DataSaver} 已通过 {@link PluginAware} 机制自动绑定插件实例，
+     * rootDir 默认指向本插件（JFrame）数据目录（{@code getDataFolder()}）。
+     * <p>
+     * <b>业务插件注意</b>：若本类作为前置工具插件被其他插件调用，业务插件应通过
+     * {@code getDataSaver().forPlugin(this)} 获取以<b>自身数据目录</b>为根的独立保存器，
+     * 避免把数据写进 JFrame 目录。
+     *
+     * @return 数据保存器
+     */
+    public DataSaver getDataSaver() {
+        return getApi(DataSaver.class);
+    }
+
+    /**
      * 按类型从容器获取模块 API。
      *
      * @param apiType API 类型
@@ -186,6 +207,7 @@ public class JFrameMain extends PluginBase {
         server.getServiceManager().register(ThreadAPI.class, getThreadAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(CommandAPI.class, getCommandAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(InventoryAPI.class, getInventoryAPI(), this, ServicePriority.NORMAL);
+        server.getServiceManager().register(DataSaver.class, getDataSaver(), this, ServicePriority.NORMAL);
     }
 
     @Override

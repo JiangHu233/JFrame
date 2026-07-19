@@ -2,6 +2,7 @@ package io.github.JiangHu.jframe.form.window;
 
 import cn.nukkit.form.element.ElementButton;
 import io.github.JiangHu.jframe.form.response.ButtonClick;
+import lombok.Setter;
 
 import java.util.function.Consumer;
 
@@ -28,7 +29,14 @@ import java.util.function.Consumer;
  */
 public class Button {
 
-    private final String text;
+    /**
+     * 按钮显示文本。
+     * <p>
+     * 可在运行期通过 {@link #setText(String)} 动态修改，
+     * 下次 {@link #toNukkit()} 转换时生效。
+     */
+    @Setter
+    private String text;
     private FormIcon icon;
     private Consumer<ButtonClick> handler;
 

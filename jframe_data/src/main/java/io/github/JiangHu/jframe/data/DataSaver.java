@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.function.Supplier;
 
 /**
  * 数据保存器 — <b>面向用户的统一入口</b>。
@@ -52,6 +53,12 @@ import java.nio.file.Path;
  * // 加载
  * PlayerData loaded = saver.load(PlayerData.class, "players/steve");
  *
+ * // 判断文件是否存在
+ * if (saver.exists("players/steve")) { ... }
+ *
+ * // 加载或新建（不存在则用默认值创建并落盘）
+ * Config cfg = saver.loadOrSave(Config.class, "config", Config::new);
+ *
  * // 回填已有实例
  * saver.loadInto(existingData, "players/steve");
  *
@@ -78,14 +85,39 @@ public class DataSaver implements PluginAware {
     /** 保存根路径 */
     private File rootDir;
 
+    /** 父级保存器（由 {@link #sub} 创建的子保存器持有，供 {@link #parent()} 向上导航） */
+    private final DataSaver parent;
+
     /**
      * 构造保存器（Spring 构造器注入）。
      *
      * @param cache 元数据缓存
      */
     public DataSaver(MetadataCache cache) {
+        this(cache, buildGson(cache), null);
+    }
+
+    /**
+     * 内部构造器（由 {@link #sub} 创建子保存器时使用）。
+     * <p>
+     * 子保存器与父级共享 {@link MetadataCache} 与 {@link Gson} 实例，
+     * 并持有父级引用以支持加载回退。
+     *
+     * @param cache  元数据缓存
+     * @param gson   Gson 实例
+     * @param parent 父级保存器（根保存器为 null）
+     */
+    private DataSaver(MetadataCache cache, Gson gson, DataSaver parent) {
         this.cache = cache;
-        this.gson = new GsonBuilder()
+        this.gson = gson;
+        this.parent = parent;
+    }
+
+    /**
+     * 构建 Gson 实例（注册注解驱动的类型适配器工厂）。
+     */
+    private static Gson buildGson(MetadataCache cache) {
+        return new GsonBuilder()
                 .registerTypeAdapterFactory(new SaveFieldTypeAdapterFactory(cache))
                 .setPrettyPrinting()
                 .disableHtmlEscaping()
@@ -95,11 +127,21 @@ public class DataSaver implements PluginAware {
     // ========== 根路径 ==========
 
     /**
-     * 设置保存根路径。
+     * 设置保存根路径（仅根保存器可调用）。
+     * <p>
+     * 根路径是所有 {@link #sub} 子路径的<b>固定基准点</b>。由 {@code sub()} 派生的
+     * 子保存器其根路径已锁定为临时子路径，调用本方法将抛出 {@link DataException}，
+     * 以保证 sub/parent 的作用范围始终限定在临时子路径内、不会篡改根路径。
      *
      * @param rootDir 根路径（会自动创建）
+     * @throws DataException 若当前为子保存器（根路径已由 sub() 派生，不可修改）
      */
     public void setRootDir(File rootDir) {
+        if (parent != null) {
+            throw new DataException("子保存器的根路径由 sub() 派生，不可修改。" +
+                    "sub/parent 仅作用于临时子路径，不能变化根路径；" +
+                    "如需回到根路径，请调用 root()。");
+        }
         this.rootDir = rootDir;
     }
 
@@ -108,6 +150,123 @@ public class DataSaver implements PluginAware {
      */
     public File getRootDir() {
         return rootDir;
+    }
+
+    // ========== 子路径与路径导航 ==========
+
+    /**
+     * 拼接子路径，创建一个<b>子保存器</b>（向下导航）。
+     * <p>
+     * 子保存器的根路径为 {@code 当前根路径 / first / more...}，所有相对路径的
+     * save/load 都基于此子路径解析。子保存器持有当前保存器作为
+     * {@link #parent() 父级}，可调用 {@code parent()} <b>返回上级</b>保存器，
+     * 实现路径的自由上下导航。
+     * <p>
+     * 典型用途：按模块/玩家/世界划分数据目录，用 {@code sub} 下钻、
+     * {@code parent()} 上溯，避免每次调用都手写完整相对路径。
+     *
+     * <pre>{@code
+     * DataSaver players = saver.sub("players");        // rootDir/players
+     * DataSaver vip     = players.sub("vip");          // rootDir/players/vip
+     * vip.save(data, "steve");                         // → rootDir/players/vip/steve.json
+     * vip.parent().load(C.class, "global");            // 回到 players 目录加载
+     * vip.root().load(C.class, "config");              // 一步回到根目录加载
+     * }</pre>
+     *
+     * @param first 第一级子目录名（不能为空）
+     * @param more  后续多级子目录名（可选）
+     * @return 子保存器（共享 cache/gson，可通过 parent() 返回上级）
+     * @throws DataException 若根路径尚未设置
+     */
+    public DataSaver sub(String first, String... more) {
+        if (rootDir == null) {
+            throw new DataException("保存根路径（rootDir）尚未设置，无法拼接子路径。" +
+                    "请调用 setRootDir() 或通过 PluginAware 绑定插件。");
+        }
+        File childRoot = new File(rootDir, first);
+        for (String segment : more) {
+            childRoot = new File(childRoot, segment);
+        }
+        DataSaver child = new DataSaver(cache, gson, this);
+        child.rootDir = childRoot;
+        return child;
+    }
+
+    /**
+     * 返回上级（父级）保存器，实现路径的<b>向上导航</b>。
+     * <p>
+     * 由 {@link #sub} 创建的子保存器会返回其父级；根保存器返回 {@code null}。
+     * 可链式调用逐级上溯，例如 {@code saver.sub("a").sub("b").parent().parent()}
+     * 将回到根保存器。
+     *
+     * @return 父级保存器，若当前为根保存器则返回 null
+     */
+    public DataSaver parent() {
+        return parent;
+    }
+
+    /**
+     * 判断当前保存器是否为根保存器（无父级）。
+     *
+     * @return 若无父级返回 true
+     */
+    public boolean isRoot() {
+        return parent == null;
+    }
+
+    /**
+     * 返回根保存器 — <b>清空所有临时子路径，一步回到根</b>。
+     * <p>
+     * 无论当前处于多深的子路径，本方法都会沿父级链向上回到根保存器
+     * （{@link #isRoot()} 为 true）。若当前已是根保存器，返回自身。
+     * <p>
+     * 典型用途：在深层子路径完成临时操作后，快速回到根路径继续其他工作，
+     * 无需手动逐级 {@code parent()}。
+     *
+     * <pre>{@code
+     * DataSaver vip = saver.sub("players").sub("vip");
+     * vip.save(data, "steve");                  // 临时子路径操作
+     * vip.root().save(global, "config");        // 清空子路径，回到根操作
+     * assert vip.root() == saver;               // 根保存器即最初的 saver
+     * }</pre>
+     *
+     * @return 根保存器
+     */
+    public DataSaver root() {
+        DataSaver cur = this;
+        while (cur.parent != null) {
+            cur = cur.parent;
+        }
+        return cur;
+    }
+
+    /**
+     * 为指定插件创建一个<b>独立的根保存器</b>，根路径为该插件的数据目录。
+     * <p>
+     * 适用于"工具插件"场景：JFrame 作为前置插件提供本工具，业务插件调用本方法
+     * 得到以<b>自身数据目录</b>（{@code plugins/<业务插件名>/}）为根的保存器，
+     * 各插件数据互不干扰，不会写入 JFrame 的文件夹。
+     * <p>
+     * 返回的是全新的根保存器（{@link #isRoot()} 为 true），与当前保存器相互独立，
+     * 共享同一份 {@link MetadataCache} 与 {@link Gson}，可独立使用 sub/parent/root 导航。
+     *
+     * <pre>{@code
+     * // 在业务插件的 onEnable 中
+     * DataSaver mySaver = JFrameMain.getInstance().getDataSaver().forPlugin(this);
+     * mySaver.save(data, "config");   // → plugins/<本插件>/config.json
+     * }</pre>
+     *
+     * @param plugin 业务插件实例（不能为 null）
+     * @return 以该插件数据目录为根的独立保存器
+     * @throws DataException 若 plugin 为 null
+     */
+    public DataSaver forPlugin(Plugin plugin) {
+        if (plugin == null) {
+            throw new DataException("forPlugin(plugin) 的 plugin 参数不能为 null");
+        }
+        DataSaver saver = new DataSaver(cache, gson, null);
+        saver.rootDir = plugin.getDataFolder();
+        return saver;
     }
 
     // ========== 文件保存 ==========
@@ -144,17 +303,7 @@ public class DataSaver implements PluginAware {
      * @throws DataException 如果对象未实现 {@link SaveIdentifiable}
      */
     public void save(Object obj) {
-        if (!(obj instanceof SaveIdentifiable identifiable)) {
-            throw new DataException("对象 " + obj.getClass().getName() +
-                    " 未实现 SaveIdentifiable，无法自动确定文件名。" +
-                    "请使用 save(obj, fileName) 显式指定文件名，或实现 SaveIdentifiable 接口。");
-        }
-        String key = identifiable.saveKey();
-        if (key == null || key.isEmpty()) {
-            throw new DataException("saveKey() 返回了 null 或空字符串（类: " +
-                    obj.getClass().getName() + "）");
-        }
-        save(obj, key);
+        save(obj, resolveSaveKey(obj));
     }
 
     // ========== 文件加载 ==========
@@ -211,6 +360,175 @@ public class DataSaver implements PluginAware {
     public void loadInto(Object target, File file) {
         String json = readStringFromFile(file);
         fromJsonInto(target, json);
+    }
+
+    // ========== 文件存在性判断 ==========
+
+    /**
+     * 判断根路径下的指定文件是否存在（自动追加 {@code .json} 扩展名）。
+     * <p>
+     * 用于在 {@link #load(Class, String)} 之前探测目标文件是否已存在，
+     * 避免文件缺失时抛出 {@link DataException}。
+     *
+     * @param fileName 文件名（相对根路径，不含扩展名）
+     * @return 文件存在返回 true，否则 false
+     */
+    public boolean exists(String fileName) {
+        return resolveRelativeFile(fileName).exists();
+    }
+
+    /**
+     * 判断指定文件是否存在。
+     *
+     * @param file 目标文件（绝对路径）
+     * @return 文件存在返回 true，否则 false（{@code file} 为 null 时返回 false）
+     */
+    public boolean exists(File file) {
+        return file != null && file.exists();
+    }
+
+    /**
+     * 判断 {@link SaveIdentifiable} 对象的<b>序列化目标文件</b>是否存在。
+     * <p>
+     * 目标文件名由 {@link SaveIdentifiable#saveKey()} 决定，等价于
+     * {@code exists(obj.saveKey())}。用于在保存前探测某条数据是否已落盘，
+     * 或判断某条数据是否首次写入。
+     *
+     * @param obj 目标对象（必须实现 {@link SaveIdentifiable}）
+     * @return 目标文件存在返回 true，否则 false
+     * @throws DataException 若对象未实现 {@link SaveIdentifiable} 或 saveKey() 非法
+     * @see #save(Object)
+     */
+    public boolean exists(Object obj) {
+        return exists(resolveSaveKey(obj));
+    }
+
+    /**
+     * 解析 {@link SaveIdentifiable} 对象对应的存储文件（绝对路径）。
+     * <p>
+     * 文件名由对象的 {@link SaveIdentifiable#saveKey()} 决定，返回的文件正是
+     * {@link #save(Object) save(obj)} 会写入、{@link #exists(Object) exists(obj)}
+     * 会探测、{@link #loadOrSave(Class, java.util.function.Supplier) loadOrSave(clazz, supplier)}
+     * 会读写的那个文件（文件可能尚不存在）。免去外部手动拼接
+     * {@code rootDir + saveKey + ".json"}。
+     *
+     * <pre>{@code
+     * PlayerData data = new PlayerData(uuid, "Steve", 1);
+     * File file = saver.fileOf(data);   // 直接拿到 data 对应的存储文件
+     * }</pre>
+     *
+     * @param obj 须实现 {@link SaveIdentifiable} 且 saveKey() 合法
+     * @return 对应的存储文件（绝对路径，可能尚不存在）
+     * @throws DataException 若 obj 非 {@link SaveIdentifiable} 或 saveKey() 非法
+     * @see #save(Object)
+     * @see #exists(Object)
+     * @see #loadOrSave(Class, java.util.function.Supplier)
+     */
+    public File fileOf(Object obj) {
+        return resolveRelativeFile(resolveSaveKey(obj));
+    }
+
+    // ========== 加载或新建 ==========
+
+    /**
+     * 加载对象；若文件<b>不存在</b>，则用 {@code defaultSupplier} 创建默认值，
+     * <b>保存到文件</b>后返回。
+     * <p>
+     * 典型用途：加载配置文件，首次运行（文件缺失）时自动生成默认配置并落盘，
+     * 后续运行直接读取。等价于：
+     * <pre>{@code
+     * if (saver.exists(fileName)) {
+     *     return saver.load(clazz, fileName);
+     * } else {
+     *     T def = defaultSupplier.get();
+     *     saver.save(def, fileName);
+     *     return def;
+     * }
+     * }</pre>
+     *
+     * <pre>{@code
+     * // 存在则读取，不存在则用无参构造创建并落盘
+     * Config cfg = saver.loadOrSave(Config.class, "config", Config::new);
+     * }</pre>
+     *
+     * @param clazz           目标类
+     * @param fileName        文件名（相对根路径，不含扩展名）
+     * @param defaultSupplier 默认值提供器（仅在文件不存在时调用，不能返回 null）
+     * @param <T>             目标类型
+     * @return 加载到的对象，或新建并保存的默认对象
+     * @throws DataException 若 defaultSupplier 为 null 或返回 null
+     */
+    public <T> T loadOrSave(Class<T> clazz, String fileName, Supplier<T> defaultSupplier) {
+        return loadOrSave(clazz, resolveRelativeFile(fileName), defaultSupplier);
+    }
+
+    /**
+     * 加载对象；若文件<b>不存在</b>，则用 {@code defaultSupplier} 创建默认值，
+     * <b>保存到文件</b>后返回。
+     *
+     * @param clazz           目标类
+     * @param file            目标文件（绝对路径）
+     * @param defaultSupplier 默认值提供器（仅在文件不存在时调用，不能返回 null）
+     * @param <T>             目标类型
+     * @return 加载到的对象，或新建并保存的默认对象
+     * @throws DataException 若 defaultSupplier 为 null 或返回 null
+     * @see #load(Class, File)
+     * @see #save(Object, File)
+     */
+    public <T> T loadOrSave(Class<T> clazz, File file, Supplier<T> defaultSupplier) {
+        if (file.exists()) {
+            return load(clazz, file);
+        }
+        if (defaultSupplier == null) {
+            throw new DataException("defaultSupplier 不能为 null（文件: " +
+                    file.getAbsolutePath() + "）");
+        }
+        T defaultValue = defaultSupplier.get();
+        if (defaultValue == null) {
+            throw new DataException("defaultSupplier 返回了 null，无法保存（文件: " +
+                    file.getAbsolutePath() + "）");
+        }
+        save(defaultValue, file);
+        return defaultValue;
+    }
+
+    /**
+     * 加载对象；文件名由默认对象的 {@link SaveIdentifiable#saveKey()} 自动决定。
+     * <p>
+     * 适用于默认对象实现 {@link SaveIdentifiable} 的场景：无需显式指定文件名，
+     * 保存器用 {@code defaultObj} 的 {@code saveKey()} 作为文件名。文件存在则读取，
+     * 不存在则把 {@code defaultObj} 落盘后返回。
+     *
+     * <pre>{@code
+     * // 玩家数据按 UUID 自动命名：有则读取，无则用默认值创建并落盘
+     * PlayerData data = saver.loadOrSave(new PlayerData(uuid, "Steve", 1));
+     * }</pre>
+     *
+     * <p><b>设计说明（为何直接传对象而非 Supplier）</b>：本重载的文件名依赖
+     * {@link SaveIdentifiable#saveKey()}，必须先拿到对象才能确定文件位置，
+     * 因此对象无论如何都会被构造——Supplier 的"惰性"在此毫无意义，
+     * 直接传对象更简洁、语义更诚实。若需要惰性求值（文件存在时不构造默认对象），
+     * 请改用 {@link #loadOrSave(Class, String, Supplier) 显式文件名重载}。
+     *
+     * @param defaultObj 默认对象（不能为 null，须有合法 saveKey）
+     * @param <T>        目标类型（须实现 {@link SaveIdentifiable}）
+     * @return 加载到的对象，或新建并保存的默认对象
+     * @throws DataException 若 defaultObj 为 null 或 saveKey() 非法
+     * @see #loadOrSave(Class, String, Supplier)
+     * @see SaveIdentifiable
+     */
+    @SuppressWarnings("unchecked")
+    public <T extends SaveIdentifiable> T loadOrSave(T defaultObj) {
+        if (defaultObj == null) {
+            throw new DataException("defaultObj 不能为 null");
+        }
+        // 文件名由默认对象的 saveKey() 决定
+        File file = resolveRelativeFile(resolveSaveKey(defaultObj));
+        if (file.exists()) {
+            return load((Class<T>) defaultObj.getClass(), file);
+        }
+        save(defaultObj, file);
+        return defaultObj;
     }
 
     // ========== JSON 字符串转换 ==========
@@ -307,7 +625,9 @@ public class DataSaver implements PluginAware {
     // ========== 内部工具方法 ==========
 
     /**
-     * 将相对文件名解析为根路径下的 File 对象（自动追加 .json）。
+     * 将相对文件名解析为当前根路径下的 File 对象（自动追加 .json）。
+     * <p>
+     * 始终基于当前保存器的根路径解析，save 与 load 行为一致。
      */
     private File resolveRelativeFile(String fileName) {
         if (rootDir == null) {
@@ -316,6 +636,29 @@ public class DataSaver implements PluginAware {
         }
         String name = fileName.endsWith(JSON_EXTENSION) ? fileName : fileName + JSON_EXTENSION;
         return new File(rootDir, name);
+    }
+
+    /**
+     * 解析 {@link SaveIdentifiable} 对象的 saveKey 作为文件名。
+     * <p>
+     * 供 {@link #save(Object)} 与 {@link #exists(Object)} 共用，统一校验：
+     * 未实现 {@link SaveIdentifiable}、saveKey 为 null 或空串时抛出 {@link DataException}。
+     *
+     * @param obj 目标对象
+     * @return saveKey（非空）
+     */
+    private String resolveSaveKey(Object obj) {
+        if (!(obj instanceof SaveIdentifiable identifiable)) {
+            throw new DataException("对象 " + obj.getClass().getName() +
+                    " 未实现 SaveIdentifiable，无法自动确定文件名。" +
+                    "请使用显式文件名重载，或实现 SaveIdentifiable 接口。");
+        }
+        String key = identifiable.saveKey();
+        if (key == null || key.isEmpty()) {
+            throw new DataException("saveKey() 返回了 null 或空字符串（类: " +
+                    obj.getClass().getName() + "）");
+        }
+        return key;
     }
 
     /**

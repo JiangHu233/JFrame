@@ -1,6 +1,7 @@
 package io.github.JiangHu.jframe.form;
 
 import cn.nukkit.Player;
+import cn.nukkit.Server;
 import cn.nukkit.form.handler.FormResponseHandler;
 import io.github.JiangHu.jframe.form.data.ViewDataBus;
 import io.github.JiangHu.jframe.form.response.FormResult;
@@ -72,6 +73,18 @@ public class ViewManager {
         return dataBus;
     }
 
+    /**
+     * 日志器（复用 Nukkit 服务器日志器）。
+     * <p>
+     * 用于在异常隔离（Bug1/2/4）与线程调度（Bug5）路径中记录告警与错误，
+     * 避免异常被静默吞掉而无法排查。
+     *
+     * @return Nukkit {@link cn.nukkit.utils.MainLogger}
+     */
+    private cn.nukkit.utils.MainLogger log() {
+        return player.getServer().getLogger();
+    }
+
     // -------------------- 导航：压栈 / 出栈 --------------------
 
     /**
@@ -123,14 +136,18 @@ public class ViewManager {
     /**
      * 返回上一级界面（弹出当前视图，并重新发送栈顶的父界面）。
      * <p>
-     * 弹出当前视图后，会自动调用 {@link #send()} 重新显示新的栈顶（即上一级界面），
-     * 因此调用方无需手动发送。
+     * 弹出当前视图后，若栈中仍有视图，会自动调用 {@link #send()} 重新显示新的栈顶
+     * （即上一级界面），因此调用方无需手动发送。
      * <p>
-     * 若当前已是栈底（栈中仅剩一个视图），则不弹出，避免清空整个栈。
+     * 若当前已是栈底（栈中仅剩一个视图），则弹出该视图（触发其 {@link FormView#onClose}）
+     * 并清空整个栈；由于栈已空，不再发送任何界面（即真正关闭界面）。
      */
     public void goBack() {
-        if (views.size() > 1) {
-            pop();
+        if (views.isEmpty()) {
+            return;
+        }
+        pop();
+        if (!views.isEmpty()) {
             send();
         }
     }
@@ -296,28 +313,75 @@ public class ViewManager {
     }
 
     /**
-     * 实际执行界面发送。
+     * 实际执行界面发送（线程安全入口）。
      * <p>
-     * 流程：重新构建表单 → {@link FormView#onShow} → 转换为原生窗口 →
-     * 注册响应处理器 → {@link Player#showFormWindow}。
+     * <b>线程模型（Bug5 修复）：</b>Nukkit 的 {@code Player.formWindows} 是一个普通
+     * {@code HashMap}（非线程安全），而 {@link #handleResponse} 运行在 Nukkit 网络线程上。
+     * 若直接在网络线程发送表单，会与主线程（如 {@code onPlayerJoin}）的发送操作并发，
+     * 可能导致 {@code HashMap} 节点丢失、{@code formId} 冲突等隐患。
+     * <p>
+     * 因此本方法在检测到<b>不在主线程</b>时，会通过 {@link cn.nukkit.scheduler.ServerScheduler}
+     * 将实际发送调度到主线程执行，确保所有 {@code showFormWindow} 调用都串行地发生在主线程上。
+     * 在主线程调用时则同步直接发送，行为不变。
+     * <p>
+     * 实际发送逻辑见 {@link #doSendDirect()}。
      */
     private void doSend() {
         if (views.isEmpty()) return;
-        FormView view = views.peek();
-
-        // 根据构建策略决定是否重新构建（ALWAYS 每次重建，ON_DEMAND 仅在脏时重建）
-        if (view.shouldRebuild()) {
-            view.rebuild();
+        Server server = player.getServer();
+        if (server == null) {
+            // 极端情况（服务器实例不可用），退化为直接发送
+            doSendDirect();
+            return;
         }
-        view.onShow();
+        if (!server.isPrimaryThread()) {
+            // 网络线程：调度到主线程，避免并发操作 Nukkit 的 formWindows
+            server.getScheduler().scheduleTask(this::doSendDirect);
+            return;
+        }
+        doSendDirect();
+    }
 
-        // 转换为原生窗口（每次均为新对象，供后续读取响应）
-        cn.nukkit.form.window.FormWindow window = view.form().toNukkit();
+    /**
+     * 在主线程上实际执行界面发送。
+     * <p>
+     * 流程：重新构建表单 → {@link FormView#onShow} → 转换为原生窗口 →
+     * 注册响应处理器 → {@link Player#showFormWindow}。
+     * <p>
+     * <b>异常隔离（Bug2 修复）：</b>整个发送流程被 try-catch 包裹，任何环节
+     * （{@code buildWindow}、{@code showFormWindow} 等）抛出的异常都会被记录，
+     * 不会传播到 Nukkit 网络线程被静默吞掉。
+     * <p>
+     * <b>返回值检查（Bug4 修复）：</b>{@link Player#showFormWindow} 在玩家已有表单打开
+     * （{@code formOpen==true}）时返回 {@code -1} 且不发送，本方法会记录告警，
+     * 避免「看似发送成功、实则未发」的静默失败。
+     */
+    private void doSendDirect() {
+        if (views.isEmpty()) return;
+        FormView view = views.peek();
+        try {
+            // 根据构建策略决定是否重新构建（ALWAYS 每次重建，ON_DEMAND 仅在脏时重建）
+            if (view.shouldRebuild()) {
+                view.rebuild();
+            }
+            view.onShow();
 
-        // 注册响应处理器：玩家提交 / 关闭后由本管理器统一处理
-        window.addHandler(FormResponseHandler.withoutPlayer(id -> handleResponse(view)));
+            // 转换为原生窗口（每次均为新对象，供后续读取响应）
+            cn.nukkit.form.window.FormWindow window = view.form().toNukkit();
 
-        player.showFormWindow(window);
+            // 注册响应处理器：玩家提交 / 关闭后由本管理器统一处理
+            window.addHandler(FormResponseHandler.withoutPlayer(id -> handleResponse(view)));
+
+            int formId = player.showFormWindow(window);
+            if (formId == -1) {
+                // formOpen==true：玩家已有表单打开，Nukkit 拒绝本次发送（返回 -1 且不发包）
+                log().warning("[jframe] showFormWindow 返回 -1，玩家已有表单打开，本次发送被跳过"
+                        + " (player=" + player.getName() + ", view=" + view.getClass().getSimpleName() + ")");
+            }
+        } catch (Throwable t) {
+            log().error("[jframe] 发送表单时发生异常"
+                    + " (player=" + player.getName() + ", view=" + view.getClass().getSimpleName() + ")", t);
+        }
     }
 
     /**
@@ -343,6 +407,11 @@ public class ViewManager {
      *   <li>什么都不做 —— 栈不变，重发当前栈顶（关闭窗口时即「窗口弹回」）</li>
      * </ul>
      *
+     * <p><b>异常隔离（Bug1 修复）：</b>业务回调（{@link FormView#onResult} /
+     * {@link FormView#onCloseAttempt}）中抛出的任何异常都会被捕获并记录，<b>不会</b>中断重发流程。
+     * 重发逻辑（{@link #doSend}）位于 {@code finally} 块中，确保无论回调是否抛异常，
+     * 只要栈不空就一定会重新发送栈顶——避免业务异常导致整个表单系统永久卡死。
+     *
      * @param view 触发本次响应的视图
      */
     private void handleResponse(FormView view) {
@@ -358,14 +427,29 @@ public class ViewManager {
                 FormResult result = view.form().buildResult(player);
                 view.handleResult(result);
             }
+        } catch (Throwable t) {
+            // 业务回调（onResult / onCloseAttempt）抛异常不能让整个表单系统卡死：
+            // 吞掉异常并记录日志，随后仍按「栈不空则重发栈顶」的统一机制继续，
+            // 保证表单不会永久卡住（Bug1 修复）。
+            log().error("[jframe] 处理表单响应时发生异常"
+                    + " (player=" + player.getName() + ", view=" + view.getClass().getSimpleName() + ")", t);
         } finally {
             handlingResponse = false;
-        }
-
-        // 统一重发：回应处理后，只要栈不空，就重新发送当前栈顶
-        // （只有栈空——如回调中 close() 清空了栈——才没有界面显示）
-        if (!isEmpty()) {
-            doSend();
+            // 统一重发：回应处理后，只要栈不空，就重新发送当前栈顶
+            // （只有栈空——如回调中 close() 清空了栈——才没有界面显示）
+            //
+            // 【关键】重发逻辑必须放在 finally 中：业务回调抛异常时，原实现会因
+            // try-finally 重新抛出异常而跳过此处 doSend()，导致表单栈永久卡死。
+            // 现在异常已在上方被 catch 吞掉，此处 doSend() 必然被执行（Bug1 修复）。
+            if (!isEmpty()) {
+                try {
+                    doSend();
+                } catch (Throwable t2) {
+                    // doSendDirect 内部已做异常隔离，此处兜底防止极端情况
+                    log().error("[jframe] 重发表单时发生异常"
+                            + " (player=" + player.getName() + ", view=" + view.getClass().getSimpleName() + ")", t2);
+                }
+            }
         }
     }
 

@@ -14,6 +14,7 @@ import lombok.experimental.Accessors;
 
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.function.Function;
 
 /**
  * 以玩家为来源、仅玩家在线时才保留的数据映射基类，继承 {@link AbstractFunctionalMap}。
@@ -72,9 +73,11 @@ import java.util.function.BiConsumer;
  * <h3>继承自基类的能力</h3>
  * 本类同时拥有 {@link AbstractFunctionalMap} 的 4 个功能槽位：
  * {@link #setKeyExtractor}、{@link #setLoader}、{@link #setExpiryChecker}、{@link #setOnEvict}。
- * 本类的 {@link #getOrCreate(Player)} 用 {@link #create} 而非基类 {@code loader} 槽位。
+ * 此外本类新增 {@link #setCreator(Function) creator} 槽位（{@code Function<Player,V>}）驱动 {@link #create}：
+ * {@link #getOrCreate(Player)} 用 {@link #create} 而非基类 {@code loader} 槽位。
  *
  * <h3>使用示例</h3>
+ * <p><b>方式一：子类重写</b>
  * <pre>{@code
  * public class CombatStats extends PlayerDataMap<Player, CombatData> {
  *     public CombatStats() { setListenJoin(true); }    // 退出清理 + 进入预加载
@@ -88,11 +91,19 @@ import java.util.function.BiConsumer;
  * }
  * }</pre>
  *
+ * <p><b>方式二：外部注入</b>（无需子类化，未注入时 {@link #create} 返回 {@code null}）
+ * <pre>{@code
+ * var stats = new PlayerDataMap<Player, CombatData>()
+ *         .setCreator(player -> new CombatData())
+ *         .setListenJoin(true);
+ * stats.bindPlugin(plugin);
+ * }</pre>
+ *
  * @param <K> 映射键类型（默认 {@link Player}）
  * @param <V> 每位玩家关联的数据类型
  */
 @Accessors(chain = true)
-public abstract class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements Listener {
+public class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements Listener {
 
     /** 是否监听玩家退出（默认 true：自动清理）。必须在 {@link #bindPlugin} 之前通过 {@link #setListenQuit(boolean)} 设置。 */
     @Getter @Setter
@@ -168,14 +179,29 @@ public abstract class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> im
     }
 
     /**
-     * 为玩家创建默认数据（子类实现）。
+     * 为玩家创建默认数据的函数（外部注入，驱动 {@link #create}）。
+     * 为 {@code null} 时 {@link #create} 返回 {@code null}。
+     */
+    @Getter @Setter
+    private Function<Player, V> creator;
+
+    /**
+     * 为玩家创建默认数据。
      *
      * <p>在 {@link #getOrCreate} 首次访问某玩家时调用。
      *
+     * <p><b>默认实现</b>委托 {@link #setCreator(Function) creator} 槽位：
+     * 若已通过 {@link #setCreator(Function)} 注入创建函数则调用之，否则返回 {@code null}。
+     * 因此<b>外部注入</b>（{@code setCreator(fn)}）与<b>子类重写</b>两种方式任选其一即可；
+     * 二者皆未提供时返回 {@code null}。重写本方法后 creator 槽位不再生效。
+     *
      * @param player 玩家
-     * @return 新建的默认数据
+     * @return 新建的默认数据，或 {@code null}
      */
-    protected abstract V create(Player player);
+    protected V create(Player player) {
+        Function<Player, V> c = this.creator;
+        return c != null ? c.apply(player) : null;
+    }
 
     /** 退出监听器内部类（仅 {@code listenQuit=true} 时实例化注册）。 */
     private final class QuitListener implements Listener {

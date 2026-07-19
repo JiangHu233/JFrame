@@ -1,6 +1,7 @@
 package io.github.JiangHu.jframe.form.element;
 
 import cn.nukkit.form.element.ElementLabel;
+import lombok.Setter;
 
 /**
  * 纯文本标签元素。
@@ -15,17 +16,28 @@ import cn.nukkit.form.element.ElementLabel;
  *     .toggle(new ToggleElement("困难模式"));
  * }</pre>
  */
+@Setter
 public class LabelElement extends FormElement<String> {
 
-    private final String text;
+    private String text;
 
     /**
-     * 创建文本标签元素。
+     * 创建文本标签元素，{@code key} 默认与 {@code text} 相同。
      *
      * @param text 显示的文本
      */
     public LabelElement(String text) {
-        super(text);
+        this(text, text);
+    }
+
+    /**
+     * 创建文本标签元素，显式分离唯一标识与显示文本。
+     *
+     * @param key  元素唯一标识（结果取值键，不可变）
+     * @param text 显示的文本
+     */
+    public LabelElement(String key, String text) {
+        super(key, text);
         this.text = text;
     }
 
@@ -37,5 +49,10 @@ public class LabelElement extends FormElement<String> {
     @Override
     protected String read(cn.nukkit.form.response.FormResponseCustom response, int index) {
         return text;
+    }
+
+    @Override
+    protected void doApplyValue(String value) {
+        // 标签元素仅用于静态展示，无可回填的默认值，故空实现
     }
 }

@@ -20,8 +20,13 @@ import java.util.Map;
  * 内部维护一组 {@link FormElement}，每个元素自带类型化读取逻辑，
  * 调用方无需关心 Nukkit 各类 Response 的读取方法差异。
  * <p>
- * 提交后，结果会以「元素标签 -> 值」的形式封装进 {@link FormResult}，
- * 可通过 {@link FormResult#get(String)} 按标签取值，或直接访问元素对象的 {@code value()}。
+ * 提交后，结果会以「元素 key -> 值」的形式封装进 {@link FormResult}，
+ * 可通过 {@link FormResult#get(String)} 按 {@link FormElement#key() key} 取值，
+ * 或直接访问元素对象的 {@code value()}。
+ * <p>
+ * 注意：取值键是元素的 {@link FormElement#key() key}（构造时确定、不可变），
+ * 而非 {@link FormElement#label() label}（显示文本，可变）。未显式指定 key 时，
+ * key 默认与 label 初始值相同，因此老代码 {@code result.get("昵称")} 仍可工作。
  *
  * <pre>{@code
  * InputElement nameEl = new InputElement("昵称");
@@ -33,7 +38,7 @@ import java.util.Map;
  *
  * // 提交后：
  * String name = nameEl.value();        // 直接类型安全取值
- * String mode = result.get("模式");    // 或按标签取值
+ * String mode = result.get("模式");    // 或按 key 取值（此处 key 默认 = "模式"）
  * }</pre>
  *
  * @see FormElement
@@ -114,12 +119,13 @@ public class CustomForm extends JForm {
         }
         FormResponseCustom resp = (FormResponseCustom) window.getResponse();
 
-        // 逐个元素按全局索引读取并缓存，同时构建「标签 -> 值」映射
+        // 逐个元素按全局索引读取并缓存，同时构建「key -> 值」映射
+        // 注意：取值键用 key()（不可变）而非 label()（可变），避免运行期改 label 后取值键漂移
         Map<String, Object> values = new LinkedHashMap<>();
         for (int i = 0; i < elements.size(); i++) {
             FormElement<?> el = elements.get(i);
             el.readAndCache(resp, i);
-            values.put(el.label(), el.value());
+            values.put(el.key(), el.value());
         }
         return FormResult.custom(player, values);
     }

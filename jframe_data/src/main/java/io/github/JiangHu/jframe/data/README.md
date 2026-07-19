@@ -9,7 +9,11 @@
 - **必需校验**：`required = true` 标记关键字段，加载时缺失即报错，防止数据损坏静默失败
 - **自动递归**：`List` / `Set` / `Map` / 数组 / 嵌套对象自动递归处理，嵌套类有 `@SaveField` 则同样按注解规则序列化
 - **字段级适配器**：通过 `adapter` 指定 [`SaveFieldAdapter`](src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) 自定义单个字段的 JSON 格式（如坐标压缩为 `"x,y"` 字符串）
+- **子路径与路径导航**：[`sub()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 向下、[`parent()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 向上、[`root()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 一步回根，三者仅作用于临时子路径、不篡改根路径
+- **跨插件隔离**：[`forPlugin(plugin)`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 为业务插件创建独立根保存器，数据落入各自 `plugins/<插件名>/` 目录，互不干扰
 - **灵活命名**：显式指定文件名、绝对路径文件、或实现 [`SaveIdentifiable`](src/main/java/io/github/JiangHu/jframe/data/SaveIdentifiable.java) 自动命名
+- **文件探测**：[`exists()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 在加载前判断目标文件 / 序列化目标文件是否存在，避免文件缺失抛异常
+- **加载或新建**：[`loadOrSave()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 文件存在则读取，不存在则用默认值创建并落盘，一行搞定"首次生成默认配置"
 - **Spring 集成**：遵循项目 API/Engine/Config 模式，`@ImportResource` 装配 Bean
 
 ---
@@ -259,6 +263,56 @@ saver.setRootDir(new File("plugins/MyPlugin/data"));
 // JFrameMain 启动时自动调用 bindPlugin，rootDir = plugin.getDataFolder()
 ```
 
+### 子路径与路径导航（sub / parent / root）
+
+通过 [`sub()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 在当前根路径下拼接子目录，得到一个**子保存器**；通过 [`parent()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 可**向上返回**父级，通过 [`root()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 则**一步清空所有临时子路径、回到根**。三者都只作用于**临时子路径**——根路径是固定基准点，子保存器无法通过 `setRootDir()` 篡改它。
+
+| 方法 | 说明 |
+|------|------|
+| `sub(first, more...)` | 向下拼接子目录，返回子保存器（持有当前保存器为父级） |
+| `parent()` | 向上返回父级保存器（根保存器返回 `null`） |
+| `root()` | 清空所有临时子路径，一步回到根保存器（已是根则返回自身） |
+| `isRoot()` | 是否为根保存器（无父级） |
+
+```java
+DataSaver players = saver.sub("players");        // rootDir/players
+DataSaver vip     = players.sub("vip");          // rootDir/players/vip
+
+// 向下导航后保存：写入当前子目录
+vip.save(data, "steve");                         // → rootDir/players/vip/steve.json
+
+// 向上导航后加载：显式回到上级目录读取
+vip.parent().load(C.class, "global");            // → rootDir/players/global.json
+// 一步回根：清空所有临时子路径
+vip.root().load(C.class, "config");              // → rootDir/config.json
+```
+
+**典型场景**：用 `sub()` 把数据按"模块 / 玩家 / VIP"分层组织到不同子目录，需要访问上级目录（如全局配置、默认模板）时用 `parent()` 显式向上导航，路径关系清晰可控。
+
+> **注意**：
+> - save 与 load 都严格作用于当前保存器的目录，**不会自动向上回退查找**。若当前目录无目标文件，`load` / `loadInto` 直接抛出 `DataException`；需要访问上级时请显式调用 `parent()` 或一步 `root()`。
+> - sub/parent/root 仅在**临时子路径**内导航，**不能变化根路径**：子保存器调用 `setRootDir()` 会抛出 `DataException`。根路径只能由根保存器通过 `setRootDir()` 或 `bindPlugin()` 设置。
+
+### 跨插件独立根保存器（forPlugin）
+
+当 JFrame 作为**前置工具插件**为其他业务插件提供数据保存能力时，业务插件不应把数据写进 JFrame 的目录。调用 [`forPlugin(plugin)`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 即可得到一个**以业务插件自身数据目录为根**的独立保存器：
+
+```java
+// 在业务插件的 onEnable 中
+DataSaver mySaver = jframeMain.getDataSaver().forPlugin(this);
+
+mySaver.save(data, "config");                   // → plugins/<本插件>/config.json
+mySaver.sub("players").save(p, p.getName());    // → plugins/<本插件>/players/<name>.json
+```
+
+| 特性 | 说明 |
+|------|------|
+| 独立根 | 返回全新的根保存器（`isRoot()` 为 `true`），与 JFrame 自身的保存器相互独立 |
+| 共享内核 | 共享同一份 `MetadataCache` 与 `Gson`，注解规则、序列化行为完全一致 |
+| 目录隔离 | 各业务插件数据落入各自的 `plugins/<插件名>/` 目录，互不干扰 |
+
+> **何时用 `forPlugin`**：只要调用方是"另一个插件"而非 JFrame 自身，就应通过 `forPlugin(this)` 获取独立保存器，避免污染 JFrame 目录。
+
 ### 保存
 
 | 方法 | 文件路径 |
@@ -290,6 +344,76 @@ PlayerData loaded = saver.load(PlayerData.class, "players/steve");
 PlayerData existing = getExistingPlayer();
 saver.loadInto(existing, "players/steve");
 ```
+
+### 文件存在性判断
+
+在 `load` 之前探测目标文件是否已存在，避免文件缺失时抛出 `DataException`：
+
+| 方法 | 说明 |
+|------|------|
+| `exists("players/steve")` | 判断相对路径文件是否存在（自动追加 `.json`） |
+| `exists(file)` | 判断绝对路径文件是否存在 |
+| `exists(obj)` | 判断 `SaveIdentifiable` 对象的**序列化目标文件**是否存在（基于 `saveKey()`） |
+
+```java
+// 加载前先判断，避免文件缺失抛异常
+if (saver.exists("players/steve")) {
+    PlayerData data = saver.load(PlayerData.class, "players/steve");
+} else {
+    // 首次进入：尚无存档
+}
+
+// 判断某条 SaveIdentifiable 数据是否已落盘
+IdentifiableData profile = ...;
+boolean savedBefore = saver.exists(profile);
+```
+
+### 解析对象对应的文件（fileOf）
+
+通过 `SaveIdentifiable` 对象的 `saveKey()` 反查它对应的具体存储文件（绝对路径），免去外部手动拼接 `rootDir + saveKey + ".json"`。返回的文件正是 `save(obj)` 会写入、`exists(obj)` 会探测的那个文件（可能尚不存在）。
+
+```java
+PlayerData data = new PlayerData(uuid, "Steve", 1);
+
+// 直接拿到 data 对应的存储文件（绝对路径）
+File file = saver.fileOf(data);   // 等价于 new File(rootDir, uuid + ".json")
+
+// 配合 exists 自定义处理，或用于日志/备份/迁移等场景
+if (!saver.fileOf(data).exists()) {
+    saver.save(data);   // 首次落盘
+}
+```
+
+> **说明**：`obj` 必须实现 `SaveIdentifiable` 且 `saveKey()` 合法，否则抛出 `DataException`。子保存器（`sub(...)`）返回的文件会带上子目录前缀。
+
+### 加载或新建（loadOrSave）
+
+文件**存在则读取**，**不存在则用默认值创建并落盘**后返回。典型用途：加载配置文件，首次运行自动生成默认配置。
+
+| 方法 | 说明 |
+|------|------|
+| `loadOrSave(Class, "config", supplier)` | 相对路径；不存在则用 `supplier` 生成默认值、保存后返回 |
+| `loadOrSave(Class, file, supplier)` | 绝对路径；同上 |
+| `loadOrSave(defaultObj)` | **自动命名**；直接传入默认对象，文件名由其 `saveKey()` 决定（类型须实现 `SaveIdentifiable`） |
+
+```java
+// 一行搞定"有则读取，无则生成默认配置并保存"
+Config cfg = saver.loadOrSave(Config.class, "config", Config::new);
+
+// 默认值提供器（Supplier）是惰性的：仅当文件不存在时才会调用
+PlayerData data = saver.loadOrSave(
+        PlayerData.class,
+        "players/steve",
+        () -> new PlayerData("Steve", 1, 20.0, false));
+
+// 自动命名：直接传入默认对象，文件名 = saveKey()，无需手写文件名
+PlayerData byKey = saver.loadOrSave(new PlayerData(uuid, "Steve", 1));   // 文件名自动取 uuid
+```
+
+> **说明**：
+> - `defaultSupplier`（显式文件名重载）不能为 `null`，且不能返回 `null`，否则抛出 `DataException`。
+> - 显式文件名重载（前两种）：文件已存在时 `defaultSupplier` **不会被调用**（惰性求值），可放心传入开销较大的构造逻辑。
+> - 自动命名重载（`loadOrSave(defaultObj)`）：因为确定文件名必须先读取 `saveKey()`，所以**直接传入默认对象**而非 `Supplier`——`Supplier` 在这里无法提供惰性收益。`defaultObj` 不能为 `null`，否则抛出 `DataException`。
 
 ### JSON 字符串互转
 

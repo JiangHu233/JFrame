@@ -4,6 +4,7 @@ import cn.nukkit.Player;
 import cn.nukkit.form.window.FormWindow;
 import io.github.JiangHu.jframe.form.FormView;
 import io.github.JiangHu.jframe.form.response.FormResult;
+import lombok.Setter;
 
 /**
  * 表单布局的统一抽象基类。
@@ -43,7 +44,13 @@ public abstract class JForm {
         MODAL
     }
 
-    /** 表单标题。 */
+    /**
+     * 表单标题。
+     * <p>
+     * 可在运行期通过 {@link #setTitle(String)} 动态修改，
+     * 下次 {@link #toNukkit()} 转换时生效。
+     */
+    @Setter
     protected String title;
 
     /**

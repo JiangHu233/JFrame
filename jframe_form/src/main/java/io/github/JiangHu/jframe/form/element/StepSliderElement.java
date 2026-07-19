@@ -1,6 +1,7 @@
 package io.github.JiangHu.jframe.form.element;
 
 import cn.nukkit.form.element.ElementStepSlider;
+import lombok.Setter;
 
 import java.util.Arrays;
 import java.util.List;
@@ -18,20 +19,33 @@ import java.util.List;
  *     .stepSlider(new StepSliderElement("画质", "低", "中", "高"));
  * }</pre>
  */
+@Setter
 public class StepSliderElement extends FormElement<String> {
 
-    private final List<String> steps;
-    private final int defaultIndex;
+    private List<String> steps;
+    private int defaultIndex;
 
     /**
-     * 创建步进滑块元素。
+     * 创建步进滑块元素，{@code key} 默认与 {@code label} 相同。
      *
      * @param label        元素标签
      * @param steps        档位列表
      * @param defaultIndex 默认选中档位索引（从 0 开始）
      */
     public StepSliderElement(String label, List<String> steps, int defaultIndex) {
-        super(label);
+        this(label, label, steps, defaultIndex);
+    }
+
+    /**
+     * 创建步进滑块元素，显式分离唯一标识与显示标签。
+     *
+     * @param key          元素唯一标识（结果取值键，不可变）
+     * @param label        元素标签
+     * @param steps        档位列表
+     * @param defaultIndex 默认选中档位索引（从 0 开始）
+     */
+    public StepSliderElement(String key, String label, List<String> steps, int defaultIndex) {
+        super(key, label);
         this.steps = steps;
         this.defaultIndex = defaultIndex;
     }
@@ -55,5 +69,14 @@ public class StepSliderElement extends FormElement<String> {
     protected String read(cn.nukkit.form.response.FormResponseCustom response, int index) {
         cn.nukkit.form.response.FormResponseData data = response.getStepSliderResponse(index);
         return data == null ? null : data.getElementContent();
+    }
+
+    @Override
+    protected void doApplyValue(String value) {
+        // value 是被选中档位的文本，需转回索引才能作为默认选中档位
+        int idx = steps.indexOf(value);
+        if (idx >= 0) {
+            this.defaultIndex = idx;
+        }
     }
 }

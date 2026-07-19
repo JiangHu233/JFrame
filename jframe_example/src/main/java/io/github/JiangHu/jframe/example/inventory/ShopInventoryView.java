@@ -2,14 +2,14 @@ package io.github.JiangHu.jframe.example.inventory;
 
 import cn.nukkit.Player;
 import cn.nukkit.item.Item;
-import io.github.JiangHu.jframe.inventory.component.Button;
-import io.github.JiangHu.jframe.inventory.component.Filler;
-import io.github.JiangHu.jframe.inventory.component.InventoryComponent;
-import io.github.JiangHu.jframe.inventory.component.Panel;
-import io.github.JiangHu.jframe.inventory.component.StorageBox;
-import io.github.JiangHu.jframe.inventory.model.SlotAppearance;
-import io.github.JiangHu.jframe.inventory.model.event.StoreEvent;
-import io.github.JiangHu.jframe.inventory.view.InventoryView;
+import io.github.JiangHu.jframe.inventory.ui.component.Button;
+import io.github.JiangHu.jframe.inventory.ui.component.Filler;
+import io.github.JiangHu.jframe.inventory.ui.component.InventoryComponent;
+import io.github.JiangHu.jframe.inventory.ui.component.Panel;
+import io.github.JiangHu.jframe.inventory.ui.component.StorageBox;
+import io.github.JiangHu.jframe.inventory.ui.model.SlotAppearance;
+import io.github.JiangHu.jframe.inventory.ui.model.event.StoreEvent;
+import io.github.JiangHu.jframe.inventory.ui.view.InventoryView;
 
 /**
  * 箱子商店示例界面（3 行 × 9 列 = 27 格）。
@@ -60,14 +60,8 @@ public class ShopInventoryView extends InventoryView {
         // -------------------- 第 1 行：存储区 + 功能按钮 --------------------
 
         // 左侧存储区（列 0-2）：玩家可放入/取出物品
-        // 设置默认占位物品：空槽时显示蓝色玻璃板
         StorageBox leftBox = new StorageBox(3, 1);
         leftBox.name("leftStorage");
-        leftBox.defaultItem(SlotAppearance.builder()
-                .type(Item.STAINED_GLASS_PANE)
-                .meta(11) // 蓝色玻璃板
-                .name("§b左侧存储区")
-                .build());
         leftBox.onStore(this::onItemStored);
         root.add(leftBox, 1, 0);
 
@@ -125,14 +119,8 @@ public class ShopInventoryView extends InventoryView {
         root.add(clearBtn, 1, 5);
 
         // 右侧存储区（列 6-8）
-        // 设置默认占位物品：空槽时显示粉色玻璃板
         StorageBox rightBox = new StorageBox(3, 1);
         rightBox.name("rightStorage");
-        rightBox.defaultItem(SlotAppearance.builder()
-                .type(Item.STAINED_GLASS_PANE)
-                .meta(6) // 粉色玻璃板
-                .name("§d右侧存储区")
-                .build());
         rightBox.onStore(this::onItemStored);
         root.add(rightBox, 1, 6);
 

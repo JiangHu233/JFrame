@@ -1,6 +1,7 @@
 package io.github.JiangHu.jframe.form.element;
 
 import cn.nukkit.form.element.ElementSlider;
+import lombok.Setter;
 
 /**
  * 滑块元素。
@@ -13,15 +14,16 @@ import cn.nukkit.form.element.ElementSlider;
  *     .slider(new SliderElement("音量", 0, 100, 1, 50));
  * }</pre>
  */
+@Setter
 public class SliderElement extends FormElement<Float> {
 
-    private final float min;
-    private final float max;
-    private final int step;
-    private final float defaultValue;
+    private float min;
+    private float max;
+    private int step;
+    private float defaultValue;
 
     /**
-     * 创建滑块元素。
+     * 创建滑块元素，{@code key} 默认与 {@code label} 相同。
      *
      * @param label        元素标签
      * @param min          最小值
@@ -30,7 +32,21 @@ public class SliderElement extends FormElement<Float> {
      * @param defaultValue 默认值
      */
     public SliderElement(String label, float min, float max, int step, float defaultValue) {
-        super(label);
+        this(label, label, min, max, step, defaultValue);
+    }
+
+    /**
+     * 创建滑块元素，显式分离唯一标识与显示标签。
+     *
+     * @param key          元素唯一标识（结果取值键，不可变）
+     * @param label        元素标签
+     * @param min          最小值
+     * @param max          最大值
+     * @param step         步长
+     * @param defaultValue 默认值
+     */
+    public SliderElement(String key, String label, float min, float max, int step, float defaultValue) {
+        super(key, label);
         this.min = min;
         this.max = max;
         this.step = step;
@@ -55,5 +71,10 @@ public class SliderElement extends FormElement<Float> {
     @Override
     protected Float read(cn.nukkit.form.response.FormResponseCustom response, int index) {
         return response.getSliderResponse(index);
+    }
+
+    @Override
+    protected void doApplyValue(Float value) {
+        this.defaultValue = value;
     }
 }
