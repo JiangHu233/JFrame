@@ -290,7 +290,7 @@ vip.root().load(C.class, "config");              // → rootDir/config.json
 **典型场景**：用 `sub()` 把数据按"模块 / 玩家 / VIP"分层组织到不同子目录，需要访问上级目录（如全局配置、默认模板）时用 `parent()` 显式向上导航，路径关系清晰可控。
 
 > **注意**：
-> - save 与 load 都严格作用于当前保存器的目录，**不会自动向上回退查找**。若当前目录无目标文件，`load` / `loadInto` 直接抛出 `DataException`；需要访问上级时请显式调用 `parent()` 或一步 `root()`。
+> - save 与 load 都严格作用于当前保存器的目录，**不会自动向上回退查找**。若当前目录无目标文件，`load` 返回 `null`、`loadInto` 抛出 `DataException`；需要访问上级时请显式调用 `parent()` 或一步 `root()`。
 > - sub/parent/root 仅在**临时子路径**内导航，**不能变化根路径**：子保存器调用 `setRootDir()` 会抛出 `DataException`。根路径只能由根保存器通过 `setRootDir()` 或 `bindPlugin()` 设置。
 
 ### 跨插件独立根保存器（forPlugin）
@@ -347,7 +347,8 @@ saver.loadInto(existing, "players/steve");
 
 ### 文件存在性判断
 
-在 `load` 之前探测目标文件是否已存在，避免文件缺失时抛出 `DataException`：
+探测目标文件是否已存在。`load` 在文件缺失时本就返回 `null`（不抛异常），
+`exists()` 主要用于 `loadInto`（缺失会抛异常）调用前的预判，或需要布尔语义的场景：
 
 | 方法 | 说明 |
 |------|------|
@@ -356,11 +357,15 @@ saver.loadInto(existing, "players/steve");
 | `exists(obj)` | 判断 `SaveIdentifiable` 对象的**序列化目标文件**是否存在（基于 `saveKey()`） |
 
 ```java
-// 加载前先判断，避免文件缺失抛异常
-if (saver.exists("players/steve")) {
-    PlayerData data = saver.load(PlayerData.class, "players/steve");
-} else {
+// load 文件缺失时返回 null，可直接据此区分"无存档"与"读取失败"
+PlayerData data = saver.load(PlayerData.class, "players/steve");
+if (data == null) {
     // 首次进入：尚无存档
+}
+
+// loadInto 缺失会抛异常，调用前可用 exists 预判
+if (saver.exists("players/steve")) {
+    saver.loadInto(existing, "players/steve");
 }
 
 // 判断某条 SaveIdentifiable 数据是否已落盘
@@ -497,7 +502,7 @@ public class PlayerService {
 |------|----------|
 | required 字段缺失 | `必需字段 'xxx' 在 JSON 中缺失或为 null` |
 | 类缺少无参构造器 | `类 xxx 缺少无参构造器，无法实例化` |
-| 文件不存在 | `文件不存在: /path/to/file.json` |
+| 文件不存在（`loadInto`） | `文件不存在: /path/to/file.json`（注：`load` 缺失返回 `null`，不抛此异常） |
 | 未设置 rootDir | `保存根路径（rootDir）尚未设置` |
 | 未实现 SaveIdentifiable | `对象 xxx 未实现 SaveIdentifiable，无法自动确定文件名` |
 

@@ -50,7 +50,7 @@ import java.util.function.Supplier;
  * saver.save(playerData, "players/steve");   // → rootDir/players/steve.json
  * saver.save(playerData);                     // → rootDir/<uuid>.json（需实现 SaveIdentifiable）
  *
- * // 加载
+ * // 加载（文件不存在时返回 null，可用 null 区分"缺失"与"读取失败"）
  * PlayerData loaded = saver.load(PlayerData.class, "players/steve");
  *
  * // 判断文件是否存在
@@ -310,11 +310,15 @@ public class DataSaver implements PluginAware {
 
     /**
      * 从根路径下的指定文件名加载对象。
+     * <p>
+     * 若文件<b>不存在</b>，返回 {@code null}（不抛异常）。加载前可先用
+     * {@link #exists(String)} 探测，或直接用 {@code null} 判断区分"数据缺失"
+     * 与"读取失败"两种情况。
      *
      * @param clazz    目标类
      * @param fileName 文件名（相对根路径，不含扩展名）
      * @param <T>      目标类型
-     * @return 反序列化的对象
+     * @return 反序列化的对象；文件不存在时返回 {@code null}
      */
     public <T> T load(Class<T> clazz, String fileName) {
         File file = resolveRelativeFile(fileName);
@@ -323,13 +327,21 @@ public class DataSaver implements PluginAware {
 
     /**
      * 从指定文件加载对象。
+     * <p>
+     * 若文件<b>不存在</b>，返回 {@code null}（不抛异常），以便调用方用
+     * {@code null} 区分"数据缺失/首次加载"与"读取失败"两种情况，提升鲁棒性。
+     * 若需在缺失时自动创建默认值并落盘，请改用
+     * {@link #loadOrSave(Class, File, java.util.function.Supplier) loadOrSave}。
      *
      * @param clazz 目标类
      * @param file  源文件（绝对路径）
      * @param <T>   目标类型
-     * @return 反序列化的对象
+     * @return 反序列化的对象；文件不存在时返回 {@code null}
      */
     public <T> T load(Class<T> clazz, File file) {
+        if (!file.exists()) {
+            return null;
+        }
         String json = readStringFromFile(file);
         return fromJson(json, clazz);
     }

@@ -564,10 +564,10 @@ class DataSaverTest {
         }
 
         @Test
-        @DisplayName("load 不存在的文件应抛出 DataException")
-        void loadNonExistentThrows() {
-            assertThrows(DataException.class,
-                    () -> saver.load(PlayerData.class, "nonexistent"));
+        @DisplayName("load 不存在的文件应返回 null（鲁棒性：缺失≠失败）")
+        void loadNonExistentReturnsNull() {
+            assertNull(saver.load(PlayerData.class, "nonexistent"),
+                    "文件不存在时 load 应返回 null 而非抛出异常");
         }
 
         @Test

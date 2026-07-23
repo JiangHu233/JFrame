@@ -23,9 +23,11 @@ data/
 
 | 类型 | 说明 |
 |------|------|
-| [`AbstractFunctionalMap`](map/AbstractFunctionalMap.java) | 功能可插拔的 Map 抽象基类（键提取 / 加载 / 过期 / 淘汰回调） |
-| [`LruCacheMap`](map/LruCacheMap.java) | 线程安全的 LRU 缓存映射 |
-| [`PlayerDataMap`](map/PlayerDataMap.java) | 以玩家为键、玩家退出自动清理的映射 |
+| [`AbstractFunctionalMap`](map/AbstractFunctionalMap.java) | 功能可插拔的 Map 抽象基类：以「键源 `S`」为读写入口，内部键 `K` 不透明（键提取 / 加载 / 过期 / 淘汰回调） |
+| [`LruCacheMap`](map/LruCacheMap.java) | 线程安全的 LRU 缓存映射（`S=K`，键即源） |
+| [`PlayerDataMap`](map/PlayerDataMap.java) | 以玩家为读写入口、玩家退出自动清理的映射（`S=Player`，`K` 不透明） |
+
+> **键源 `S` 与内部键 `K`**：`AbstractFunctionalMap` 的所有读写方法（`get` / `put` / `remove` / `containsKey` / `getOrCreate`）均以键源 `S` 为参数，内部经 `keyExtractor`（`Function<S,K>`）转换为真正的存储键 `K`，`K` 对使用者不透明。`LruCacheMap` 取 `S=K`（键即源，`keyExtractor` 默认 `identity`）；`PlayerDataMap` 取 `S=Player`（键来自玩家，如玩家名 / UUID）。
 
 ### `reactive` —— 响应式纠缠值
 

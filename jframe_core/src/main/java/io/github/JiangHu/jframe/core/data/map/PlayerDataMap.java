@@ -25,18 +25,24 @@ import java.util.function.Function;
  *
  * <h3>类型参数</h3>
  * <ul>
- *   <li>{@code <K>} —— 映射键类型，默认为 {@link Player}（见 {@link #key}）。</li>
+ *   <li>{@code <K>} —— 映射键类型，默认为 {@link Player}。</li>
  *   <li>{@code <V>} —— 每位玩家关联的数据类型。</li>
  * </ul>
  *
- * <h3>可重写的键提取</h3>
- * 默认以玩家对象本身作为键。若想用玩家名、UUID 等作为键，重写 {@link #key}：
+ * <h3>键源与内部键（S = Player，K 不透明）</h3>
+ * 本类取 {@code S=Player}：对外读写入口（{@link #get} / {@link #put} / {@link #remove}
+ * / {@link #contains} / {@link #getOrCreate}）均以 {@link Player} 为参数；
+ * 内部通过 {@link #setKeyExtractor(Function) keyExtractor}（{@code Function<Player,K>}）
+ * 把玩家转换为真正的存储键 {@code K}，{@code K} 对使用者不透明。
+ *
+ * <p>默认以玩家对象本身作为键（{@code K=Player}）。若想用玩家名、UUID 等作为键，
+ * 注入 {@code setKeyExtractor(Player::getName)} 即可：
  * <pre>{@code
  * public class ByName extends PlayerDataMap<String, Foo> {
- *     @Override protected String key(Player p) { return p.getName(); }
+ *     public ByName() { setKeyExtractor(Player::getName); }
  * }
  * }</pre>
- * <b>注意：</b>当 {@code K ≠ Player} 时必须重写 {@link #key}，否则会在运行时抛出
+ * <b>注意：</b>当 {@code K ≠ Player} 时必须 {@code setKeyExtractor}，否则会在运行时抛出
  * {@link ClassCastException}。
  *
  * <h3>调用方法设置是否监听</h3>
@@ -103,11 +109,11 @@ import java.util.function.Function;
  * @param <V> 每位玩家关联的数据类型
  */
 @Accessors(chain = true)
-public class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements Listener {
+public class PlayerDataMap<K, V> extends AbstractFunctionalMap<Player, K, V> implements Listener {
 
-    /** 是否监听玩家退出（默认 true：自动清理）。必须在 {@link #bindPlugin} 之前通过 {@link #setListenQuit(boolean)} 设置。 */
+    /** 是否监听玩家退出（默认 false：不自动清理）。必须在 {@link #bindPlugin} 之前通过 {@link #setListenQuit(boolean)} 设置。 */
     @Getter @Setter
-    private boolean listenQuit = true;
+    private boolean listenQuit = false;
 
     /** 是否监听玩家加入（默认 false：不监听）。必须在 {@link #bindPlugin} 之前通过 {@link #setListenJoin(boolean)} 设置。 */
     @Getter @Setter
@@ -130,17 +136,15 @@ public class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements 
     }
 
     /**
-     * 从玩家提取映射键（默认返回玩家本身）。
+     * 默认构造：以玩家对象本身作为内部键（{@code K=Player}）。
      *
-     * <p>子类可重写为 {@code player.getName()}、{@code player.getUniqueId()} 等。
-     * 当 {@code K ≠ Player} 时<b>必须</b>重写本方法。
-     *
-     * @param player 玩家
-     * @return 用作映射键的值
+     * <p>若 {@code K ≠ Player}（如用玩家名 / UUID 作键），需通过
+     * {@link #setKeyExtractor(Function)} 注入转换函数，例如
+     * {@code setKeyExtractor(Player::getName)}。
      */
     @SuppressWarnings("unchecked")
-    protected K key(Player player) {
-        return (K) player;
+    public PlayerDataMap() {
+        setKeyExtractor(player -> (K) player);
     }
 
     /**
@@ -172,7 +176,7 @@ public class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements 
      * <p>触发时机：玩家退出自动清理、手动调用 {@link #remove} 或 {@link #clear}。
      * 子类可重写以执行额外清理（如持久化、释放资源）。
      *
-     * @param key   被移除条目的键（由 {@link #key} 提取）
+     * @param key   被移除条目的键
      * @param value 被移除的数据
      */
     protected void onRemove(K key, V value) {
@@ -228,7 +232,7 @@ public class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements 
      * @return 数据，或 {@code null}
      */
     public V get(Player player) {
-        return data.get(key(player));
+        return data.get(extractKey(player));
     }
 
     /**
@@ -239,7 +243,7 @@ public class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements 
      * @return 数据或默认值
      */
     public V get(Player player, V defVal) {
-        return data.getOrDefault(key(player), defVal);
+        return data.getOrDefault(extractKey(player), defVal);
     }
 
     /**
@@ -249,7 +253,7 @@ public class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements 
      * @return 数据（绝不返回 {@code null}，除非 {@link #create} 返回 null）
      */
     public V getOrCreate(Player player) {
-        K k = key(player);
+        K k = extractKey(player);
         V existing = data.get(k);
         if (existing != null) {
             return existing;
@@ -264,7 +268,7 @@ public class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements 
      * @return {@code true} 表示存在
      */
     public boolean contains(Player player) {
-        return data.containsKey(key(player));
+        return data.containsKey(extractKey(player));
     }
 
     // -------------------- 写入 --------------------
@@ -277,7 +281,7 @@ public class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements 
      * @return 被覆盖的旧值，或 {@code null}
      */
     public V put(Player player, V value) {
-        return data.put(key(player), value);
+        return data.put(extractKey(player), value);
     }
 
     /**
@@ -287,7 +291,7 @@ public class PlayerDataMap<K, V> extends AbstractFunctionalMap<K, V> implements 
      * @return 被移除的数据，或 {@code null}
      */
     public V remove(Player player) {
-        K k = key(player);
+        K k = extractKey(player);
         V removed = data.remove(k);
         if (removed != null) {
             onRemove(k, removed);

@@ -188,8 +188,8 @@ Spring 容器启动
     ├── resolveRelativeFile(...) → File
     │
     └── load(clazz, file)
+          ├── file.exists() == false → 返回 null（不抛异常，便于区分"缺失"与"读取失败"）
           ├── readStringFromFile(file)
-          │     └── 文件不存在 → 抛 DataException("文件不存在")
           │     └── Files.readString(UTF_8)
           │
           └── fromJson(json, clazz) → gson.fromJson(json, clazz)
@@ -470,15 +470,16 @@ Spring 启动
 [`SaveFieldTypeAdapter.createInstance()`](core/SaveFieldTypeAdapter.java:196) 通过无参构造反射创建实例。
 类缺少无参构造器时，`load` 会抛 `DataException`。**替代方案**：用 `loadInto(target)` 回填已有实例。
 
-### 8.2 `load` 不存在的文件直接抛异常
+### 8.2 `load` 不存在的文件返回 null
 
-[`readStringFromFile()`](DataSaver.java:619) 在文件不存在时抛 `DataException`，**不会返回 null**。
-加载前若不确定文件是否存在，用 [`exists()`](DataSaver.java:376) 探测，或直接用 [`loadOrSave()`](DataSaver.java:436)。
+[`load(clazz, file)`](DataSaver.java:332) 在文件不存在时**返回 `null`**（不抛异常），以便调用方区分"数据缺失"与"读取失败"。
+注意 [`loadInto()`](DataSaver.java:360) 仍会在文件缺失时抛 `DataException`（回填语义要求目标必须存在）；
+若需在缺失时自动创建默认值并落盘，用 [`loadOrSave()`](DataSaver.java:436)。
 
 ### 8.3 save/load 严格作用于当前目录，不向上回退
 
 子保存器（`sub` 派生）的 `load` 只在子目录查找，**不会自动向上回退**。
-子目录无文件直接抛异常。需要访问上级时显式调用 `parent()` 或一步 `root()`。
+子目录无文件时 `load` 返回 `null`、`loadInto` 抛异常。需要访问上级时显式调用 `parent()` 或一步 `root()`。
 
 ### 8.4 嵌套对象无 `@SaveField` 时回退 Gson 默认
 
