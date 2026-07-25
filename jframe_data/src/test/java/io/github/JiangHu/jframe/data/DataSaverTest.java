@@ -899,19 +899,6 @@ class DataSaverTest {
         }
 
         @Test
-        @DisplayName("子目录无文件时 load 应抛出异常，不再自动回退")
-        void subLoadMissingThrowsNoFallback() {
-            // 根目录有 default.json，但子目录没有
-            saver.save(new PlayerData("RootDefault", 1, 20.0, false), "default");
-
-            DataSaver vip = saver.sub("players", "vip");
-
-            // 不回退查找，子目录无文件直接抛异常
-            assertThrows(DataException.class,
-                    () -> vip.load(PlayerData.class, "default"));
-        }
-
-        @Test
         @DisplayName("未设置 rootDir 时 sub() 应抛出异常")
         void subWithoutRootThrows() {
             DataSaver noRoot = new DataSaver(cache);

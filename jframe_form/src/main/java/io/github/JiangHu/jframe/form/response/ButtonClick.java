@@ -68,6 +68,25 @@ public final class ButtonClick {
     }
 
     /**
+     * 进入子界面（压入新视图）。等价于 {@code view().addStack(newView)}。
+     *
+     * @param newView 要进入的新视图
+     */
+    public void addStack(FormView newView) {
+        view.addStack(newView);
+    }
+
+    /**
+     * 进入子界面并向其传递一次性数据。等价于 {@code view().addStack(newView, data)}。
+     *
+     * @param newView 要进入的新视图
+     * @param data    传递给新视图的数据
+     */
+    public void addStack(FormView newView, Object data) {
+        view.addStack(newView, data);
+    }
+
+    /**
      * 用新视图替换当前视图（保持父视图关系不变）。
      * 等价于 {@code view().replaceThis(newView)}。
      *
@@ -78,6 +97,17 @@ public final class ButtonClick {
     }
 
     /**
+     * 用新视图替换当前视图，并向其传递一次性数据。
+     * 等价于 {@code view().replaceThis(newView, data)}。
+     *
+     * @param newView 要替换为的新视图
+     * @param data    传递给新视图的数据
+     */
+    public void replaceThis(FormView newView, Object data) {
+        view.replaceThis(newView, data);
+    }
+
+    /**
      * 清空视图栈并以新视图作为根视图重新开始。
      * 等价于 {@code view().restartWith(newRoot)}。
      *
@@ -85,6 +115,17 @@ public final class ButtonClick {
      */
     public void restartWith(FormView newRoot) {
         view.restartWith(newRoot);
+    }
+
+    /**
+     * 清空视图栈并以新视图作为根视图重新开始，同时向其传递一次性数据。
+     * 等价于 {@code view().restartWith(newRoot, data)}。
+     *
+     * @param newRoot 新的根视图
+     * @param data    传递给新根视图的数据
+     */
+    public void restartWith(FormView newRoot, Object data) {
+        view.restartWith(newRoot, data);
     }
 
     // -------------------- 通知刷新 --------------------

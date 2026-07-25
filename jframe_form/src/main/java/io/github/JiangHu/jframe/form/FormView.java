@@ -334,6 +334,21 @@ public abstract class FormView {
     }
 
     /**
+     * 用新视图替换当前视图，并向其传递一次性数据。
+     * <p>
+     * 替换后保持父视图关系不变，框架会自动发送新视图，
+     * 数据通过新视图的 {@link #onData} 接收。
+     *
+     * @param view 要替换为的新视图
+     * @param data 传递给新视图的数据
+     */
+    public void replaceThis(FormView view, Object data) {
+        if (manager != null) {
+            manager.replaceAndSend(this, view, data);
+        }
+    }
+
+    /**
      * 关闭当前界面栈（清空全部视图）。
      * <p>
      * 触发栈中所有视图的 {@link #onClose()}。
@@ -379,6 +394,20 @@ public abstract class FormView {
     public void restartWith(FormView newRoot) {
         if (manager != null) {
             manager.restartWith(newRoot);
+        }
+    }
+
+    /**
+     * 清空当前视图栈，以新视图作为根视图重新开始，并向其传递一次性数据。
+     * <p>
+     * 数据通过新根视图的 {@link #onData} 接收。
+     *
+     * @param newRoot 新的根视图
+     * @param data    传递给新根视图的数据
+     */
+    public void restartWith(FormView newRoot, Object data) {
+        if (manager != null) {
+            manager.restartWith(newRoot, data);
         }
     }
 

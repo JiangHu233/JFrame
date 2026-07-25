@@ -234,8 +234,9 @@ io.github.JiangHu.jframe.form
 | `view()` | 所属视图 |
 | `goBack()` | 便捷导航：返回上一级 |
 | `refresh()` | 便捷导航：刷新当前界面 |
-| `replaceThis(FormView)` | 便捷导航：原地替换（保持父视图关系） |
-| `restartWith(FormView)` | 便捷导航：清空栈并以新视图为根 |
+| `addStack(FormView)` / `addStack(FormView, Object)` | 便捷导航：进入子界面（可带数据） |
+| `replaceThis(FormView)` / `replaceThis(FormView, Object)` | 便捷导航：原地替换（保持父视图关系，可带数据） |
+| `restartWith(FormView)` / `restartWith(FormView, Object)` | 便捷导航：清空栈并以新视图为根（可带数据） |
 | `close()` | 便捷导航：关闭界面栈 |
 
 ---
@@ -261,7 +262,9 @@ io.github.JiangHu.jframe.form
 | `addStack(FormView)` | 进入子界面（压入新视图） |
 | `addStack(FormView, Object)` | 进入子界面并传递一次性数据 |
 | `replaceThis(FormView)` | 原地替换为另一个视图（保持父视图关系，替换后自动发送） |
+| `replaceThis(FormView, Object)` | 原地替换并传递一次性数据 |
 | `restartWith(FormView)` | 清空整个视图栈，以新视图为根重新开始 |
+| `restartWith(FormView, Object)` | 清空栈、以新视图为根重新开始，并传递一次性数据 |
 | `close()` | 关闭整个界面栈 |
 | `refresh()` | 标记为脏并刷新：栈顶时立即重建重发；非栈顶时只标记脏，待重回栈顶时重建（不受构建策略限制） |
 
@@ -319,11 +322,15 @@ io.github.JiangHu.jframe.form
 | `size()` / `isEmpty()` | 栈大小 / 是否为空 |
 | `snapshot()` | 栈快照（不可变列表，栈底在前） |
 | `insert(int index, FormView)` | 在指定位置插入视图 |
+| `insert(int index, FormView, Object)` | 在指定位置插入视图 + 传递一次性数据 |
 | `remove(int index)` | 移除指定位置的视图（触发 onClose） |
 | `replace(oldView, newView)` | 同层替换 |
+| `replace(oldView, newView, Object)` | 同层替换 + 传递一次性数据 |
 | `replaceAndSend(oldView, newView)` | 同层替换并立即发送新视图 |
+| `replaceAndSend(oldView, newView, Object)` | 同层替换、传递数据并立即发送 |
 | `clear()` | 清空栈（逐个触发 onClose） |
 | `restartWith(FormView)` | 清空栈并以新视图为根重新开始 |
+| `restartWith(FormView, Object)` | 清空栈、以新视图为根重新开始 + 传递一次性数据 |
 
 **发送与响应**：
 

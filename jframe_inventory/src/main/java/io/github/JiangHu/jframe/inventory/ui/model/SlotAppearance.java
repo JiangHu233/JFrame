@@ -72,6 +72,27 @@ public class SlotAppearance {
     }
 
     /**
+     * 从原生 {@link Item} 对象创建外观（便捷工厂方法）。
+     * <p>
+     * 提取物品的 ID、数据值、数量、自定义名称，构造对应的 {@code SlotAppearance}。
+     * 空气物品（{@link Item#AIR}）或 null 返回 null。
+     *
+     * @param item 原生物品
+     * @return 对应的 SlotAppearance，空气或 null 物品返回 null
+     */
+    public static SlotAppearance fromItem(Item item) {
+        if (item == null || item.isNull()) {
+            return null;
+        }
+        return builder()
+                .type(item.getId())
+                .meta(item.getDamage())
+                .count(item.getCount())
+                .name(item.hasCustomName() ? item.getCustomName() : null)
+                .build();
+    }
+
+    /**
      * 将外观转换为原生 {@link Item} 对象。
      * <p>
      * 供框架内部渲染时使用，开发者一般无需直接调用。
