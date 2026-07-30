@@ -18,7 +18,6 @@ import io.github.JiangHu.jframe.event.annotation.*;
  *   <li><b>强化击退</b> —— 玩家攻击其他实体时，水平击退 ×2、垂直击退 ×3</li>
  * </ul>
  */
-@Wrapper
 public class PlayerGameWrapper {
 
     /** 大跳：水平运动速度放大倍数（当前水平动量 × 该值）。 */

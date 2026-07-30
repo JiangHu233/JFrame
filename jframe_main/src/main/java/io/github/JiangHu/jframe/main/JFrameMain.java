@@ -3,6 +3,7 @@ package io.github.JiangHu.jframe.main;
 import cn.nukkit.Server;
 import cn.nukkit.plugin.PluginBase;
 import cn.nukkit.plugin.service.ServicePriority;
+import io.github.JiangHu.jframe.ai.AiAPI;
 import io.github.JiangHu.jframe.command.CommandAPI;
 import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
 import io.github.JiangHu.jframe.core.module.PluginAware;
@@ -165,6 +166,17 @@ public class JFrameMain extends PluginBase {
     }
 
     /**
+     * AI 模块 API。
+     * <p>
+     * 提供启发式寻路、实体导航、战术行为（找掩体/远离/包抄/寻找高地）与战斗动作（攻击/射箭/使用物品）。
+     *
+     * @return AI 服务
+     */
+    public AiAPI getAiAPI() {
+        return getApi(AiAPI.class);
+    }
+
+    /**
      * 数据保存模块入口。
      * <p>
      * 返回的 {@link DataSaver} 已通过 {@link PluginAware} 机制自动绑定插件实例，
@@ -207,6 +219,7 @@ public class JFrameMain extends PluginBase {
         server.getServiceManager().register(ThreadAPI.class, getThreadAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(CommandAPI.class, getCommandAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(InventoryAPI.class, getInventoryAPI(), this, ServicePriority.NORMAL);
+        server.getServiceManager().register(AiAPI.class, getAiAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(DataSaver.class, getDataSaver(), this, ServicePriority.NORMAL);
     }
 

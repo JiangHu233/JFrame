@@ -46,8 +46,6 @@ public class NavigationDemoView extends FormView {
                 .button("§a⬇ 进入子界面（addStack）", ctx -> addStack(new NavigationSubView(player)))
                 // replaceThis：同层替换，栈深度不变，本视图被新视图取代
                 .button("§b🔄 同层替换（replaceThis）", ctx -> replaceThis(new NavigationReplacedView(player)))
-                // restartWith：清空栈，以主菜单为根重新开始
-                .button("§d🏠 重置到主菜单（restartWith）", ctx -> restartWith(new MainMenuView(threadAPI, player)))
                 // close：清空栈，栈空后无界面显示
                 .button("§c❌ 关闭整个界面（close）", ctx -> close())
                 // goBack：弹出当前视图，回到演示总菜单

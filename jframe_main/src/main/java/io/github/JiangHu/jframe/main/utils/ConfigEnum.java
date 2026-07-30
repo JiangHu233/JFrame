@@ -1,5 +1,6 @@
 package io.github.JiangHu.jframe.main.utils;
 
+import io.github.JiangHu.jframe.ai.config.AiSpringConfig;
 import io.github.JiangHu.jframe.command.config.CommandSpringConfig;
 import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
 import io.github.JiangHu.jframe.event.config.EventSpringConfig;
@@ -23,6 +24,7 @@ public enum ConfigEnum {
     EVENT(EventSpringConfig.class),
     COMMAND(CommandSpringConfig.class),
     INVENTORY(InventorySpringConfig.class),
+    AI(AiSpringConfig.class),
     ;
 
     @Getter

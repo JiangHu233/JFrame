@@ -4,10 +4,14 @@ version: "1.0.0"
 api: ["1.0.0"]
 # 运行时依赖 FakeInventories 插件：需将 libs/fakeinventories-1.0.3-MOT-SNAPSHOT.jar
 # 放入服务器 plugins 目录作为独立插件，本插件才能访问其类（/inv fake 对比功能）。
-depend:
-  - FakeInventories
 author: JiangHu
-description: JFrame 框架示例插件，演示事件 / 表单 / 线程 / 命令 / 箱子界面模块的用法。
+# 依赖前置插件 JFrame（jframe_main）：框架类（jframe_command / jframe_ai / jframe_inventory 等）
+# 由 JFrame 的类加载器统一加载，本插件不再重复打包框架类（pom 中 jframe_main 为 provided scope），
+# 避免两个插件各持一份框架类导致 Nukkit 多插件类加载器冲突（IllegalAccessError）。
+# 部署时需先放入 jframe_main.jar，再放入 jframe_example.jar。
+depend:
+  - JFrame
+description: JFrame 框架示例插件，演示事件 / 表单 / 线程 / 命令 / 箱子界面 / AI 模块的用法。
 
 commands:
   jframe:

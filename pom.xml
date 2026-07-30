@@ -18,6 +18,7 @@
         <module>jframe_command</module>
         <module>jframe_inventory</module>
         <module>jframe_data</module>
+        <module>jframe_ai</module>
     </modules>
 
     <properties>

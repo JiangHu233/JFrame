@@ -2,6 +2,7 @@ package io.github.JiangHu.jframe.command.routing;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -25,6 +26,17 @@ import java.util.regex.Pattern;
  *   模式: "home set {name}"   输入: [home, set, tower, foo]
  *         └─3 段消耗─┘            剩余 [foo] → 位置参数
  * </pre>
+ *
+ * <h3>大小写不敏感（对齐 Nukkit）</h3>
+ * <p>
+ * 静态段（根命令与子命令字面量）在解析时<b>归一化为小写</b>，匹配时采用
+ * {@link String#equalsIgnoreCase} 比较，与 Nukkit 命令系统的大小写不敏感特性对齐：
+ * <ul>
+ *   <li>Nukkit 注册命令后内部恒以小写存储，运行时 {@code command.getName()} 回传小写；</li>
+ *   <li>本类将静态段统一小写，使「注册名 / 日志 / Nukkit 回传名」三者一致；</li>
+ *   <li>玩家输入 {@code /GameItem}、{@code /gameitem}、{@code /GAMEITEM} 均命中同一路由。</li>
+ * </ul>
+ * 注意：仅静态段大小写不敏感，<b>变量段捕获的值保留玩家输入的原样大小写</b>（那是数据，不是命令名）。
  *
  * <h3>特异性排序</h3>
  * <p>
@@ -80,7 +92,9 @@ public class PathPattern {
                         isGreedy ? Segment.Kind.GREEDY : Segment.Kind.VARIABLE,
                         name, name));
             } else {
-                result.add(new Segment(Segment.Kind.STATIC, raw, null));
+                // 静态段归一化为小写：对齐 Nukkit 命令名小写规范，
+                // 使注册名、日志、Nukkit 回传名（恒为小写）三者一致。
+                result.add(new Segment(Segment.Kind.STATIC, raw.toLowerCase(Locale.ROOT), null));
             }
         }
         return result;
@@ -101,7 +115,9 @@ public class PathPattern {
             Segment seg = segments.get(i);
             switch (seg.kind) {
                 case STATIC -> {
-                    if (consumed >= tokenCount || !tokens.get(consumed).equals(seg.literal)) {
+                    // 大小写不敏感匹配：对齐 Nukkit 命令大小写不敏感特性，
+                    // 玩家输入 /GameItem、/gameitem、/GAMEITEM 均可命中同一路由。
+                    if (consumed >= tokenCount || !tokens.get(consumed).equalsIgnoreCase(seg.literal)) {
                         return null; // 静态段不匹配或 token 不足
                     }
                     consumed++;
@@ -129,11 +145,13 @@ public class PathPattern {
     }
 
     /**
-     * 返回根命令（第一段，若为静态段）。
+     * 返回根命令（第一段，若为静态段），已归一化为<b>小写</b>。
      * <p>
      * 用于向 Nukkit 注册根命令。若第一段是变量/贪婪，返回 null（无法注册稳定根命令）。
+     * 返回值恒为小写（静态段在解析时已 {@code toLowerCase}），与 Nukkit 命令名小写规范一致，
+     * 确保 {@code command.getName()} 回传的小写名能正确匹配。
      *
-     * @return 根命令名，或 null
+     * @return 根命令名（小写），或 null
      */
     public String rootCommand() {
         if (segments.isEmpty() || segments.get(0).kind != Segment.Kind.STATIC) {

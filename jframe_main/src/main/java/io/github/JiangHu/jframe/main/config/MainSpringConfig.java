@@ -1,5 +1,6 @@
 package io.github.JiangHu.jframe.main.config;
 
+import io.github.JiangHu.jframe.ai.config.AiSpringConfig;
 import io.github.JiangHu.jframe.command.config.CommandSpringConfig;
 import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
 import io.github.JiangHu.jframe.data.config.DataSpringConfig;
@@ -29,7 +30,8 @@ import org.springframework.context.annotation.ImportResource;
         FormSpringConfig.class,
         EventSpringConfig.class,
         DataSpringConfig.class,
-        InventorySpringConfig.class
+        InventorySpringConfig.class,
+        AiSpringConfig.class
 })
 public class MainSpringConfig {
 }

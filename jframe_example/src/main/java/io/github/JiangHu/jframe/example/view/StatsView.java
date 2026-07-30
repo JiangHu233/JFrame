@@ -1,7 +1,6 @@
 package io.github.JiangHu.jframe.example.view;
 
 import cn.nukkit.Player;
-import io.github.JiangHu.jframe.example.wrapper.PlayerStatWrapper;
 import io.github.JiangHu.jframe.form.FormView;
 import io.github.JiangHu.jframe.form.window.JForm;
 import io.github.JiangHu.jframe.form.window.SimpleForm;
@@ -10,7 +9,7 @@ import io.github.JiangHu.jframe.thread.ThreadAPI;
 /**
  * 统计详情子界面。
  * <p>
- * 演示新架构表单的「栈式导航」：由 {@link MainMenuView} 通过 {@code addStack} 进入，
+ * 演示新架构表单的「栈式导航」：由  通过 {@code addStack} 进入，
  * 点击「返回主菜单」后通过 {@code goBack()} 回到主菜单。
  * <p>
  * 相比旧版用 {@code replaceThis(重新构造主菜单)}，{@code goBack()} 直接弹出当前视图，
@@ -28,14 +27,8 @@ public class StatsView extends FormView {
 
     @Override
     protected JForm onBuild() {
-        PlayerStatWrapper stat = PlayerStatWrapper.get(player);
-        int move = stat == null ? 0 : stat.getMoveCount();
-        int chat = stat == null ? 0 : stat.getChatCount();
-
         String content = "§7玩家：§f" + player.getName() + "\n"
                 + "§7━━━━━━━━━━━━━━━━\n"
-                + "§e移动事件次数：§f" + move + "\n"
-                + "§e聊天次数：§f" + chat + "\n"
                 + "§7━━━━━━━━━━━━━━━━";
 
         // goBack() 弹出当前视图，回应处理后框架会自动重发栈顶（主菜单）

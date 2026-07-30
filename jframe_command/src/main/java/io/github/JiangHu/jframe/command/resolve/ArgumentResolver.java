@@ -50,16 +50,20 @@ public final class ArgumentResolver {
 
     /**
      * 将原始参数数组拆分为位置参数与命名参数。
+     * <p>
+     * 同时记录每个位置参数在原始 {@code args} 数组中的下标（{@link ParsedArgs#positionalIndices}），
+     * 供路由层计算「路径消耗后的剩余原始参数」使用。
      *
      * @param args 原始参数（Nukkit 传入）
-     * @return 解析结果（positional + named）
+     * @return 解析结果（positional + named + positionalIndices）
      */
     public static ParsedArgs parseArgs(String[] args) {
         List<String> positional = new ArrayList<>();
+        List<Integer> positionalIndices = new ArrayList<>();
         Map<String, String> named = new LinkedHashMap<>();
 
         if (args == null) {
-            return new ParsedArgs(positional, named);
+            return new ParsedArgs(positional, named, positionalIndices);
         }
 
         int i = 0;
@@ -90,10 +94,11 @@ public final class ArgumentResolver {
                 }
             } else {
                 positional.add(token);
+                positionalIndices.add(i); // 记录在原始 args 中的下标
                 i += 1;
             }
         }
-        return new ParsedArgs(positional, named);
+        return new ParsedArgs(positional, named, positionalIndices);
     }
 
     /**
@@ -209,10 +214,12 @@ public final class ArgumentResolver {
     }
 
     /**
-     * 解析结果：位置参数 + 命名参数。
+     * 解析结果：位置参数 + 命名参数 + 位置参数原始下标。
      *
-     * @param positional 位置参数列表
-     * @param named      命名参数映射
+     * @param positional        位置参数列表
+     * @param named             命名参数映射
+     * @param positionalIndices 每个位置参数在原始 args 数组中的下标（与 positional 一一对应）
      */
-    public record ParsedArgs(List<String> positional, Map<String, String> named) {}
+    public record ParsedArgs(List<String> positional, Map<String, String> named,
+                             List<Integer> positionalIndices) {}
 }

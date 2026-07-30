@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+       http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!--
+        AI 模块 Bean 装配（单向 DAG，无循环依赖）：
+        底层组件 → 中层行为组件 → aiAPI（聚合门面）
+
+        底层（无相互依赖）：
+          pathFinder       : 无状态 A* 寻路器（最先创建）
+          navigatorManager : 导航调度中枢（实现 PluginAware，由 JFrameMain 自动注入 plugin）
+          tacticalScanner  : 单实体战术位置扫描器（无状态）
+          combatActions    : 战斗执行器（无状态）
+          teamTactics      : 团队战术（协同包抄/包围/集结/阵型，无状态）
+
+        中层（依赖 pathFinder + navigatorManager）：
+          anytimePathFinder: 边走边搜追逐导航器（周期重搜 + 部分路径回退）
+          wanderBehavior   : 游荡行为（半径内随机巡游状态机）
+
+        门面（最后创建）：
+          aiAPI            : 构造器依赖以上全部组件
+    -->
+
+    <!-- 寻路器（内部）：A* 启发式方块寻路 -->
+    <bean class="io.github.JiangHu.jframe.ai.pathfinding.PathFinder" id="pathFinder"/>
+
+    <!-- 导航管理器（内部）：实体移动调度，实现 PluginAware -->
+    <bean class="io.github.JiangHu.jframe.ai.navigation.NavigatorManager" id="navigatorManager"/>
+
+    <!-- 战术扫描器（内部）：单实体找掩体/远离/包抄/寻找高地 -->
+    <bean class="io.github.JiangHu.jframe.ai.tactical.TacticalScanner" id="tacticalScanner"/>
+
+    <!-- 团队战术（内部）：多实体协同包抄/包围/集结/阵型 -->
+    <bean class="io.github.JiangHu.jframe.ai.tactical.TeamTactics" id="teamTactics"/>
+
+    <!-- 战斗执行器（内部）：攻击/射箭/投掷/使用物品 -->
+    <bean class="io.github.JiangHu.jframe.ai.combat.CombatActions" id="combatActions"/>
+
+    <!-- 边走边搜追逐导航器（内部）：依赖寻路器与导航管理器 -->
+    <bean class="io.github.JiangHu.jframe.ai.navigation.AnytimePathFinder" id="anytimePathFinder">
+        <constructor-arg name="pathFinder" ref="pathFinder"/>
+        <constructor-arg name="navigatorManager" ref="navigatorManager"/>
+    </bean>
+
+    <!-- 游荡行为（内部）：依赖寻路器与导航管理器 -->
+    <bean class="io.github.JiangHu.jframe.ai.navigation.WanderBehavior" id="wanderBehavior">
+        <constructor-arg name="pathFinder" ref="pathFinder"/>
+        <constructor-arg name="navigatorManager" ref="navigatorManager"/>
+    </bean>
+
+    <!-- AI 服务（公开入口）：聚合寻路/导航/战术/战斗/追逐/游荡/团队全部能力 -->
+    <bean class="io.github.JiangHu.jframe.ai.AiAPI" id="aiAPI">
+        <constructor-arg name="pathFinder" ref="pathFinder"/>
+        <constructor-arg name="navigatorManager" ref="navigatorManager"/>
+        <constructor-arg name="tacticalScanner" ref="tacticalScanner"/>
+        <constructor-arg name="combatActions" ref="combatActions"/>
+        <constructor-arg name="anytimePathFinder" ref="anytimePathFinder"/>
+        <constructor-arg name="wanderBehavior" ref="wanderBehavior"/>
+        <constructor-arg name="teamTactics" ref="teamTactics"/>
+    </bean>
+
+</beans>

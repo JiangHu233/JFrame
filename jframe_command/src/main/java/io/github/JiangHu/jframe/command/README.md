@@ -226,6 +226,35 @@ public class HomeController {
 
 ---
 
+### 🔤 命令名大小写（对齐 Nukkit）
+
+框架的命令名大小写处理与 **Nukkit 命令系统完全对齐**：命令名大小写不敏感，且内部统一以小写存储。
+
+- **注册时归一化**：`@CommandController` / `@CommandMapping` 中声明的根命令与子命令（静态段）在解析时自动转为小写。
+- **匹配时大小写不敏感**：玩家输入 `/GameItem`、`/gameitem`、`/GAMEITEM` 均命中同一路由。
+- **变量值保留原样**：路径变量 `{name}` 捕获的值是**数据**，保留玩家输入的原始大小写，不会被转换。
+
+> **为什么这么做？** Nukkit 注册命令后内部恒以小写存储，运行时 `command.getName()` 回传的也是小写。
+> 若框架保留原始大小写（如 `GameItem`），会导致「注册名」与「Nukkit 回传名」不一致，路由匹配失败
+> （表现为「未知的子命令」）。归一化为小写后，两者始终一致。
+
+```java
+// 即使根命令用驼峰命名，也能正常工作（内部自动归一化为 gameitem）
+@CommandController("GameItem")
+public class GameItemCommand {
+
+    @CommandMapping(desc = "打开管理表单")        // /gameitem、/GameItem 均可触发
+    public void main(@Sender Player player) { ... }
+
+    @CommandMapping("give")                       // /gameitem give、/gameitem GIVE 均可触发
+    public void give(@Sender Player player, String id) { ... }
+}
+```
+
+> 💡 虽然框架已对大小写健壮，但遵循 Minecraft 惯例，**建议根命令统一用全小写**（如 `gameitem`），更清晰规范。
+
+---
+
 ## 🔀 路径匹配与特异性排序
 
 当多条模式都能匹配同一输入时，按特异性选择最优（与 Spring `RequestMappingHandlerMapping` 一致）：
@@ -310,7 +339,8 @@ public class HomeController {
 |------|------|---------|
 | [`GuildController`](../../../../../../../test/java/io/github/JiangHu/jframe/command/example/GuildController.java) | 公会命令（`/guild`） | `@PathVariable` 单值/贪婪/`#`、`@CommandParam` 默认值、位置参数转换、`@Sender` |
 | [`ShopController`](../../../../../../../test/java/io/github/JiangHu/jframe/command/example/ShopController.java) | 商店命令（`/shop`） | 多路径变量、布尔标记 `--all`、`@RawArgs`、`@Sender Player`、`permission` |
-| [`CommandLogicTest`](../../../../../../../test/java/io/github/JiangHu/jframe/command/test/CommandLogicTest.java) | 30 项逻辑测试 | 无 Nukkit 服务器的纯 JVM 可运行测试，覆盖全部能力 |
+| [`CaseController`](../../../../../../../test/java/io/github/JiangHu/jframe/command/example/CaseController.java) | 大小写回归（`/gameitem`） | 根命令大写归一化、大小写不敏感匹配、变量值保留原样 |
+| [`CommandLogicTest`](../../../../../../../test/java/io/github/JiangHu/jframe/command/test/CommandLogicTest.java) | 39 项逻辑测试 | 无 Nukkit 服务器的纯 JVM 可运行测试，覆盖全部能力 |
 
 **运行测试：**
 ```bash

@@ -266,14 +266,17 @@ Spring 容器启动
 **职责**：把路径字符串解析为段序列，提供前缀匹配与特异性比较。
 
 **三种段类型**（[`Segment.Kind`](routing/PathPattern.java:215)）：
-- `STATIC` — 字面量，精确匹配（如 `guild`、`kick`）
-- `VARIABLE` — `{name}`，捕获单个 token
+- `STATIC` — 字面量，解析时**归一化为小写**，匹配时**大小写不敏感**（如 `guild`、`kick`）
+- `VARIABLE` — `{name}`，捕获单个 token（**保留玩家输入的原始大小写**）
 - `GREEDY` — `{*name}`，捕获剩余所有 token（0 个或多个）
 
 **匹配算法**（[`match()`](routing/PathPattern.java:95)）：
-- 逐段匹配，静态段必须相等，变量段吃一个 token，贪婪段吃掉剩余全部
+- 逐段匹配，静态段用 `equalsIgnoreCase` 比较（对齐 Nukkit 命令大小写不敏感），变量段吃一个 token，贪婪段吃掉剩余全部
 - 返回 `MatchResult(consumed, pathVars)`，`consumed` = 模式消耗的 token 数
 - **前缀匹配**：输入可以比模式长，多余 token 成为位置参数
+
+> **大小写对齐 Nukkit**：静态段（根命令 + 子命令）在 [`parse()`](routing/PathPattern.java:69) 时 `toLowerCase(Locale.ROOT)` 归一化，
+> 使「注册名 / 日志 / Nukkit 回传名（恒小写）」三者一致。变量捕获值是数据，保留原样大小写不转换。
 
 **特异性比较器**（[`SPECIFICITY_COMPARATOR`](routing/PathPattern.java:178)）：
 ```
@@ -283,7 +286,7 @@ Spring 容器启动
 4. 贪婪段数少者优先（升序）
 ```
 
-**`rootCommand()`**：返回首段（若为静态段），用于 Nukkit 注册。首段是变量则返回 null。
+**`rootCommand()`**：返回首段（若为静态段，**已归一化为小写**），用于 Nukkit 注册。首段是变量则返回 null。
 
 > **不可变**：解析后 `segments` 不再变化，线程安全。
 

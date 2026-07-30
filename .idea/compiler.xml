@@ -18,12 +18,13 @@
         <module name="jframe_core" />
         <module name="jframe_event" />
         <module name="jframe_command" />
-        <module name="jframe_example" />
         <module name="jframe_thread" />
+        <module name="jframe_example" />
         <module name="jframe_inventory" />
         <module name="jframe_form" />
         <module name="jframe_main" />
         <module name="jframe_data" />
+        <module name="jframe_ai" />
       </profile>
     </annotationProcessing>
   </component>

@@ -16,7 +16,7 @@ import java.util.Map;
  *   <li>{@link #positional} — 位置参数（去除命名参数后的 token，按出现顺序）</li>
  *   <li>{@link #named} — 命名参数（{@code --key value} / {@code -k value} 解析结果）</li>
  *   <li>{@link #pathVars} — 路径变量（由 {@link io.github.JiangHu.jframe.command.routing.PathPattern} 捕获）</li>
- *   <li>{@link #rawArgs} — 原始参数数组（Nukkit 传入的 args）</li>
+ *   <li>{@link #rawArgs} — 路径匹配后的剩余原始参数（不含已用于路由匹配的子命令段）</li>
  * </ul>
  *
  * <h3>不可变快照</h3>
@@ -41,7 +41,7 @@ public class CommandContext {
      * @param positional   位置参数列表（已去除命名参数）
      * @param named        命名参数映射
      * @param pathVars     路径变量映射（贪婪变量值为 String[]）
-     * @param rawArgs      原始参数数组
+     * @param rawArgs      路径匹配后的剩余原始参数（不含已用于路由匹配的子命令段）
      */
     public CommandContext(CommandSender sender, String rootCommand,
                           List<String> positional, Map<String, String> named,
@@ -79,7 +79,7 @@ public class CommandContext {
         return Collections.unmodifiableMap(pathVars);
     }
 
-    /** 原始参数数组 */
+    /** 路径匹配后的剩余原始参数（不含已用于路由匹配的子命令段） */
     public String[] rawArgs() {
         return rawArgs;
     }
