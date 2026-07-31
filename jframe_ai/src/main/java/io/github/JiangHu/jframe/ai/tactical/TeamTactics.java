@@ -57,18 +57,54 @@ public class TeamTactics {
     public static final double DEFAULT_SPACING = 2.0;
 
     /**
+     * 默认包抄弧线跨度（度）：成员在目标<b>远侧</b>半圆（180°）上展开，
+     * 弧线两端恰好落在目标的左右两翼，中间成员位于目标正后方。
+     */
+    public static final double DEFAULT_FLANK_ARC_DEGREES = 180.0;
+
+    /**
      * 协同包抄：为一组实体分配不同的侧翼方向，从多个角度钳形接近 {@code target}。
      * <p>
-     * 角度分配策略：以每个实体相对目标的当前方位为基准，交替向左（+）、右（−）偏移，
-     * 且偏移量随索引递增（第一对 ±90°，第二对 ±120°，…），形成两翼展开的钳形攻势。
-     * 这样多个实体不会挤在同一方向，而是从两侧后方包抄合围。
+     * 采用<b>统一参考 + 均匀分布</b>策略：先计算小队中心相对目标的方位（即小队来袭方向），
+     * 再以"目标远侧"（小队的对面）为中心、{@link #DEFAULT_FLANK_ARC_DEGREES} 为跨度，
+     * 将成员<b>均匀</b>铺在该弧线上。弧线两端恰好落在目标的左右两翼，中间成员位于目标后方，
+     * 从而呈现两翼展开、合围目标的钳形 / 包围攻势。
+     * <p>
+     * 相比"按每个成员各自方位独立偏移"的旧策略，本方法保证成员<b>互不聚堆</b>、
+     * 角度<b>均匀间隔</b>，视觉效果更协调。
      *
      * @param members 包抄成员列表
      * @param target   包抄目标
      * @param radius   包抄点距目标的距离（方块）
      * @return 各成员的包抄位置列表（与 members 一一对应）；不可站立处为 {@link TacticalPosition#empty()}
+     * @see #flankTarget(List, Entity, double, double)
      */
     public List<TacticalPosition> flankTarget(List<Entity> members, Entity target, double radius) {
+        return flankTarget(members, target, radius, DEFAULT_FLANK_ARC_DEGREES);
+    }
+
+    /**
+     * 协同包抄（指定弧线跨度）。
+     * <p>
+     * {@code arcSpanDegrees} 控制成员在目标远侧的展开角度：
+     * <ul>
+     *   <li>180°（默认 {@link #DEFAULT_FLANK_ARC_DEGREES}）：两端到两翼、中间在正后方，呈半圆合围</li>
+     *   <li>越小：成员越集中在目标正后方</li>
+     *   <li>越大（接近 360°）：近乎环形包围（接近 {@link #surroundTarget}）</li>
+     * </ul>
+     * <p>
+     * <b>算法</b>：以小队平均位置为统一参考，计算其相对目标的方位 {@code rearAngle}（来袭方向），
+     * 取 {@code rearAngle + π}（目标远侧）为弧线中心，按成员索引在 {@code [center - span/2, center + span/2]}
+     * 上均匀采样（见 {@link #flankAngles}），保证角度间隔相等、无聚堆。
+     *
+     * @param members        包抄成员列表
+     * @param target         包抄目标
+     * @param radius         包抄点距目标的距离（方块）
+     * @param arcSpanDegrees 包抄弧线跨度（度，钳制到 [10, 360]）
+     * @return 各成员的包抄位置列表（与 members 一一对应）；不可站立处为 {@link TacticalPosition#empty()}
+     */
+    public List<TacticalPosition> flankTarget(List<Entity> members, Entity target,
+                                              double radius, double arcSpanDegrees) {
         List<TacticalPosition> result = new ArrayList<>();
         if (members == null || members.isEmpty() || target == null) {
             return result;
@@ -82,24 +118,77 @@ public class TeamTactics {
         }
         double r = Math.max(2, radius);
         int n = members.size();
+        // 统一参考：小队中心相对目标的方位（小队来袭方向），全体成员共用，避免各自为政导致聚堆
+        double rearAngle = squadRearAngle(members, target);
+        double arcSpan = Math.toRadians(Math.max(10.0, Math.min(360.0, arcSpanDegrees)));
+        double[] angles = flankAngles(n, rearAngle, arcSpan);
         for (int i = 0; i < n; i++) {
             Entity member = members.get(i);
             if (member == null) {
                 result.add(TacticalPosition.empty());
                 continue;
             }
-            // 成员相对目标的当前方位角（弧度）
-            double baseAngle = Math.atan2(member.z - target.z, member.x - target.x);
-            // 交替左右翼，偏移量随层级递增：±90°, ±120°, ±150°...
-            int sign = (i % 2 == 0) ? 1 : -1;
-            int tier = i / 2;
-            double offset = Math.toRadians(90.0 + tier * 30.0) * sign;
-            double angle = baseAngle + offset;
+            double angle = angles[i];
             double px = target.x + Math.cos(angle) * r;
             double pz = target.z + Math.sin(angle) * r;
             result.add(standableOrEmpty(level, px, pz, target.y, target.x, target.z, angle));
         }
         return result;
+    }
+
+    /**
+     * 计算小队中心相对目标的方位角（弧度）：从目标指向成员平均位置（即小队来袭方向）。
+     * 小队中心与目标重合时返回 0。包级可见以便单元测试。
+     *
+     * @param members 成员列表
+     * @param target  目标
+     * @return 来袭方位角（弧度）
+     */
+    static double squadRearAngle(List<Entity> members, Entity target) {
+        double sumX = 0, sumZ = 0;
+        int count = 0;
+        for (Entity m : members) {
+            if (m != null) {
+                sumX += m.x;
+                sumZ += m.z;
+                count++;
+            }
+        }
+        if (count == 0) {
+            return 0.0;
+        }
+        double dx = sumX / count - target.x;
+        double dz = sumZ / count - target.z;
+        if (Math.abs(dx) < 1.0e-4 && Math.abs(dz) < 1.0e-4) {
+            return 0.0;
+        }
+        return Math.atan2(dz, dx);
+    }
+
+    /**
+     * 纯几何：在以"目标远侧"（{@code rearAngle + π}）为中心、跨度 {@code arcSpan} 的弧线上，
+     * 将 {@code n} 个成员均匀分布，返回每个成员的绝对方位角（弧度）。
+     * <p>
+     * 相邻成员角度间隔恒为 {@code arcSpan / (n - 1)}（n ≥ 2），保证无聚堆。
+     * 包级可见以便单元测试（不依赖世界方块）。
+     *
+     * @param n         成员数
+     * @param rearAngle 小队来袭方位（目标→小队中心，弧度）
+     * @param arcSpan   弧线跨度（弧度）
+     * @return 长度为 n 的方位角数组（弧度）；n ≤ 0 时返回空数组
+     */
+    static double[] flankAngles(int n, double rearAngle, double arcSpan) {
+        double[] angles = new double[Math.max(0, n)];
+        if (n <= 0) {
+            return angles;
+        }
+        // 弧线中心 = 目标远侧（小队的对面），使成员绕到目标侧后方合围
+        double center = rearAngle + Math.PI;
+        for (int i = 0; i < n; i++) {
+            double t = (n == 1) ? 0.5 : (double) i / (n - 1);
+            angles[i] = center + (t - 0.5) * arcSpan;
+        }
+        return angles;
     }
 
     /**

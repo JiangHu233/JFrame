@@ -574,6 +574,35 @@ public class AiAPI {
     }
 
     /**
+     * <b>坐标版全向视野</b>（默认距离）：判断观察者能否"转头看到"指定坐标点
+     * （距离 + 视线，不限当前朝向）。
+     * <p>
+     * 与 {@link #canSee(Entity, Entity)}（受当前朝向 FOV 约束）不同，本方法回答
+     * "AI 能否通过转头看到该点"——只要距离足够且视线畅通即返回 true。
+     *
+     * @param observer  观察者
+     * @param targetPos 目标坐标点
+     * @return true 表示转头即可看到该点
+     * @see VisionSensor#canSee(Entity, Vector3)
+     */
+    public boolean canSee(Entity observer, Vector3 targetPos) {
+        return VisionSensor.canSee(observer, targetPos);
+    }
+
+    /**
+     * <b>坐标版全向视野</b>（指定最大距离）：判断观察者能否"转头看到"指定坐标点。
+     *
+     * @param observer    观察者
+     * @param targetPos   目标坐标点
+     * @param maxDistance 最大感知距离（方块，水平）
+     * @return true 表示目标点在感知范围内且视线畅通
+     * @see VisionSensor#canSee(Entity, Vector3, double)
+     */
+    public boolean canSee(Entity observer, Vector3 targetPos, double maxDistance) {
+        return VisionSensor.canSee(observer, targetPos, maxDistance);
+    }
+
+    /**
      * 计算目标相对观察者朝向的水平夹角（度）。
      *
      * @param observer 观察者
@@ -750,6 +779,26 @@ public class AiAPI {
     }
 
     /**
+     * <b>便捷方法</b>：寻找视野点（坐标版）并导航前往。
+     * <p>
+     * 内部调用 {@link #findSightPosition(Entity, Vector3, double)} 获取能看到目标坐标的位置，
+     * 再通过 {@link #navigateTo} 驱动实体前往。适用于目标不是实体（仅知坐标 / 最后已知位置 /
+     * 投射落点）时，让 AI 移动到"能看到该坐标"的地方。
+     *
+     * @param self      需要视野的实体
+     * @param targetPos 观察目标位置坐标
+     * @param radius    搜索半径
+     * @return 导航器，或 null（未找到合适视野点或路径不可用）
+     */
+    public Navigator navigateToSightPosition(Entity self, Vector3 targetPos, double radius) {
+        TacticalPosition pos = findSightPosition(self, targetPos, radius);
+        if (!pos.isPresent()) {
+            return null;
+        }
+        return navigateTo(self, pos.toLevelPosition(self.getLevel()));
+    }
+
+    /**
      * <b>模糊位置选取</b>（默认不确定半径 5 格）：当目标位置不精确时，
      * 在不确定区域内选取距自身最近的可站立搜索点。
      * <p>
@@ -912,6 +961,25 @@ public class AiAPI {
      */
     public List<TacticalPosition> flankTarget(List<Entity> members, Entity target, double radius) {
         return teamTactics.flankTarget(members, target, radius);
+    }
+
+    /**
+     * <b>协同包抄</b>（指定弧线跨度）：在 {@link #flankTarget(List, Entity, double)} 基础上
+     * 允许自定义成员在目标远侧的展开角度。
+     * <p>
+     * {@code arcSpanDegrees} 越小成员越集中在目标正后方，越大越接近环形包围。
+     * 默认值见 {@link io.github.JiangHu.jframe.ai.tactical.TeamTactics#DEFAULT_FLANK_ARC_DEGREES}（180°）。
+     *
+     * @param members        包抄成员列表
+     * @param target         包抄目标
+     * @param radius         包抄点距目标的距离
+     * @param arcSpanDegrees 包抄弧线跨度（度，钳制到 [10, 360]）
+     * @return 各成员的包抄位置（与 members 一一对应）
+     * @see TeamTactics#flankTarget(List, Entity, double, double)
+     */
+    public List<TacticalPosition> flankTarget(List<Entity> members, Entity target,
+                                              double radius, double arcSpanDegrees) {
+        return teamTactics.flankTarget(members, target, radius, arcSpanDegrees);
     }
 
     /**

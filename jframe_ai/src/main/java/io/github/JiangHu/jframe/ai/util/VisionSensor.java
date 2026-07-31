@@ -132,6 +132,54 @@ public final class VisionSensor {
     }
 
     /**
+     * <b>坐标版全向视野</b>（默认距离）：判断 {@code observer} 能否"转头看到"指定坐标点。
+     * <p>
+     * 与 {@link #canSee(Entity, Entity)}（受观察者<b>当前朝向</b> FOV 约束）不同，本方法回答的是
+     * "AI <b>能否</b>通过转头看到该点"——只要水平距离足够且眼部到该点视线畅通即返回 true，
+     * 不考虑当前面朝方向。适用于判断某个坐标、最后已知位置、投射落点等是否在感知范围内。
+     *
+     * @param observer  观察者
+     * @param targetPos 目标坐标点
+     * @return true 表示观察者转头即可看到该点（距离 + 视线均满足）
+     */
+    public static boolean canSee(Entity observer, Vector3 targetPos) {
+        return canSee(observer, targetPos, DEFAULT_MAX_DISTANCE);
+    }
+
+    /**
+     * <b>坐标版全向视野</b>（指定最大距离）：判断 {@code observer} 能否"转头看到"指定坐标点。
+     * <p>
+     * 依次检查两要素，任一不满足即返回 false：
+     * <ol>
+     *   <li>观察者眼部到 {@code targetPos} 的水平距离 ≤ {@code maxDistance}</li>
+     *   <li>眼部到该点视线无固体方块阻挡（委托 {@link LineOfSight}）</li>
+     * </ol>
+     * 注意：目标坐标点直接作为视线终点（不再叠加眼部高度），调用方应传入希望被"看到"的精确点。
+     *
+     * @param observer    观察者
+     * @param targetPos   目标坐标点
+     * @param maxDistance 最大感知距离（方块，水平）
+     * @return true 表示目标点在感知范围内且视线畅通
+     */
+    public static boolean canSee(Entity observer, Vector3 targetPos, double maxDistance) {
+        if (observer == null || targetPos == null) {
+            return false;
+        }
+        Level level = observer.getLevel();
+        if (level == null) {
+            return false;
+        }
+        // 要素 1：水平距离
+        double dx = targetPos.x - observer.x;
+        double dz = targetPos.z - observer.z;
+        if (Math.sqrt(dx * dx + dz * dz) > maxDistance) {
+            return false;
+        }
+        // 要素 2：视线畅通（眼部 → 目标点）
+        return LineOfSight.hasLineOfSight(level, eyeOf(observer), targetPos);
+    }
+
+    /**
      * 计算 {@code target} 相对 {@code observer} 朝向的水平夹角（度）。
      * <p>
      * 返回值范围 [0, 180]：0 表示目标正前方，90 表示正侧方，180 表示正后方。

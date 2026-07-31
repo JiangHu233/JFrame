@@ -147,6 +147,28 @@ public final class CommandLogicTest {
         CommandRoute.InvokeResult r20 = registry.dispatch(op, "guild", new String[]{"create", "MyGuild"});
         check("20. 变量值保留大小写", r20.success() && "MyGuild".equals(GuildController.lastCreateName));
 
+        // ========== --key=value 内联命名参数格式 ==========
+
+        // 21. --key=value 长选项内联格式（等价于 --reason 违规 分离格式）
+        CommandRoute.InvokeResult r21 = registry.dispatch(op, "guild", new String[]{"kick", "Steve", "--reason=违规"});
+        check("21. kick 内联命名参数", r21.success());
+        check("21. kick 静态字段", "Steve:违规".equals(GuildController.lastKick));
+
+        // 22. --key=value 可传递以 - 开头的值（内联格式优势；分离格式会把 -违规 误判为短选项）
+        CommandRoute.InvokeResult r22 = registry.dispatch(op, "guild", new String[]{"kick", "Alex", "--reason=-违规"});
+        check("22. kick 内联负号值", r22.success());
+        check("22. kick 静态字段", "Alex:-违规".equals(GuildController.lastKick));
+
+        // 23. --key=value 布尔内联 true
+        CommandRoute.InvokeResult r23 = registry.dispatch(op, "shop", new String[]{"sell", "sword", "--all=true"});
+        check("23. sell --all=true", r23.success());
+        check("23. sell 静态字段", "sword (all=true)".equals(ShopController.lastSell));
+
+        // 24. --key=value 布尔内联 false（显式覆盖默认值）
+        CommandRoute.InvokeResult r24 = registry.dispatch(op, "shop", new String[]{"sell", "sword", "--all=false"});
+        check("24. sell --all=false", r24.success());
+        check("24. sell 静态字段", "sword (all=false)".equals(ShopController.lastSell));
+
         System.out.println("==================== 测试汇总 ====================");
         System.out.println("通过: " + pass + "，失败: " + fail);
         if (fail > 0) {

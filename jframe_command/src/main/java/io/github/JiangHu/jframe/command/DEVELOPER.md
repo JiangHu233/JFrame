@@ -364,9 +364,9 @@ Spring 容器启动
 ### 4.6 [`ArgumentResolver`](resolve/ArgumentResolver.java) — 参数解析与转换
 
 **`parseArgs()`**：把 `String[]` 拆分为位置参数 + 命名参数：
-- `--key value` → 长选项
+- `--key value` / `--key=value` → 长选项（分离/内联两种格式；内联可传 `-` 开头的值）
 - `--key`（后跟选项或末尾）→ 布尔标记 `"true"`
-- `-k value` → 短选项（排除负数 `-3`）
+- `-k value` / `-k=value` → 短选项（排除负数 `-3`）
 - 其余 → 位置参数
 
 **`convert()`**：字符串 → 目标类型（String/基础类型/Player）。

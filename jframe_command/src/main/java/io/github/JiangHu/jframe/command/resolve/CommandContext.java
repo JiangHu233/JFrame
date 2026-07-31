@@ -14,7 +14,7 @@ import java.util.Map;
  *   <li>{@link #sender} — 命令发送者</li>
  *   <li>{@link #rootCommand} — 根命令名（路径第一段）</li>
  *   <li>{@link #positional} — 位置参数（去除命名参数后的 token，按出现顺序）</li>
- *   <li>{@link #named} — 命名参数（{@code --key value} / {@code -k value} 解析结果）</li>
+ *   <li>{@link #named} — 命名参数（{@code --key value} / {@code --key=value} / {@code -k value} 解析结果）</li>
  *   <li>{@link #pathVars} — 路径变量（由 {@link io.github.JiangHu.jframe.command.routing.PathPattern} 捕获）</li>
  *   <li>{@link #rawArgs} — 路径匹配后的剩余原始参数（不含已用于路由匹配的子命令段）</li>
  * </ul>

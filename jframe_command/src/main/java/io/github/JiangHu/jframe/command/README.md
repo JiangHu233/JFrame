@@ -13,7 +13,7 @@
 让玩家输入的命令文本（如 `/guild kick Steve --reason 违规`）自动找到正确的处理方法，并且：
 
 - **路径模式匹配**：`kick {target}` 自动捕获 `target=Steve`，支持单值 `{id}`、贪婪 `{*msg}`、兼容 `#{id}`
-- **参数自动绑定**：路径变量、命名参数（`--key value`）、位置参数各司其职，自动类型转换
+- **参数自动绑定**：路径变量、命名参数（`--key value` / `--key=value`）、位置参数各司其职，自动类型转换
 - **特异性路由**：多条模式匹配同一输入时，静态段多的优先（`kick {target}` 优先于 `{cmd} {target}`）
 - **权限与仅玩家校验**：声明式 `permission` 属性 + `@Sender Player` 类型约束
 
@@ -24,7 +24,7 @@
 | [`@CommandController`](annotation/CommandController.java) | `@Controller` | 声明命令控制器，指定**根命令** | 类 |
 | [`@CommandMapping`](annotation/CommandMapping.java) | `@RequestMapping` | 声明命令处理方法，指定**子路径**与元数据 | 实例方法 |
 | [`@PathVariable`](annotation/PathVariable.java) | `@PathVariable` | 绑定**路径变量**（从路径模式捕获） | 方法参数 |
-| [`@CommandParam`](annotation/CommandParam.java) | `@RequestParam` | 绑定**命名参数**（`--key value`） | 方法参数 |
+| [`@CommandParam`](annotation/CommandParam.java) | `@RequestParam` | 绑定**命名参数**（`--key value` / `--key=value`） | 方法参数 |
 | [`@Sender`](annotation/Sender.java) | — | 注入**命令发送者**（`Player` 类型强制仅玩家） | 方法参数 |
 | [`@RawArgs`](annotation/RawArgs.java) | — | 注入**原始参数数组**（自行解析） | 方法参数 |
 
@@ -134,10 +134,11 @@ public void broadcast(@Sender CommandSender sender,
 
 ### 用法三：命名参数 `@CommandParam` + 默认值
 
-可选参数用 `--key value` 形式追加在命令尾部，顺序无关。
+可选参数用 `--key value`（**分离格式**）或 `--key=value`（**内联格式**）追加在命令尾部，顺序无关。
 
 ```java
-// /guild kick Steve --reason 违规     →  reason = "违规"
+// /guild kick Steve --reason 违规     →  reason = "违规"（分离格式）
+// /guild kick Steve --reason=违规     →  reason = "违规"（内联格式）
 // /guild kick Steve                   →  reason = "无"（使用默认值）
 @CommandMapping("kick {target}")
 public void kick(@PathVariable("target") String target,
@@ -147,6 +148,9 @@ public void kick(@PathVariable("target") String target,
 ```
 
 > **与 Spring MVC 一致**：声明了 `defaultValue` 的参数**隐式变为可选**，缺失时回退默认值，不会报错。
+>
+> **内联格式 `--key=value` 的优势**：值与参数名在同一 token 中，可传递以 `-` 开头的值
+> （如 `--offset=-5`）；分离格式会把紧跟的 `-5` 误判为短选项。
 
 **布尔标记**：`--flag` 后不跟值时绑定为 `"true"`，适合 boolean 参数：
 
@@ -340,7 +344,7 @@ public class GameItemCommand {
 | [`GuildController`](../../../../../../../test/java/io/github/JiangHu/jframe/command/example/GuildController.java) | 公会命令（`/guild`） | `@PathVariable` 单值/贪婪/`#`、`@CommandParam` 默认值、位置参数转换、`@Sender` |
 | [`ShopController`](../../../../../../../test/java/io/github/JiangHu/jframe/command/example/ShopController.java) | 商店命令（`/shop`） | 多路径变量、布尔标记 `--all`、`@RawArgs`、`@Sender Player`、`permission` |
 | [`CaseController`](../../../../../../../test/java/io/github/JiangHu/jframe/command/example/CaseController.java) | 大小写回归（`/gameitem`） | 根命令大写归一化、大小写不敏感匹配、变量值保留原样 |
-| [`CommandLogicTest`](../../../../../../../test/java/io/github/JiangHu/jframe/command/test/CommandLogicTest.java) | 39 项逻辑测试 | 无 Nukkit 服务器的纯 JVM 可运行测试，覆盖全部能力 |
+| [`CommandLogicTest`](../../../../../../../test/java/io/github/JiangHu/jframe/command/test/CommandLogicTest.java) | 47 项逻辑测试 | 无 Nukkit 服务器的纯 JVM 可运行测试，覆盖全部能力 |
 
 **运行测试：**
 ```bash

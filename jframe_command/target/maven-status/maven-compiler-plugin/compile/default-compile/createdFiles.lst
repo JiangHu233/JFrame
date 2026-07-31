@@ -20,6 +20,7 @@ io\github\JiangHu\jframe\command\config\CommandSpringConfig.class
 io\github\JiangHu\jframe\command\routing\CommandRoute$InvokeResult.class
 io\github\JiangHu\jframe\command\annotation\Sender.class
 io\github\JiangHu\jframe\command\annotation\CommandController.class
+io\github\JiangHu\jframe\command\resolve\ArgumentResolver$OptionToken.class
 io\github\JiangHu\jframe\command\routing\PathPattern$Segment.class
 io\github\JiangHu\jframe\command\annotation\PathVariable.class
 io\github\JiangHu\jframe\command\routing\CommandRoute$ParamBinding.class

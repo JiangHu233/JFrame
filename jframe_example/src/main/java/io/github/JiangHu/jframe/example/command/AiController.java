@@ -102,9 +102,10 @@ public class AiController {
         player.sendMessage("§7/ai wander [半径] §8→ §f半径内游荡（默认 10）");
         player.sendMessage("§7/ai cover §8→ §f寻找掩体并前往");
         player.sendMessage("§7/ai flee §8→ §f远离玩家");
-        player.sendMessage("§7/ai flank §8→ §f侧翼包抄");
+        player.sendMessage("§7/ai flank §8→ §f侧翼包抄（单实体）");
+        player.sendMessage("§7/ai flankteam [数量] §8→ §f团队协同钳形包抄（多实体，默认 4）");
         player.sendMessage("§7/ai high §8→ §f寻找高地");
-        player.sendMessage("§7/ai cansee §8→ §f视野判断（能否看到玩家）");
+        player.sendMessage("§7/ai cansee §8→ §f视野判断（当前朝向可见 / 转头可见）");
         player.sendMessage("§7/ai seeksight §8→ §f移动到能看到玩家的位置");
         player.sendMessage("§7/ai seekapprox [半径] §8→ §f模糊搜索（移动到玩家大致位置）");
         player.sendMessage("§7/ai showpath [秒数] §8→ §f粒子显示当前寻路路径（默认 10）");
@@ -258,7 +259,7 @@ public class AiController {
         player.sendMessage("§a测试实体正在贪心逃离（距你 §e" + format(pos.distanceToThreat()) + " §a格，粒子显示路径）");
     }
 
-    /** {@code /ai flank}：主实体侧翼包抄玩家。 */
+    /** {@code /ai flank}：主实体侧翼包抄玩家（单实体）。 */
     @CommandMapping("flank")
     public void flank(@Sender Player player) {
         Entity entity = requirePrimary(player);
@@ -272,6 +273,34 @@ public class AiController {
         }
         greedyNavAndShow(entity, pos.toLevelPosition(entity.getLevel()));
         player.sendMessage("§a测试实体正在贪心包抄你的侧翼（侧偏评分 §e" + format(pos.score()) + "§a，粒子显示路径）");
+    }
+
+    /**
+     * {@code /ai flankteam [数量]}：生成多个实体并对玩家发起<b>协同钳形包抄</b>（团队战术）。
+     * <p>
+     * 演示改进后的 {@link AiAPI#flankTarget(List, Entity, double)}：成员以小队来袭方向为统一参考，
+     * 在玩家远侧半圆（180°）上均匀展开——两端落在左右两翼、中间位于后方，
+     * 形成协调的钳形合围，而非各自为政地聚堆。
+     */
+    @CommandMapping(value = "flankteam", usage = "/ai flankteam [数量]")
+    public void flankTeam(@Sender Player player, @RawArgs String[] args) {
+        int count = parseInt(args.length > 0 ? args[0] : null, 4);
+        count = Math.max(2, Math.min(count, 12));
+        List<Entity> members = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            Entity e = spawnEntity(player, "TestNpc");
+            if (e != null) {
+                members.add(e);
+            }
+        }
+        if (members.isEmpty()) {
+            player.sendMessage("§c生成团队实体失败");
+            return;
+        }
+        team.put(player.getName(), members);
+        List<TacticalPosition> positions = ai.flankTarget(members, player, 6);
+        navigateTeam(player, members, positions);
+        player.sendMessage("§a已生成 §e" + members.size() + " §a个实体，正在 6 格半径协同钳形包抄你（两翼展开、均匀合围）");
     }
 
     /** {@code /ai high}：主实体寻找高地。 */
@@ -290,23 +319,35 @@ public class AiController {
         player.sendMessage("§a测试实体正在贪心前往高地（高度优势 §e" + format(pos.score()) + " §a格，粒子显示路径）");
     }
 
-    /** {@code /ai cansee}：视野判断——主实体能否看到玩家（距离+FOV+视线三要素）。 */
+    /**
+     * {@code /ai cansee}：视野判断——主实体能否看到玩家。
+     * <p>
+     * 同时展示两种语义：
+     * <ul>
+     *   <li><b>当前朝向可见</b>（FOV 90°，受实体当前面朝方向约束）</li>
+     *   <li><b>转头可见</b>（360° 全向，仅看距离 + 视线——AI 转头即可看到）</li>
+     * </ul>
+     */
     @CommandMapping("cansee")
     public void canSee(@Sender Player player) {
         Entity entity = requirePrimary(player);
         if (entity == null) {
             return;
         }
-        boolean canSee = ai.canSee(entity, player, 16, 90);
+        boolean canSeeFov = ai.canSee(entity, player, 16, 90);
+        boolean canSeeTurn = ai.canSee360(entity, player, 16);
+        // 坐标版"转头可见"演示：以玩家坐标为目标点
+        boolean canSeeCoord = ai.canSee(entity, new Vector3(player.x, player.y + 1.5, player.z), 16);
         double dx = entity.x - player.x;
         double dz = entity.z - player.z;
         double dist = Math.sqrt(dx * dx + dz * dz);
         double angle = ai.angleTo(entity, player);
         player.sendMessage("§a===== §f视野判断结果 §a=====");
-        player.sendMessage("§7能否看到玩家: " + boolText(canSee));
-        player.sendMessage("§7水平距离: §e" + format(dist) + " §7格（视野阈值 16）");
-        player.sendMessage("§7相对朝向夹角: §e" + format(angle) + "° §7（视野阈值 ±45°）");
-        player.sendMessage("§7  §8正前=0° / 正侧=90° / 正后=180°");
+        player.sendMessage("§7水平距离: §e" + format(dist) + " §7格（阈值 16）");
+        player.sendMessage("§7相对朝向夹角: §e" + format(angle) + "° §7（§8正前=0° / 正侧=90° / 正后=180°§7）");
+        player.sendMessage("§7当前朝向可见(FOV 90°): " + boolText(canSeeFov));
+        player.sendMessage("§7转头可见(360°全向): " + boolText(canSeeTurn));
+        player.sendMessage("§7坐标版转头可见(玩家眼部): " + boolText(canSeeCoord));
     }
 
     /** {@code /ai seeksight}：主实体移动到能看到玩家的位置（占据视野点）。 */

@@ -9,7 +9,8 @@ import java.lang.annotation.Target;
  * 命名参数绑定注解（参数级别）— 类似 Spring MVC 的 {@code @RequestParam}。
  * <p>
  * 标注在方法参数上，声明该参数从命令的<b>命名参数</b>中取值。
- * 命名参数以 {@code --key value}（长选项）或 {@code -k value}（短选项）形式出现在命令尾部。
+ * 命名参数以 {@code --key value} / {@code --key=value}（长选项）或
+ * {@code -k value} / {@code -k=value}（短选项）形式出现在命令尾部。
  *
  * <h3>命名参数解析规则</h3>
  * <pre>
@@ -17,9 +18,10 @@ import java.lang.annotation.Target;
  *                   └位置参数┘  └命名参数 desc="我的家"┘  └命名参数 public=true┘
  * </pre>
  * <ul>
- *   <li>{@code --key value}：{@code key} 绑定为字符串 {@code value}</li>
+ *   <li>{@code --key value} / {@code --key=value}：{@code key} 绑定为字符串 {@code value}
+ *       （内联格式 {@code =} 还可传递以 {@code -} 开头的值，如 {@code --reason=-1}）</li>
  *   <li>{@code --key}（后跟另一个选项或位于末尾）：{@code key} 绑定为 {@code "true"}（布尔标记）</li>
- *   <li>{@code -k value}：短选项，等价于 {@code --key value}</li>
+ *   <li>{@code -k value} / {@code -k=value}：短选项，等价于 {@code --key value} / {@code --key=value}</li>
  *   <li>不以此两种形式开头的 token 视为<b>位置参数</b>（供无注解参数按位置绑定）</li>
  * </ul>
  *

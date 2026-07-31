@@ -20,14 +20,16 @@ import java.util.Map;
  *
  * <h3>命名参数解析规则</h3>
  * <pre>
- *   输入: [tower, --desc, cool, -n, 3, --public]
+ *   输入: [tower, --desc=cool, -n=3, --public]
  *   位置: [tower]
  *   命名: {desc=cool, n=3, public=true}
  * </pre>
  * <ul>
- *   <li>{@code --key value}：长选项，{@code key} 绑定为 {@code value}</li>
+ *   <li>{@code --key value}：长选项（分离格式），{@code key} 绑定为 {@code value}</li>
+ *   <li>{@code --key=value}：长选项（<b>内联格式</b>），{@code key} 绑定为 {@code value}，
+ *       可传递以 {@code -} 开头的值（如 {@code --reason=-1}）</li>
  *   <li>{@code --key}（后跟另一选项或位于末尾）：布尔标记，绑定为 {@code "true"}</li>
- *   <li>{@code -k value}：短选项，等价于 {@code --k value}</li>
+ *   <li>{@code -k value} / {@code -k=value}：短选项，等价于 {@code --k value} / {@code --k=value}</li>
  *   <li>其余 token 视为位置参数</li>
  * </ul>
  *
@@ -69,28 +71,23 @@ public final class ArgumentResolver {
         int i = 0;
         while (i < args.length) {
             String token = args[i];
+            OptionToken opt = parseOptionToken(token);
 
-            if (token.startsWith("--") && token.length() > 2) {
-                // 长选项 --key
-                String key = token.substring(2);
-                String value = consumeValue(args, i + 1);
-                if (value != null) {
-                    named.put(key, value);
-                    i += 2;
-                } else {
-                    named.put(key, "true"); // 布尔标记
+            if (opt != null) {
+                if (opt.hasInlineValue()) {
+                    // --key=value 内联格式：值已附带，直接绑定（可传递以 - 开头的值）
+                    named.put(opt.key(), opt.value());
                     i += 1;
-                }
-            } else if (token.startsWith("-") && token.length() > 1 && !isNumeric(token)) {
-                // 短选项 -k（排除负数 -3）
-                String key = token.substring(1);
-                String value = consumeValue(args, i + 1);
-                if (value != null) {
-                    named.put(key, value);
-                    i += 2;
                 } else {
-                    named.put(key, "true");
-                    i += 1;
+                    // --key value 分离格式：尝试消费下一个非选项 token
+                    String value = consumeValue(args, i + 1);
+                    if (value != null) {
+                        named.put(opt.key(), value);
+                        i += 2;
+                    } else {
+                        named.put(opt.key(), "true"); // 布尔标记
+                        i += 1;
+                    }
                 }
             } else {
                 positional.add(token);
@@ -107,10 +104,47 @@ public final class ArgumentResolver {
     private static String consumeValue(String[] args, int nextIndex) {
         if (nextIndex >= args.length) return null;
         String next = args[nextIndex];
-        if (next.startsWith("--") || (next.startsWith("-") && next.length() > 1 && !isNumeric(next))) {
-            return null;
+        if (parseOptionToken(next) != null) {
+            return null; // 下一个是选项 → 当前为布尔标记
         }
         return next;
+    }
+
+    /**
+     * 尝试将 token 解析为选项（长选项 {@code --key} 或短选项 {@code -k}）。
+     * <p>
+     * 同时识别内联赋值格式 {@code --key=value} / {@code -k=value}：
+     * <ul>
+     *   <li>含 {@code =}：返回的 {@link OptionToken#hasInlineValue()} 为 {@code true}，
+     *       {@link OptionToken#value()} 为 {@code =} 之后的子串（可为空串，
+     *       也可为以 {@code -} 开头的值，这是内联格式的优势）</li>
+     *   <li>不含 {@code =}：{@code hasInlineValue()} 为 {@code false}，
+     *       值由后续 token 决定（分离格式或布尔标记）</li>
+     * </ul>
+     *
+     * @param token 待解析的 token
+     * @return 选项信息；非选项 token（位置参数或负数 {@code -3}）返回 null
+     */
+    private static OptionToken parseOptionToken(String token) {
+        if (token.startsWith("--") && token.length() > 2) {
+            // 长选项 --key / --key=value
+            String body = token.substring(2);
+            int eq = body.indexOf('=');
+            if (eq >= 0) {
+                return new OptionToken(body.substring(0, eq), body.substring(eq + 1), true);
+            }
+            return new OptionToken(body, null, false);
+        }
+        if (token.startsWith("-") && token.length() > 1 && !isNumeric(token)) {
+            // 短选项 -k / -k=value（排除负数 -3）
+            String body = token.substring(1);
+            int eq = body.indexOf('=');
+            if (eq >= 0) {
+                return new OptionToken(body.substring(0, eq), body.substring(eq + 1), true);
+            }
+            return new OptionToken(body, null, false);
+        }
+        return null;
     }
 
     /**
@@ -222,4 +256,13 @@ public final class ArgumentResolver {
      */
     public record ParsedArgs(List<String> positional, Map<String, String> named,
                              List<Integer> positionalIndices) {}
+
+    /**
+     * 选项 token 解析结果。
+     *
+     * @param key            选项名（已去除前导 {@code -}）
+     * @param value          内联值（仅 {@code hasInlineValue=true} 时有意义）
+     * @param hasInlineValue 是否为 {@code --key=value} 内联格式
+     */
+    private record OptionToken(String key, String value, boolean hasInlineValue) {}
 }

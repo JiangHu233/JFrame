@@ -67,7 +67,7 @@
 | **战术** | 寻找高地 | 寻找比当前位置更高的可站立位置 |
 | **战术** | 占据视野点 | 寻找能看到目标的可站立位置（找掩体的反向操作） |
 | **战术** | 模糊位置选取 | 目标位置不精确时，在不确定区域内选取搜索点 |
-| **团队** | 协同包抄 | 多实体交替分配左/右翼，避免聚堆 |
+| **团队** | 协同包抄 | 多实体在目标远侧半圆均匀展开，钳形合围（避免聚堆） |
 | **团队** | 包围 | 多实体在目标周围 360° 均匀分布站位 |
 | **团队** | 集结 | 多实体按阵型（横队/纵队/楔形/圆环/方阵）在集结点列队 |
 | **战斗** | 近战攻击 | 对目标施加近战伤害 |
@@ -192,9 +192,10 @@ ai.stopAll();         // 停止所有导航
 
 | 方法 | 说明 |
 |------|------|
-| `canSee(observer, target)` | 视野判断（默认 16 格 / 90° FOV） |
+| `canSee(observer, target)` | 视野判断（默认 16 格 / 90° FOV，受当前朝向约束） |
 | `canSee(observer, target, maxDistance, fovDegrees)` | 视野判断（完整参数） |
-| `canSee360(observer, target, maxDistance)` | 全向视野（360°，仅距离 + 视线） |
+| `canSee360(observer, target, maxDistance)` | 全向视野（360°，仅距离 + 视线，即"转头可见"） |
+| `canSee(observer, targetPos)` / `canSee(observer, targetPos, maxDistance)` | **坐标版**全向视野：判断能否"转头看到"指定坐标点 |
 | `angleTo(observer, target)` | 目标相对朝向的夹角（度，0=正前 / 180=正后） |
 
 ### 战术（单实体）
@@ -207,6 +208,7 @@ ai.stopAll();         // 停止所有导航
 | `findHighGround(self, radius, minAdvantage)` | 寻找高地 |
 | `findSightPosition(self, target, radius)` | 占据视野点（能看到目标的位置） |
 | `navigateToSightPosition(self, target, radius)` | 占据视野点并导航前往（便捷方法） |
+| `navigateToSightPosition(self, targetPos, radius)` | **坐标版**：移动到能看到指定坐标的位置 |
 | `findApproximatePosition(self, center, radius)` | 模糊位置选取（不确定区域内最近搜索点） |
 | `hasReachedApproximate(self, center, radius)` | 判断是否已到达模糊目标区域 |
 | `navigateToApproximate(self, center, radius)` | 模糊位置选取并导航前往（便捷方法） |
@@ -217,7 +219,8 @@ ai.stopAll();         // 停止所有导航
 
 | 方法 | 说明 |
 |------|------|
-| `flankTarget(members, target, radius)` | 协同包抄：多实体交替分配左/右翼 |
+| `flankTarget(members, target, radius)` | 协同包抄：成员在目标远侧半圆均匀展开（钳形合围） |
+| `flankTarget(members, target, radius, arcSpanDegrees)` | 协同包抄（指定展开弧线跨度） |
 | `surroundTarget(members, target, radius)` | 包围：多实体在目标周围 360° 均匀站位 |
 | `rally(members, rallyPoint, formation, spacing)` | 集结：按阵型在集结点列队 |
 | `formationOffsets(formation, count, spacing)` | 计算阵型偏移（纯几何，返回 `List<Vector3>`） |
@@ -640,8 +643,11 @@ boolean clear = LineOfSight.hasLineOfSight(level, zombieEye, playerEye);
 // 僵尸能否看到 16 格内、前方 90° 锥角的玩家
 boolean canSee = ai.canSee(zombie, player, 16, 90);
 
-// 全向感知（哨塔 360°，仅距离 + 视线）
+// 全向感知（哨塔 360°，仅距离 + 视线，"转头可见"）
 boolean detected = ai.canSee360(guard, intruder, 32);
+
+// "转头可见"坐标版：判断能否看到某个坐标点（最后已知位置 / 投射落点等）
+boolean seen = ai.canSee(guard, new Vector3(100, 64, 200), 32);
 
 // 查询目标相对朝向的夹角（度）
 double angle = ai.angleTo(zombie, player); // 0=正前, 90=正侧, 180=正后
@@ -655,7 +661,8 @@ FOV 计算基于 Nukkit yaw 约定（0° 朝 +Z，顺时针为正），通过朝
 
 | 方法 | 说明 |
 |------|------|
-| `flankTarget(members, target, radius)` | **协同包抄**：成员交替分配到目标左/右翼（偏移量递增 ±90°、±120°…），避免全部挤在同一侧 |
+| `flankTarget(members, target, radius)` | **协同包抄**：以小队来袭方向为统一参考，成员在目标远侧半圆（180°）上均匀展开——两端到两翼、中间在后方，形成钳形合围（互不聚堆） |
+| `flankTarget(members, target, radius, arcSpanDegrees)` | 同上，但可自定义展开弧线跨度（越小越集中后方，越大越接近环形包围） |
 | `surroundTarget(members, target, radius)` | **包围**：成员在目标周围 360° 均匀分布站位 |
 | `rally(members, rallyPoint, formation, spacing)` | **集结**：成员按指定阵型在集结点列队 |
 | `formationOffsets(formation, count, spacing)` | 计算阵型偏移（纯几何，返回 `List<Vector3>`） |
