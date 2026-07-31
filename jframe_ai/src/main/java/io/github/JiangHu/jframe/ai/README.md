@@ -46,6 +46,20 @@
    └────────────────────────────────────────────────────────────────────────┘
 ```
 
+### 与传统方式的对比
+
+| 维度 | 传统方式 | 本框架 |
+|------|------|------|
+| **寻路算法** | 手写 BFS/DFS，或依赖 Nukkit 内置实体 AI（基岩版能力有限） | 自实现 A*，支持曼哈顿/欧几里得/切比雪夫启发式、对角线、跳跃、安全下落 |
+| **移动代价** | 固定步数，无法表达地形偏好 | [`StepCostFunction`](pathfinding/StepCostFunction.java) 外接评分器，在基础代价上叠加自定义代价（远离岩浆、贴墙走等） |
+| **无解处理** | 寻路失败直接返回 `null`，实体原地不动 | 回退 [`PARTIAL`](pathfinding/PathResult.java) 模糊解——返回离目标最近的部分路径，边走边靠近 |
+| **长距离导航** | 一次性搜索全图，节点爆炸易超时 | [`ContinuousNavigator`](navigation/ContinuousNavigator.java) 走完续算，串联贪心短段完成长距离 |
+| **追逐移动目标** | 每帧全量重搜，开销大 | [`AnytimePathFinder`](navigation/AnytimePathFinder.java) 周期性重搜，支持 `Supplier<Vector3>` 动态目标 |
+| **战术行为** | 手写 `if-else` 硬编码位置选择 | [`TacticalScanner`](tactical/TacticalScanner.java) 评分算法：找掩体 / 远离 / 包抄 / 高地 / 视野点 / 模糊位置 |
+| **团队协作** | 各实体独立决策，容易聚堆重叠 | [`TeamTactics`](tactical/TeamTactics.java) 协同站位：钳形包抄 / 360° 包围 / 阵型集结（横/纵/楔/环/方） |
+| **多实体调度** | 每个实体各起一个调度任务 | [`NavigatorManager`](navigation/NavigatorManager.java) 单调度器统一 tick，集中管理所有实体导航 |
+| **视野感知** | 仅做距离判断 | [`VisionSensor`](util/VisionSensor.java) 距离 + FOV 视野角度 + 射线视线遮挡三重判断 |
+
 ---
 
 ## 二、功能特性

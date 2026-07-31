@@ -2,6 +2,35 @@
 
 通过 `@SaveField` 注解标记类中需要保存的属性，使用 `DataSaver` 将对象序列化为 JSON 文件或从 JSON 加载回对象。
 
+## 📑 目录
+
+- [与传统方式的对比](#与传统方式的对比)
+- [核心特性](#核心特性)
+- [快速开始](#快速开始)
+- [@SaveField 注解](#savefield-注解)
+- [容器与嵌套对象](#容器与嵌套对象)
+- [字段级自定义适配器](#字段级自定义适配器savefieldadapter)
+- [SaveIdentifiable 接口](#saveidentifiable-接口可选)
+- [DataSaver API](#datasaver-api)
+
+---
+
+## 与传统方式的对比
+
+Nukkit 插件持久化数据的传统做法是**手写 YAML/JSON 读写**：每个字段手动 `set("key", val)` / `getXxx("key")`，字段一多就变成一长串易错的样板代码，且存储键名与 Java 字段名硬编码耦合，重构时极易遗漏。
+
+| 维度 | 手写 Config | 本框架 |
+|------|------|------|
+| **声明方式** | 每个字段手写 `set()` / `getXxx()` | 字段标注 [`@SaveField`](annotation/SaveField.java) 即自动序列化 |
+| **键名耦合** | 存储键名硬编码在读写代码里，改字段名易遗漏 | `value` 别名解耦 Java 命名与存储格式 |
+| **容器 / 嵌套** | 手动遍历 List/Map、手动处理嵌套对象 | 自动递归处理 List/Set/Map/数组/嵌套对象 |
+| **自定义格式** | 需整体改写读写逻辑 | 字段级 [`SaveFieldAdapter`](adapter/SaveFieldAdapter.java) 单独接管 |
+| **必需校验** | 手动判断 null、手动报错 | `required = true` 加载缺失即抛 [`DataException`](exception/DataException.java) |
+| **路径组织** | 手动拼接文件路径 | [`sub()`](DataSaver.java) / [`parent()`](DataSaver.java) / [`root()`](DataSaver.java) 路径导航 |
+| **跨插件隔离** | 各插件自行管理目录 | [`forPlugin()`](DataSaver.java) 一键创建独立根保存器 |
+
+---
+
 ## 核心特性
 
 - **注解驱动**：只需在字段上标注 [`@SaveField`](src/main/java/io/github/JiangHu/jframe/data/annotation/SaveField.java)，无需继承基类、无需实现接口

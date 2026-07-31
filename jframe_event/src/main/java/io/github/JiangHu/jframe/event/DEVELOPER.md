@@ -362,16 +362,7 @@ public interface EventConsumer<T extends Event> {
 ### 4.7 HandlerTemplate（处理器封装）
 
 **文件：** [`routing/HandlerTemplate.java`](routing/HandlerTemplate.java)
-**角色：** 不可变的、线程安全的事件处理器封装。
-
-#### 与旧版 AnnotatedHandler 的关键区别
-
-| 特性 | 旧版 AnnotatedHandler | 新版 HandlerTemplate |
-|------|----------------------|---------------------|
-| target 存储 | 构造时传入，固定 | **不存储**，handle 时传入 |
-| 注解来源 | 单一 `@NukkitEvent` | `@EventRoute` + `@EventHandler` |
-| handle 返回值 | void | `boolean`（true = 声明独占） |
-| 共享性 | 一个实例一个 Handler | 同一模板可被多个实例共享 |
+**角色：** 不可变的、线程安全的事件处理器封装。同一模板可被多个实例共享——`target` 在 `handle` 时传入，不存储于模板本身。
 
 #### 字段详解
 
