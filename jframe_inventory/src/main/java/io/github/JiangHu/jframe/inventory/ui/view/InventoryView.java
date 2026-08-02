@@ -311,6 +311,21 @@ public abstract class InventoryView {
         return windowRegistered;
     }
 
+    /**
+     * 视图是否已关闭（资源已清理）。
+     * <p>
+     * 用于 {@link InventoryManager} 判断玩家当前视图是否仍然活跃：
+     * <ul>
+     *   <li>{@code false}：视图活跃（正在打开或已打开），{@code openView} 会忽略重复请求</li>
+     *   <li>{@code true}：视图已关闭，可被新视图替换</li>
+     * </ul>
+     *
+     * @return 已关闭返回 true
+     */
+    public boolean isClosed() {
+        return cleanedUp;
+    }
+
     // -------------------- 事件分发（被 InventoryManager 调用） --------------------
 
     /**

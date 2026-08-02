@@ -49,15 +49,30 @@ public class InventoryAPI implements PluginAware {
     }
 
     /**
-     * 打开视图。
+     * 打开视图（鲁棒模式，带重复打开保护）。
      * <p>
-     * 如果玩家已有打开的视图，会先关闭旧视图。
+     * 如果玩家已有活跃视图（正在打开或已打开），<b>忽略</b>本次请求，避免重复打开。
+     * 这能有效吸收网易版客户端右键时短时间内重复发送的事件，防止界面秒关。
+     * <p>
+     * <b>界面切换</b>请使用 {@link #forceOpenView}。
      *
      * @param player 玩家
      * @param view   视图
      */
     public void openView(Player player, InventoryView view) {
         manager.openView(player, view);
+    }
+
+    /**
+     * 强制打开视图（关闭当前视图后打开新视图）。
+     * <p>
+     * 用于<b>界面切换</b>场景：无论玩家当前是否有活跃视图，都会先关闭旧的再打开新的。
+     *
+     * @param player 玩家
+     * @param view   视图
+     */
+    public void forceOpenView(Player player, InventoryView view) {
+        manager.forceOpenView(player, view);
     }
 
     /**
