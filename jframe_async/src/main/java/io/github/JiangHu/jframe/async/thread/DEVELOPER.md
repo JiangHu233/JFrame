@@ -170,7 +170,7 @@ private void shutdownExecutor(ExecutorService executor) {
 
 模块遵循项目统一的 `Config + XML` 双层装配：
 
-1. [`ThreadSpringConfig`](config/ThreadSpringConfig.java)：
+1. [`ThreadSpringConfig`](../config/ThreadSpringConfig.java)：
    ```java
    @Configuration
    @ComponentScan("io.github.JiangHu.jframe.thread")
@@ -180,7 +180,7 @@ private void shutdownExecutor(ExecutorService executor) {
 
 2. [`thread-spring.xml`](../../../../../../../resources/thread-spring.xml)：
    ```xml
-   <bean class="io.github.JiangHu.jframe.thread.ThreadAPI" id="threadAPI"/>
+   <bean class="io.github.JiangHu.jframe.async.thread.ThreadAPI" id="threadAPI"/>
    ```
    显式声明 Bean，`id="threadAPI"` 作为注入名。
 

@@ -18,7 +18,7 @@ import io.github.JiangHu.jframe.example.wrapper.ThunderSwordWrapper;
 import io.github.JiangHu.jframe.form.ViewAPI;
 import io.github.JiangHu.jframe.inventory.ui.InventoryAPI;
 import io.github.JiangHu.jframe.main.JFrameMain;
-import io.github.JiangHu.jframe.thread.ThreadAPI;
+import io.github.JiangHu.jframe.async.thread.ThreadAPI;
 
 /**
  * JFrame 示例插件主类。

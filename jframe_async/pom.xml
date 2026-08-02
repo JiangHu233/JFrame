@@ -9,7 +9,7 @@
         <version>1.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>jframe_thread</artifactId>
+    <artifactId>jframe_async</artifactId>
 
     <properties>
         <maven.compiler.source>24</maven.compiler.source>
@@ -18,6 +18,12 @@
     </properties>
 
     <dependencies>
+        <!-- jframe_core：PluginAware 接口 -->
+        <dependency>
+            <groupId>io.github.JiangHu.jframe</groupId>
+            <artifactId>jframe_core</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
         <!-- 测试 -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

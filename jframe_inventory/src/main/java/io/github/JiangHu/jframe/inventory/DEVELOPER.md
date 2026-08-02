@@ -73,7 +73,7 @@ public class InventoryAPI implements PluginAware {
 
 - **门面 + 委托**：[`InventoryAPI`](ui/InventoryAPI.java) 不含业务逻辑，全部委托 [`InventoryManager`](ui/manager/InventoryManager.java)。门面隔离了使用者与内部管理器，便于未来替换实现或增加横切逻辑。
 - **PluginAware 绑定**：`bindPlugin` 时把 `InventoryManager` 注册为 Nukkit 事件监听器（接收点击、交易、关闭事件）。这一步必须在拿到 `Plugin` 实例后进行，因此用 `PluginAware` 延迟到 `onEnable`。
-- **Spring 装配**：[`InventorySpringConfig`](ui/config/InventorySpringConfig.java) + [`inventory-spring.xml`](../../../../../resources/inventory-spring.xml) 定义 `InventoryManager` 与 `InventoryAPI` Bean，由 [`MainSpringConfig`](../main/config/MainSpringConfig.java) 统一 `@Import`。
+- **Spring 装配**：[`InventorySpringConfig`](config/InventorySpringConfig.java) + [`inventory-spring.xml`](../../../../../resources/inventory-spring.xml) 定义 `InventoryManager` 与 `InventoryAPI` Bean，由 [`MainSpringConfig`](../main/config/MainSpringConfig.java) 统一 `@Import`。
 
 ---
 

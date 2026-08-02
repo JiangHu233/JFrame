@@ -4,8 +4,10 @@
        xsi:schemaLocation="http://www.springframework.org/schema/beans
        http://www.springframework.org/schema/beans/spring-beans.xsd">
 
-    <!-- 具体的配置内容 -->
-    <bean class="io.github.JiangHu.jframe.thread.ThreadAPI" id="threadAPI">
-    </bean>
+    <!-- 命名线程池：异步任务队列 -->
+    <bean class="io.github.JiangHu.jframe.async.thread.ThreadAPI" id="threadAPI"/>
+
+    <!-- 可挂起 Nukkit 主线程任务管理器 -->
+    <bean class="io.github.JiangHu.jframe.async.task.TaskAPI" id="taskAPI"/>
 
 </beans>

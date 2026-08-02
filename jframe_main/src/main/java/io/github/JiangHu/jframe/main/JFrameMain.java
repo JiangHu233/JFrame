@@ -13,7 +13,8 @@ import io.github.JiangHu.jframe.form.ViewAPI;
 import io.github.JiangHu.jframe.inventory.ui.InventoryAPI;
 import io.github.JiangHu.jframe.main.config.MainSpringConfig;
 import io.github.JiangHu.jframe.main.utils.ConfigEnum;
-import io.github.JiangHu.jframe.thread.ThreadAPI;
+import io.github.JiangHu.jframe.async.task.TaskAPI;
+import io.github.JiangHu.jframe.async.thread.ThreadAPI;
 import lombok.Getter;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
@@ -148,6 +149,18 @@ public class JFrameMain extends PluginBase {
     }
 
     /**
+     * 可挂起任务模块 API。
+     * <p>
+     * 提供基于 Nukkit 主线程调度的「按需驱动、自动挂起、可恢复」任务管理。
+     *
+     * @return 可挂起任务服务
+     * @see TaskAPI
+     */
+    public TaskAPI getTaskAPI() {
+        return getApi(TaskAPI.class);
+    }
+
+    /**
      * 命令模块 API。
      *
      * @return 命令服务
@@ -217,6 +230,7 @@ public class JFrameMain extends PluginBase {
         server.getServiceManager().register(EventAPI.class, getEventAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(ViewAPI.class, getViewAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(ThreadAPI.class, getThreadAPI(), this, ServicePriority.NORMAL);
+        server.getServiceManager().register(TaskAPI.class, getTaskAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(CommandAPI.class, getCommandAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(InventoryAPI.class, getInventoryAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(AiAPI.class, getAiAPI(), this, ServicePriority.NORMAL);
@@ -254,6 +268,13 @@ public class JFrameMain extends PluginBase {
             }
         } catch (Exception e) {
             getLogger().error("关闭线程池失败", e);
+        }
+        try {
+            if (applicationContext != null && applicationContext.isActive()) {
+                applicationContext.getBean(TaskAPI.class).cancelAll();
+            }
+        } catch (Exception e) {
+            getLogger().error("关闭可挂起任务失败", e);
         }
         if (this.applicationContext != null) {
             this.applicationContext.close();

@@ -173,7 +173,7 @@ if (threadAPI.removeThreadTask("data-save")) {
 
 模块遵循项目的 `Config + XML` 装配模式：
 
-- [`ThreadSpringConfig`](config/ThreadSpringConfig.java)：`@Configuration` + `@ComponentScan` + `@ImportResource("classpath:thread-spring.xml")`。
+- [`ThreadSpringConfig`](../config/ThreadSpringConfig.java)：`@Configuration` + `@ComponentScan` + `@ImportResource("classpath:thread-spring.xml")`。
 - [`thread-spring.xml`](../../../../../../../resources/thread-spring.xml)：定义 `id="threadAPI"` 的 Bean。
 
 在 `jframe_main` 环境下，[`MainSpringConfig`](../main/config/MainSpringConfig.java) 已统一 `@Import` 本模块，业务插件通过 [`JFrameMain.getThreadAPI()`](../main/JFrameMain.java) 即可获取。

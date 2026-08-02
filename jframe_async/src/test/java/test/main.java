@@ -1,6 +1,6 @@
 package test;
 
-import io.github.JiangHu.jframe.thread.ThreadAPI;
+import io.github.JiangHu.jframe.async.thread.ThreadAPI;
 
 public class main {
     public static void main(String[] args) {

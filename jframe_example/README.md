@@ -38,7 +38,7 @@
 | **命令处理** | 覆写 `onCommand`，手写 `if/else` 分发子命令、手动 `parseInt` 转换 | [`@CommandController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) + `@CommandMapping`，路径变量 / 命名参数 / 类型转换全自动 |
 | **表单界面** | 手写 `FormWindow`、手动管理打开/回调、导航要自己维护栈 | 继承 `FormView`，声明式构建 + 内置栈式导航（[`addStack`](src/main/java/io/github/JiangHu/jframe/example/view/NavigationDemoView.java) / `replaceThis`） |
 | **箱子界面** | 手动操作虚拟箱子坐标、处理点击事件、布局全靠算坐标 | 声明式组件（Button/StorageBox/Filler）+ 自动布局（[`InventoryTestView`](src/main/java/io/github/JiangHu/jframe/example/inventory/InventoryTestView.java)） |
-| **异步任务** | `scheduleAsyncTask` 或裸 `new Thread`，无队列概念 | [`ThreadAPI`](../jframe_thread/src/main/java/io/github/JiangHu/jframe/thread/ThreadAPI.java) 命名队列，串行保证 |
+| **异步任务** | `scheduleAsyncTask` 或裸 `new Thread`，无队列概念 | [`ThreadAPI`](../jframe_async/src/main/java/io/github/JiangHu/jframe/async/thread/ThreadAPI.java) 命名队列，串行保证 |
 | **AI 行为** | 从零实现寻路 / 战术逻辑 | [`AiAPI`](src/main/java/io/github/JiangHu/jframe/example/command/AiController.java) 一行调用寻路、导航、战术 |
 
 ---

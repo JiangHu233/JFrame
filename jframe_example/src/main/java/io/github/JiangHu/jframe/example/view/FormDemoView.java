@@ -4,7 +4,7 @@ import cn.nukkit.Player;
 import io.github.JiangHu.jframe.form.FormView;
 import io.github.JiangHu.jframe.form.window.JForm;
 import io.github.JiangHu.jframe.form.window.SimpleForm;
-import io.github.JiangHu.jframe.thread.ThreadAPI;
+import io.github.JiangHu.jframe.async.thread.ThreadAPI;
 
 /**
  * 表单特性演示总菜单。

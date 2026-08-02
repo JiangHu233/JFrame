@@ -3,6 +3,8 @@
   <component name="Encoding">
     <file url="file://$PROJECT_DIR$/jframe_ai/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/jframe_ai/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/jframe_async/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/jframe_async/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/jframe_command/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/jframe_command/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/jframe_core/src/main/java" charset="UTF-8" />
@@ -19,8 +21,6 @@
     <file url="file://$PROJECT_DIR$/jframe_inventory/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/jframe_main/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/jframe_main/src/main/resources" charset="UTF-8" />
-    <file url="file://$PROJECT_DIR$/jframe_thread/src/main/java" charset="UTF-8" />
-    <file url="file://$PROJECT_DIR$/jframe_thread/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/jframe_title/src/main/java" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/jframe_title/src/main/resources" charset="UTF-8" />
     <file url="file://$PROJECT_DIR$/src/main/java" charset="UTF-8" />

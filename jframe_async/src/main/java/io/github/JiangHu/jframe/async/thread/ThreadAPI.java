@@ -1,4 +1,4 @@
-package io.github.JiangHu.jframe.thread;
+package io.github.JiangHu.jframe.async.thread;
 
 import lombok.Getter;
 import lombok.NonNull;
