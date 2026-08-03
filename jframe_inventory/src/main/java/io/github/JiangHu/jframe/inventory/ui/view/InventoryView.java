@@ -369,6 +369,15 @@ public abstract class InventoryView {
     }
 
     /**
+     * 获取插件实例（包级访问，供 {@link VirtualInventory} 调度延迟任务使用）。
+     *
+     * @return 插件实例，未注入时为 null
+     */
+    Plugin plugin() {
+        return plugin;
+    }
+
+    /**
      * 打开视图（延迟注册窗口策略）。
      * <p>
      * 延迟 {@link #OPEN_DELAY_TICKS} tick 后调用 {@code player.addWindow()}，

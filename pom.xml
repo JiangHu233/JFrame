@@ -20,6 +20,8 @@
         <module>jframe_data</module>
         <module>jframe_ai</module>
         <module>jframe_title</module>
+        <module>jframe_scoreboard</module>
+        <module>jframe_dependency_template</module>
     </modules>
 
     <properties>
