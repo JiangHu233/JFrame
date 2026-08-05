@@ -1,5 +1,6 @@
 package io.github.JiangHu.jframe.async.task;
 
+import io.github.JiangHu.jframe.core.JFrameLog;
 import cn.nukkit.Server;
 import cn.nukkit.plugin.Plugin;
 import cn.nukkit.scheduler.TaskHandler;
@@ -245,8 +246,8 @@ public abstract class SuspendableTask {
         try {
             onTick();
         } catch (Exception e) {
-            Server.getInstance().getLogger().error(
-                    "SuspendableTask tick 异常: " + getClass().getName(), e);
+            JFrameLog.error("SuspendableTask",
+                    "tick 异常: " + getClass().getName(), e);
         }
     }
 

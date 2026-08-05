@@ -3,6 +3,7 @@ package io.github.JiangHu.jframe.event.routing;
 import cn.nukkit.Server;
 import cn.nukkit.event.Event;
 import cn.nukkit.event.EventPriority;
+import io.github.JiangHu.jframe.core.JFrameLog;
 import io.github.JiangHu.jframe.event.EventAPI;
 import io.github.JiangHu.jframe.event.EventConsumer;
 import io.github.JiangHu.jframe.event.EventEngine;
@@ -114,7 +115,7 @@ public class HandlerRegistry {
 
         // 强制要求 @KeyExtractor：无提取器则无法路由
         if (extractors.isEmpty()) {
-            Server.getInstance().getLogger().warning(
+            JFrameLog.warning("HandlerRegistry",
                     "类 " + wrapperClass.getName() + " 无 @KeyExtractor 方法，无法提取身份，注册被拒绝。"
                             + "请声明至少一个 @KeyExtractor static 方法。");
             return;
@@ -126,7 +127,7 @@ public class HandlerRegistry {
         // 扫描 @EventHandler + @EventRoute 方法
         Map<Class<? extends Event>, List<HandlerTemplate>> handlers = scanHandlers(wrapperClass, wrapperClass);
         if (handlers.isEmpty()) {
-            Server.getInstance().getLogger().warning(
+            JFrameLog.warning("HandlerRegistry",
                     "类 " + wrapperClass.getName() + " 无 @EventHandler 方法，注册无效果。");
             return;
         }
@@ -243,7 +244,7 @@ public class HandlerRegistry {
                     exclusiveClaimed = true;
                 }
             } catch (Exception e) {
-                Server.getInstance().getLogger().error(
+                JFrameLog.error("HandlerRegistry",
                         "事件处理器异常: " + bh.instance().getClass().getName()
                                 + "." + bh.template().getMethod().getName(), e);
             }
@@ -274,7 +275,7 @@ public class HandlerRegistry {
                     addHandlers(matched, instance, reg, eventType);
                 }
             } catch (Exception e) {
-                Server.getInstance().getLogger().error(
+                JFrameLog.error("HandlerRegistry",
                         "KeyExtractor 调用失败: " + reg.wrapperClass().getName()
                                 + "." + extractor.getName(), e);
             }
@@ -312,7 +313,7 @@ public class HandlerRegistry {
             try {
                 return reg.instanceProvider().invoke(null, identity);
             } catch (Exception e) {
-                Server.getInstance().getLogger().error(
+                JFrameLog.error("HandlerRegistry",
                         "InstanceProvider 调用失败: " + reg.wrapperClass().getName(), e);
                 return null;
             }
@@ -329,7 +330,7 @@ public class HandlerRegistry {
             }
             return instance;
         } catch (Exception e) {
-            Server.getInstance().getLogger().error(
+            JFrameLog.error("HandlerRegistry",
                     "默认实例创建失败: " + reg.wrapperClass().getName(), e);
             return null;
         }

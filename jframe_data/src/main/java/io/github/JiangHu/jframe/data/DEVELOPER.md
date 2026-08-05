@@ -95,10 +95,18 @@ data.level = c.getInt("level");
 │                                                                     │
 │  DataSaver (implements PluginAware)                                 │
 │  ├── save/load/loadInto/exists/loadOrSave：路径解析 + 文件 IO         │
-│  ├── toJson/fromJson/fromJsonInto：委托 Gson 序列化/反序列化          │
+│  ├── toJson/fromJson/toYaml/fromYaml：委托 Gson + 格式层序列化       │
+│  ├── setFormat/withFormat：存储格式切换（JSON / YAML）               │
 │  ├── sub/parent/root/forPlugin：路径导航与跨插件隔离                  │
 │  └── 持有配置好的 Gson 实例（注册了 TypeAdapterFactory）              │
-│     ↓ gson.toJson(obj) / gson.fromJson(json, clazz)                 │
+│     ↓ serialize(obj)：gson.toJsonTree(obj) → JsonElement 树          │
+│     ↓                → 按格式转为 JSON 或 YAML 文本                   │
+├─────────────────────────────────────────────────────────────────────┤
+│                         格式层 (L1.5)                                │
+│                                                                     │
+│  SaveFormat（枚举：JSON / YAML，含文件扩展名）                        │
+│  YamlConverter（JsonElement 树 ↔ YAML 字符串，经 Java 原生对象桥接）  │
+│     ↓                                                                │
 ├─────────────────────────────────────────────────────────────────────┤
 │                         序列化引擎层 (L2)                             │
 │                                                                     │
@@ -356,15 +364,25 @@ return instance
 | 字符串互转 | `toJson` / `fromJson` / `fromJsonInto` | 不涉及文件 IO |
 
 **路径导航**（[`sub`](DataSaver.java) / [`parent`](DataSaver.java) / [`root`](DataSaver.java)）：
-- `sub(first, more)` 拼接子目录，返回**子保存器**（共享 cache/gson，持有父级引用）
+- `sub(first, more)` 拼接子目录，返回**子保存器**（共享 cache/gson，持有父级引用，**继承父级格式**）
 - 子保存器的 `setRootDir()` 会抛异常 —— 根路径是固定基准点，不可被 sub 篡改
-- `forPlugin(plugin)` 创建**独立根保存器**，根路径为插件数据目录，跨插件隔离
+- `forPlugin(plugin)` 创建**独立根保存器**，根路径为插件数据目录，跨插件隔离（**继承父级格式**）
+
+**存储格式**（[`setFormat`](DataSaver.java) / [`withFormat`](DataSaver.java)）：
+- `setFormat(SaveFormat)` 修改当前保存器的默认格式，影响后续所有 save/load（文件扩展名随之变化）
+- `withFormat(SaveFormat)` 返回使用指定格式的**独立保存器**，不改变当前保存器的格式状态（按调用覆盖）
+- `sub()` / `forPlugin()` 创建的保存器会**继承**父级的 `format` 字段
 
 **内部工具方法**：
-- [`resolveRelativeFile()`](DataSaver.java:568) — 相对文件名 → File（自动追加 `.json`，rootDir 未设置时抛异常）
-- [`resolveSaveKey()`](DataSaver.java:586) — SaveIdentifiable → 文件名（统一校验，供 `save(obj)` 与 `exists(obj)` 共用）
-- [`writeStringToFile()`](DataSaver.java:603) — 写文件（自动建父目录）
-- [`readStringFromFile()`](DataSaver.java:619) — 读文件（不存在抛异常）
+- [`serialize(obj)`](DataSaver.java) — 格式感知序列化：`gson.toJsonTree(obj)` → 按格式转为 JSON 或 YAML 文本
+- [`parseToTree(content)`](DataSaver.java) — 格式感知解析：文本 → `JsonElement` 树（JSON 用 `JsonParser`，YAML 用 `YamlConverter`）
+- [`fromTree(tree, clazz)`](DataSaver.java) — 从 `JsonElement` 树反序列化（共用核心）
+- [`fromTreeInto(target, tree)`](DataSaver.java) — 从树回填已有实例（`fromJsonInto`/`fromYamlInto`/`loadInto` 共用）
+- [`resolveRelativeFile()`](DataSaver.java) — 相对文件名 → File（按格式追加 `.json` / `.yml`，智能识别已有扩展名）
+- [`hasKnownExtension()`](DataSaver.java) — 判断文件名是否已含 `.json` / `.yml` / `.yaml`
+- [`resolveSaveKey()`](DataSaver.java) — SaveIdentifiable → 文件名（统一校验，供 `save(obj)` 与 `exists(obj)` 共用）
+- [`writeStringToFile()`](DataSaver.java) — 写文件（自动建父目录）
+- [`readStringFromFile()`](DataSaver.java) — 读文件（不存在抛异常）
 
 ---
 
@@ -399,6 +417,62 @@ return instance
 
 ---
 
+### 4.9 [`SaveFormat`](SaveFormat.java) — 存储格式枚举
+
+**职责**：定义支持的存储格式，每种格式绑定一个文件扩展名。
+
+| 枚举值 | 扩展名 | 说明 |
+|--------|--------|------|
+| `JSON` | `.json` | 默认格式，直接使用 Gson 输出 |
+| `YAML` | `.yml` | 通过 [`YamlConverter`](core/YamlConverter.java) 转换 |
+
+**设计要点**：格式与扩展名绑定，切换格式时文件名自动变化，保证 save 与 load 的路径一致。
+
+---
+
+### 4.10 [`YamlConverter`](core/YamlConverter.java) — JsonElement 树 ↔ YAML 转换器
+
+**职责**：格式层的核心组件，将 Gson 产出的 `JsonElement` 树转换为 YAML 文本，或将 YAML 文本还原为树。
+
+**为什么需要这一层**：Gson 只能输出 JSON。为了在不改动 Gson 序列化核心（`SaveFieldTypeAdapter`）的前提下增加 YAML 支持，
+引入 `JsonElement` 树作为**中间表示**（IR）。序列化流程变为：
+
+```
+对象 → Gson(toJsonTree) → JsonElement 树 → YamlConverter → YAML 文本 → 文件
+对象 → Gson(toJsonTree) → JsonElement 树 → gson.toJson   → JSON 文本 → 文件
+```
+
+**转换原理**：JSON 和 YAML 本质上是相同数据结构（映射 / 序列 / 标量）的两种文本表示。本类通过 **Java 原生对象** 作为桥梁：
+
+```
+JsonElement 树 ←→ Java Map/List/标量 ←→ YAML 文本（SnakeYAML）
+```
+
+**类型映射**：
+
+| JsonElement | Java 中间对象 | YAML 表示 |
+|-------------|---------------|-----------|
+| JsonObject | LinkedHashMap | 块映射（缩进键值对） |
+| JsonArray | ArrayList | 块序列（`-` 列表） |
+| JsonPrimitive(bool) | Boolean | `true` / `false` |
+| JsonPrimitive(number) | Integer / Long / Double | 数值字面量 |
+| JsonPrimitive(string) | String | 字符串（自动加引号） |
+| JsonNull | null | `null` |
+
+**关键方法**：
+- [`toYaml(JsonElement)`](core/YamlConverter.java) — 树 → YAML（BLOCK 样式，缩进 2，不折行）
+- [`fromYaml(String)`](core/YamlConverter.java) — YAML → 树（SnakeYAML load 后递归转换）
+- [`elementToObject()`](core/YamlConverter.java) / [`objectToElement()`](core/YamlConverter.java) — 递归转换的私有核心
+
+**数字还原**（[`toJavaNumber()`](core/YamlConverter.java)）：Gson 的 `toJsonTree` 可能产生 `LazilyParsedNumber` 包装类。
+本方法统一还原为标准 Java 类型（Integer / Long / Double），确保 YAML 输出时整数不带小数点、浮点数带小数点。
+
+**线程安全**：所有方法均为静态，每次调用创建独立的 SnakeYAML `Yaml` 实例（SnakeYAML 的 Yaml 对象非线程安全），因此本类线程安全。
+
+**YAML 规范**：使用 SnakeYAML 2.x，遵循 YAML 1.2 — 不会将 `yes`/`no`/`on`/`off` 解释为布尔值（YAML 1.1 的行为），避免字符串误判。
+
+---
+
 ## 5. 线程安全分析
 
 | 组件 | 可变性 | 并发策略 |
@@ -408,13 +482,15 @@ return instance
 | `SaveFieldTypeAdapter` | 不可变 | 持有 gson + metadata 引用，`write/read` 无状态 |
 | `SaveFieldAdapter` 实例 | 无状态（契约） | 扫描时实例化一次，被多线程复用，实现必须线程安全 |
 | `Gson` 实例 | 线程安全 | Gson 官方文档保证 `toJson/fromJson` 线程安全 |
-| `DataSaver` | rootDir 写一次读多次 | 构造/bindPlugin 时设置，运行时只读 |
+| `SaveFormat` 枚举 | 不可变 | 枚举常量，天然线程安全 |
+| `YamlConverter` | 无状态 | 全静态方法，每次调用创建独立 SnakeYAML `Yaml` 实例 |
+| `DataSaver` | rootDir 写一次读多次；format 可变 | 构造/bindPlugin 时设置 rootDir；`setFormat` 修改 format（设计为单线程配置阶段调用） |
 
-**结论**：序列化/反序列化热路径（`toJson` → `write` / `fromJson` → `read`）完全无锁并发安全。
-反射扫描只在首次访问某类时执行一次，后续全部命中缓存。
+**结论**：序列化/反序列化热路径（`serialize` → `toJsonTree` → `write` / `parseToTree` → `fromJson` → `read`）完全无锁并发安全。
+反射扫描只在首次访问某类时执行一次，后续全部命中缓存。`YamlConverter` 每次调用创建独立的 SnakeYAML 实例，避免其非线程安全问题。
 
-> ⚠️ **唯一例外**：`DataSaver` 的 `setRootDir()` / `bindPlugin()` 修改 `rootDir` 字段，
-> 这两个方法设计为**启动阶段单线程调用**（Spring 初始化 / 插件 onEnable），运行时不再修改。
+> ⚠️ **例外**：`DataSaver` 的 `setRootDir()` / `bindPlugin()` 修改 `rootDir` 字段，`setFormat()` 修改 `format` 字段，
+> 这些方法设计为**启动阶段单线程调用**（Spring 初始化 / 插件 onEnable），运行时不再修改。
 
 ---
 
@@ -460,6 +536,16 @@ Spring 启动
 
 修改 [`DataSaver.buildGson()`](DataSaver.java) 添加 Gson 配置（如日期格式、自定义命名策略）。
 注意不要移除 `SaveFieldTypeAdapterFactory` 注册，否则注解驱动失效。
+
+### 7.4 新增存储格式
+
+若需支持 JSON / YAML 之外的格式（如 TOML、XML、Properties）：
+
+1. [`SaveFormat`](SaveFormat.java) 枚举新增一个值，绑定对应的文件扩展名
+2. 创建类似 [`YamlConverter`](core/YamlConverter.java) 的转换器，实现 `JsonElement` 树 ↔ 目标格式文本的互转
+3. [`DataSaver.serialize()`](DataSaver.java) 与 [`parseToTree()`](DataSaver.java) 的 `switch` 语句新增对应分支
+
+由于格式层与序列化核心（Gson + `SaveFieldTypeAdapter`）完全解耦，新增格式**无需改动**注解扫描、别名映射、required 校验等核心逻辑。
 
 ---
 

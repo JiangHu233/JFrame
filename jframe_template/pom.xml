@@ -9,12 +9,29 @@
         <version>1.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>jframe_scoreboard</artifactId>
+    <artifactId>jframe_template</artifactId>
 
     <properties>
         <maven.compiler.source>24</maven.compiler.source>
         <maven.compiler.target>24</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
+
+    <dependencies>
+        <!-- jframe_core：DataContext 响应式数据容器 -->
+        <dependency>
+            <groupId>io.github.JiangHu.jframe</groupId>
+            <artifactId>jframe_core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- 测试 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.11.4</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 
 </project>

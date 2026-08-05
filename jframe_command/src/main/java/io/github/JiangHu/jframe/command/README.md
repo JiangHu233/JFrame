@@ -15,6 +15,7 @@
 - [三、快速上手](#三快速上手)
 - [四、路径匹配与特异性排序](#四路径匹配与特异性排序)
 - [五、所有 API 详解](#五所有-api-详解)
+- [六、跨插件扫描（forPlugin）](#六跨插件扫描forplugin)
 
 ---
 
@@ -343,7 +344,26 @@ public class GameItemCommand {
 | `unregister(Class<?> controllerClass)` | 注销整个控制器的所有路由 |
 | `scan(String... basePackages)` | 包扫描注册（使用线程上下文类加载器） |
 | `scan(ClassLoader, String...)` | 包扫描注册（指定类加载器） |
+| `forPlugin(Plugin)` / `forPlugin(String)` | 返回 [`CommandPluginScope`](CommandPluginScope.java)，绑定指定插件的 ClassLoader |
 | `bindPlugin(Plugin plugin)` | 绑定插件实例（框架自动调用） |
+
+---
+
+## 六、跨插件扫描（forPlugin）
+
+当你的插件需要扫描**自身 jar 内**的 `@CommandController` 类时，由于 Nukkit 插件类加载器隔离，必须使用自身插件的 ClassLoader。[`forPlugin`](../core/module/ForPlugin.java) 提供了统一入口：
+
+```java
+// 扫描当前插件 jar 内的命令控制器
+commandAPI.forPlugin(this).scan("com.myplugin.command");
+
+// 扫描其他插件的命令控制器（按插件名）
+commandAPI.forPlugin("OtherPlugin").scan("com.otherplugin.cmd");
+```
+
+[`CommandPluginScope`](CommandPluginScope.java) 只暴露 `scan` 方法，内部委托给 core 的 [`AnnotatedClassScanner`](../core/scan/AnnotatedClassScanner.java) 完成扫描，扫描结果统一注册到共享的 `CommandRegistry`。
+
+> **与 `scan(String...)` 的区别**：`scan(String...)` 使用线程上下文类加载器（TCCL），依赖调用方在 `onEnable` 期间正确设置 TCCL；`forPlugin(this).scan(...)` 显式绑定插件 ClassLoader，更可靠。详见 [core/README — ForPlugin](../core/README.md#四forplugin跨插件作用域代理)。
 
 ---
 

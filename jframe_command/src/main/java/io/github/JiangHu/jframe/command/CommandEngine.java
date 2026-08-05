@@ -6,6 +6,7 @@ import cn.nukkit.command.CommandExecutor;
 import cn.nukkit.command.CommandSender;
 import cn.nukkit.command.PluginCommand;
 import cn.nukkit.plugin.Plugin;
+import io.github.JiangHu.jframe.core.JFrameLog;
 import io.github.JiangHu.jframe.command.routing.CommandRegistry;
 import io.github.JiangHu.jframe.command.routing.CommandRoute;
 import io.github.JiangHu.jframe.core.module.PluginAware;
@@ -142,13 +143,13 @@ public class CommandEngine implements PluginAware, CommandExecutor {
 
             String prefix = plugin.getName().toLowerCase();
             Server.getInstance().getCommandMap().register(prefix, cmd);
-            Server.getInstance().getLogger().info(
-                    "[CommandEngine] 已注册根命令: /" + root
+            JFrameLog.info("CommandEngine",
+                    "已注册根命令: /" + root
                             + (aliases != null && aliases.length > 0
                             ? " (别名: " + String.join(", ", aliases) + ")" : ""));
         } catch (Exception e) {
-            Server.getInstance().getLogger().error(
-                    "[CommandEngine] 注册根命令失败: " + root, e);
+            JFrameLog.error("CommandEngine",
+                    "注册根命令失败: " + root, e);
             registeredRoots.remove(root); // 回滚，允许重试
         }
     }
@@ -191,8 +192,8 @@ public class CommandEngine implements PluginAware, CommandExecutor {
         try {
             result = registry.dispatch(sender, command.getName(), args);
         } catch (Exception e) {
-            Server.getInstance().getLogger().error(
-                    "[CommandEngine] 命令分发异常: /" + command.getName(), e);
+            JFrameLog.error("CommandEngine",
+                    "命令分发异常: /" + command.getName(), e);
             sender.sendMessage("§c命令执行时发生内部错误。");
             return true;
         }

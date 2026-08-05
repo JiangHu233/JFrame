@@ -1,5 +1,6 @@
 package io.github.JiangHu.jframe.ai.navigation;
 
+import io.github.JiangHu.jframe.core.JFrameLog;
 import cn.nukkit.Server;
 import cn.nukkit.entity.Entity;
 import cn.nukkit.plugin.Plugin;
@@ -178,7 +179,7 @@ public class NavigatorManager implements PluginAware {
             try {
                 return !navigator.tick();
             } catch (Exception e) {
-                Server.getInstance().getLogger().error(
+                JFrameLog.error("NavigatorManager",
                         "AI 导航器 tick 异常: " + navigator.getEntity(), e);
                 return true;
             }

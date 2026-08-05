@@ -1,12 +1,13 @@
-# jframe_data — 注解驱动的 JSON 持久化工具
+# jframe_data — 注解驱动的 JSON / YAML 持久化工具
 
-通过 `@SaveField` 注解标记类中需要保存的属性，使用 `DataSaver` 将对象序列化为 JSON 文件或从 JSON 加载回对象。
+通过 `@SaveField` 注解标记类中需要保存的属性，使用 `DataSaver` 将对象序列化为 **JSON 或 YAML** 文件，或从文件加载回对象。两种格式共用同一套 `@SaveField` 注解机制，通过 [`setFormat()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 或 [`withFormat()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 一键切换。
 
 ## 📑 目录
 
 - [与传统方式的对比](#与传统方式的对比)
 - [核心特性](#核心特性)
 - [快速开始](#快速开始)
+- [存储格式（JSON / YAML）](#存储格式json--yaml)
 - [@SaveField 注解](#savefield-注解)
 - [容器与嵌套对象](#容器与嵌套对象)
 - [字段级自定义适配器](#字段级自定义适配器savefieldadapter)
@@ -34,7 +35,8 @@ Nukkit 插件持久化数据的传统做法是**手写 YAML/JSON 读写**：每�
 ## 核心特性
 
 - **注解驱动**：只需在字段上标注 [`@SaveField`](src/main/java/io/github/JiangHu/jframe/data/annotation/SaveField.java)，无需继承基类、无需实现接口
-- **别名支持**：通过 `value` 指定 JSON 键别名（如 `player_name`），解耦 Java 命名与存储格式
+- **双格式支持**：JSON（默认）与 YAML 两种存储格式，通过 [`setFormat()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 切换或 [`withFormat()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 按调用覆盖，同一套 `@SaveField` 注解对两种格式完全透明
+- **别名支持**：通过 `value` 指定键别名（如 `player_name`），解耦 Java 命名与存储格式
 - **必需校验**：`required = true` 标记关键字段，加载时缺失即报错，防止数据损坏静默失败
 - **自动递归**：`List` / `Set` / `Map` / 数组 / 嵌套对象自动递归处理，嵌套类有 `@SaveField` 则同样按注解规则序列化
 - **字段级适配器**：通过 `adapter` 指定 [`SaveFieldAdapter`](src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) 自定义单个字段的 JSON 格式（如坐标压缩为 `"x,y"` 字符串）
@@ -100,6 +102,78 @@ PlayerData loaded = saver.load(PlayerData.class, "players/steve");
   "health": 19.5
 }
 ```
+
+---
+
+## 存储格式（JSON / YAML）
+
+`DataSaver` 默认使用 **JSON** 格式（`.json`），也可切换为 **YAML** 格式（`.yml`）。两种格式共用同一套 `@SaveField` 注解机制，对用户完全透明——切换格式无需修改任何数据类定义。
+
+### 切换格式
+
+| 方法 | 说明 |
+|------|------|
+| [`getFormat()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) | 获取当前格式（默认 `JSON`） |
+| [`setFormat(SaveFormat)`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) | 修改当前保存器的默认格式，影响后续所有 save/load |
+| [`withFormat(SaveFormat)`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) | 返回一个使用指定格式的**独立保存器**，不改变当前保存器的格式状态 |
+
+```java
+// 方式一：修改当前保存器的默认格式（影响后续所有调用）
+saver.setFormat(SaveFormat.YAML);
+saver.save(data, "config");   // → config.yml
+saver.load(Cfg.class, "config");  // 读取 config.yml
+
+// 方式二：按调用覆盖（不影响当前保存器的默认格式）
+saver.withFormat(SaveFormat.YAML).save(data, "config");  // → config.yml
+saver.save(data, "config");                               // → config.json（原格式不变）
+```
+
+### YAML 输出示例
+
+同样的 `PlayerData` 对象，YAML 格式输出为：
+
+```yaml
+player_name: Steve
+level: 42
+health: 19.5
+```
+
+嵌套对象与集合同样支持：
+
+```yaml
+name: Steve
+home:
+  world: world
+  x: 100
+  y: 64
+tags:
+  - a
+  - b
+  - c
+```
+
+### 字符串互转
+
+除了文件 IO，YAML 也可直接在内存中转换：
+
+```java
+String yaml = saver.toYaml(data);                        // 对象 → YAML 字符串
+PlayerData obj = saver.fromYaml(yaml, PlayerData.class); // YAML 字符串 → 对象
+saver.fromYamlInto(existing, yaml);                      // YAML 字符串 → 回填已有实例
+```
+
+### 格式与文件扩展名
+
+| 格式 | 扩展名 | 枚举值 |
+|------|--------|--------|
+| JSON（默认） | `.json` | `SaveFormat.JSON` |
+| YAML | `.yml` | `SaveFormat.YAML` |
+
+- 切换格式后，文件扩展名自动变化（JSON → `.json`，YAML → `.yml`）
+- 若文件名已含已知扩展名（`.json` / `.yml` / `.yaml`），不会重复追加
+- [`sub()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 和 [`forPlugin()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 创建的保存器会**继承**父级的格式
+
+> **YAML 规范**：使用 SnakeYAML 2.x（YAML 1.2 规范），不会将 `yes`/`no`/`on`/`off` 误判为布尔值。
 
 ---
 
@@ -465,12 +539,13 @@ saver.fromJsonInto(existing, json);                  // JSON 字符串 → 回�
 
 | 调用方式 | 解析结果 |
 |----------|----------|
-| `save(obj, "players/steve")` | `rootDir/players/steve.json` |
+| `save(obj, "players/steve")` | `rootDir/players/steve.json`（JSON 格式）或 `.yml`（YAML 格式） |
 | `save(obj, "players/steve.json")` | `rootDir/players/steve.json`（已有扩展名则不重复追加） |
 | `save(obj, new File(...))` | 直接使用该 File 对象 |
-| `save(obj)`（SaveIdentifiable） | `rootDir/<saveKey()>.json` |
+| `save(obj)`（SaveIdentifiable） | `rootDir/<saveKey()>.json` 或 `.yml` |
 
-- 相对路径自动追加 `.json` 扩展名（若未包含）
+- 相对路径自动追加当前格式对应的扩展名（JSON → `.json`，YAML → `.yml`）
+- 若文件名已含已知扩展名（`.json` / `.yml` / `.yaml`），不重复追加
 - 父目录不存在时自动创建
 - 未设置 `rootDir` 时使用相对路径会抛出 `DataException`
 

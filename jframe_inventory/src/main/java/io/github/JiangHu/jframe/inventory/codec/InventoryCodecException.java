@@ -1,5 +1,7 @@
 package io.github.JiangHu.jframe.inventory.codec;
 
+import io.github.JiangHu.jframe.core.JFrameException;
+
 /**
  * 物品 / 物品栏序列化异常。
  * <p>
@@ -10,7 +12,7 @@ package io.github.JiangHu.jframe.inventory.codec;
  * @see ItemCodec
  * @see InventoryCodec
  */
-public class InventoryCodecException extends RuntimeException {
+public class InventoryCodecException extends JFrameException {
 
     /**
      * 构造异常。

@@ -13,8 +13,9 @@
 - [二、整体架构](#二整体架构)
 - [三、快速上手](#三快速上手)
 - [四、所有 API 详解](#四所有-api-详解)
-- [五、性能优化](#五性能优化)
-- [六、完整示例](#六完整示例)
+- [五、跨插件扫描（forPlugin）](#五跨插件扫描forplugin)
+- [六、性能优化](#六性能优化)
+- [七、完整示例](#七完整示例)
 
 ---
 
@@ -438,11 +439,30 @@ public class GlobalChatLogger {
 | `register(Class<?> wrapperClass)` | 注册包装类为对象处理器（必须含 `@KeyExtractor`） |
 | `unregister(Class<?> wrapperClass)` | 注销整个包装类 |
 | `evict(Class<?> wrapperClass, Object identity)` | 从默认缓存驱逐特定身份的实例 |
+| `forPlugin(Plugin)` / `forPlugin(String)` | 返回 [`EventPluginScope`](EventPluginScope.java)，绑定指定插件的 ClassLoader |
 | `bindPlugin(Plugin plugin)` | 绑定插件实例（框架自动调用） |
 
 ---
 
-## 五、性能优化
+## 五、跨插件扫描（forPlugin）
+
+当你的插件需要扫描**自身 jar 内**的 `@Wrapper` 类时，由于 Nukkit 插件类加载器隔离，必须使用自身插件的 ClassLoader。[`forPlugin`](../core/module/ForPlugin.java) 提供了统一入口：
+
+```java
+// 扫描当前插件 jar 内的事件包装类
+eventAPI.forPlugin(this).scan("com.myplugin.event");
+
+// 扫描其他插件的事件包装类（按插件名）
+eventAPI.forPlugin("OtherPlugin").scan("com.otherplugin.event");
+```
+
+[`EventPluginScope`](EventPluginScope.java) 只暴露 `scan` 方法，内部委托给 core 的 [`AnnotatedClassScanner`](../core/scan/AnnotatedClassScanner.java) 完成扫描，扫描结果统一注册到共享的 `HandlerRegistry`。
+
+> 详见 [core/README — ForPlugin](../core/README.md#四forplugin跨插件作用域代理)。
+
+---
+
+## 六、性能优化
 
 框架内部针对高频事件（如 `PlayerMoveEvent`）的热路径做了三层优化，用户无需任何配置即可受益：
 
@@ -456,7 +476,7 @@ public class GlobalChatLogger {
 
 ---
 
-## 六、完整示例
+## 七、完整示例
 
 | 示例 | 场景 | 关键特性 |
 |------|------|---------|

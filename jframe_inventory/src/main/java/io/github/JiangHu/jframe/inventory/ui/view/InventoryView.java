@@ -4,6 +4,7 @@ import cn.nukkit.Player;
 import cn.nukkit.inventory.InventoryType;
 import cn.nukkit.item.Item;
 import cn.nukkit.plugin.Plugin;
+import io.github.JiangHu.jframe.core.JFrameLog;
 import io.github.JiangHu.jframe.inventory.ui.component.InventoryComponent;
 import io.github.JiangHu.jframe.inventory.ui.component.StorageBox;
 import io.github.JiangHu.jframe.inventory.ui.manager.InventoryManager;
@@ -398,7 +399,7 @@ public abstract class InventoryView {
         this.cleanedUp = false;
 
         if (plugin == null) {
-            cn.nukkit.Server.getInstance().getLogger().error("[InventoryView] plugin 未注入，无法打开界面");
+            JFrameLog.error("InventoryView", "plugin 未注入，无法打开界面");
             return;
         }
 
@@ -425,7 +426,7 @@ public abstract class InventoryView {
                         onOpen();
                     }, OPEN_DELAY_TICKS);
         } catch (Exception e) {
-            cn.nukkit.Server.getInstance().getLogger().error("[InventoryView] Failed to open inventory for " + player.getName(), e);
+            JFrameLog.error("InventoryView", "Failed to open inventory for " + player.getName(), e);
         }
     }
 

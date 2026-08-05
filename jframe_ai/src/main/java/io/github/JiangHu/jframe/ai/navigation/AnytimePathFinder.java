@@ -1,5 +1,6 @@
 package io.github.JiangHu.jframe.ai.navigation;
 
+import io.github.JiangHu.jframe.core.JFrameLog;
 import cn.nukkit.Server;
 import cn.nukkit.entity.Entity;
 import cn.nukkit.math.Vector3;
@@ -112,8 +113,8 @@ public class AnytimePathFinder {
         }
         Plugin plugin = navigatorManager.getPlugin();
         if (plugin == null) {
-            Server.getInstance().getLogger().warning(
-                    "AnytimePathFinder: 插件尚未绑定，无法启动追逐任务。请先导入 AI 模块。");
+            JFrameLog.warning("AnytimePathFinder",
+                    "插件尚未绑定，无法启动追逐任务。请先导入 AI 模块。");
             return;
         }
         // 停止该实体已有的追逐任务（同一实体同时只有一个追逐任务）

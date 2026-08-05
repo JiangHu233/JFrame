@@ -10,4 +10,9 @@
     <!-- 可挂起 Nukkit 主线程任务管理器 -->
     <bean class="io.github.JiangHu.jframe.async.task.TaskAPI" id="taskAPI"/>
 
+    <!-- 线程切换流程服务：回调链 + 虚拟线程 -->
+    <bean class="io.github.JiangHu.jframe.async.flow.ThreadFlow" id="threadFlow">
+        <constructor-arg ref="threadAPI"/>
+    </bean>
+
 </beans>

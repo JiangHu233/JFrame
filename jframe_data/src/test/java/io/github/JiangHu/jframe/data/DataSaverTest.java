@@ -1257,6 +1257,253 @@ class DataSaverTest {
         }
     }
 
+    // ========== YAML 格式支持 ==========
+
+    @Nested
+    @DisplayName("YAML 格式支持")
+    class YamlFormatTest {
+
+        @Test
+        @DisplayName("默认格式为 JSON")
+        void defaultFormatIsJson() {
+            assertEquals(SaveFormat.JSON, saver.getFormat());
+        }
+
+        @Test
+        @DisplayName("setFormat(YAML) 后 save 应写入 .yml 文件")
+        void setFormatYamlProducesYmlExtension() {
+            saver.setFormat(SaveFormat.YAML);
+
+            PlayerData data = new PlayerData("Steve", 42, 19.5, true);
+            saver.save(data, "player");
+
+            assertTrue(new File(tempRoot, "player.yml").exists(), "应生成 .yml 文件");
+            assertFalse(new File(tempRoot, "player.json").exists(), "不应生成 .json 文件");
+        }
+
+        @Test
+        @DisplayName("YAML 格式：保存后加载应还原所有字段值")
+        void yamlRoundTripRestoresFields() {
+            saver.setFormat(SaveFormat.YAML);
+
+            PlayerData original = new PlayerData("Steve", 42, 19.5, true);
+            saver.save(original, "player");
+
+            PlayerData loaded = saver.load(PlayerData.class, "player");
+
+            assertNotNull(loaded);
+            assertEquals("Steve", loaded.name);
+            assertEquals(42, loaded.level);
+            assertEquals(19.5, loaded.health);
+            assertTrue(loaded.vip);
+        }
+
+        @Test
+        @DisplayName("YAML 格式：别名应作为 YAML 键")
+        void yamlUsesAliasAsKey() {
+            saver.setFormat(SaveFormat.YAML);
+
+            String yaml = saver.toYaml(new PlayerData("Steve", 1, 1.0, false));
+
+            assertTrue(yaml.contains("player_name:"), "应使用别名 player_name");
+            assertFalse(yaml.contains("\"name\""), "不应使用字段名 name");
+        }
+
+        @Test
+        @DisplayName("YAML 格式：嵌套对象应递归序列化/反序列化")
+        void yamlNestedObjectRoundTrip() {
+            saver.setFormat(SaveFormat.YAML);
+
+            PlayerWithNested player = new PlayerWithNested();
+            player.name = "Steve";
+            player.home = new Location("world", 100, 64);
+
+            saver.save(player, "nested");
+            PlayerWithNested loaded = saver.load(PlayerWithNested.class, "nested");
+
+            assertNotNull(loaded.home);
+            assertEquals("world", loaded.home.world);
+            assertEquals(100, loaded.home.x);
+            assertEquals(64, loaded.home.y);
+        }
+
+        @Test
+        @DisplayName("YAML 格式：集合字段应正确序列化/反序列化")
+        void yamlCollectionsRoundTrip() {
+            saver.setFormat(SaveFormat.YAML);
+
+            CollectionHolder holder = new CollectionHolder();
+            holder.tags = new ArrayList<>(Arrays.asList("a", "b", "c"));
+            holder.stats = new LinkedHashMap<>();
+            holder.stats.put("kills", 10);
+            holder.stats.put("deaths", 3);
+            holder.waypoints = new ArrayList<>();
+            holder.waypoints.add(new Location("spawn", 0, 0));
+            holder.waypoints.add(new Location("base", 100, 64));
+
+            saver.save(holder, "col");
+            CollectionHolder loaded = saver.load(CollectionHolder.class, "col");
+
+            assertNotNull(loaded.tags);
+            assertEquals(3, loaded.tags.size());
+            assertEquals("a", loaded.tags.get(0));
+            assertNotNull(loaded.stats);
+            assertEquals(10, loaded.stats.get("kills"));
+            assertEquals(3, loaded.stats.get("deaths"));
+            assertNotNull(loaded.waypoints);
+            assertEquals(2, loaded.waypoints.size());
+            assertEquals("spawn", loaded.waypoints.get(0).world);
+            assertEquals(64, loaded.waypoints.get(1).y);
+        }
+
+        @Test
+        @DisplayName("toYaml / fromYaml 字符串互转往返")
+        void yamlStringRoundTrip() {
+            PlayerData original = new PlayerData("Alex", 7, 15.0, true);
+
+            String yaml = saver.toYaml(original);
+            PlayerData loaded = saver.fromYaml(yaml, PlayerData.class);
+
+            assertEquals("Alex", loaded.name);
+            assertEquals(7, loaded.level);
+            assertEquals(15.0, loaded.health);
+            assertTrue(loaded.vip);
+        }
+
+        @Test
+        @DisplayName("fromYamlInto 应将 YAML 字符串回填到已有实例")
+        void fromYamlIntoBackfills() {
+            PlayerData existing = new PlayerData();
+
+            String yaml = """
+                    player_name: Alex
+                    level: 7
+                    health: 20.0
+                    vip: true
+                    """;
+
+            saver.fromYamlInto(existing, yaml);
+
+            assertEquals("Alex", existing.name);
+            assertEquals(7, existing.level);
+            assertEquals(20.0, existing.health);
+            assertTrue(existing.vip);
+        }
+
+        @Test
+        @DisplayName("withFormat(YAML) 不改变原保存器的格式")
+        void withFormatDoesNotMutateOriginal() {
+            assertEquals(SaveFormat.JSON, saver.getFormat());
+
+            saver.withFormat(SaveFormat.YAML).save(new PlayerData("A", 1, 1.0, false), "tmp");
+
+            // 原保存器仍为 JSON
+            assertEquals(SaveFormat.JSON, saver.getFormat());
+            // withFormat 产出的独立保存器为 YAML
+            assertTrue(new File(tempRoot, "tmp.yml").exists());
+        }
+
+        @Test
+        @DisplayName("withFormat(YAML) 返回的保存器格式为 YAML")
+        void withFormatReturnsYamlSaver() {
+            DataSaver yamlSaver = saver.withFormat(SaveFormat.YAML);
+
+            assertEquals(SaveFormat.YAML, yamlSaver.getFormat());
+        }
+
+        @Test
+        @DisplayName("sub() 创建的子保存器继承父级格式")
+        void subInheritsParentFormat() {
+            saver.setFormat(SaveFormat.YAML);
+
+            DataSaver sub = saver.sub("players");
+
+            assertEquals(SaveFormat.YAML, sub.getFormat());
+
+            sub.save(new PlayerData("Steve", 1, 1.0, false), "p1");
+            assertTrue(new File(tempRoot, "players/p1.yml").exists());
+        }
+
+        @Test
+        @DisplayName("YAML 1.2：yes/no 字符串不会被误判为布尔值")
+        void yaml12DoesNotMisinterpretYesNo() {
+            WithTransient obj = new WithTransient();
+            obj.id = "yes";
+
+            String yaml = saver.toYaml(obj);
+            WithTransient loaded = saver.fromYaml(yaml, WithTransient.class);
+
+            // YAML 1.2 规范下，"yes" 应保持为字符串而非被转为 true
+            assertEquals("yes", loaded.id);
+        }
+
+        @Test
+        @DisplayName("YAML 格式：required 字段缺失时应抛出 DataException")
+        void yamlMissingRequiredThrows() {
+            saver.setFormat(SaveFormat.YAML);
+
+            String yaml = """
+                    level: 5
+                    health: 10.0
+                    vip: false
+                    """;
+
+            DataException ex = assertThrows(DataException.class,
+                    () -> saver.fromYaml(yaml, PlayerData.class));
+
+            assertTrue(ex.getMessage().contains("player_name"));
+        }
+
+        @Test
+        @DisplayName("setFormat(null) 应抛出 DataException")
+        void setFormatNullThrows() {
+            assertThrows(DataException.class, () -> saver.setFormat(null));
+        }
+
+        @Test
+        @DisplayName("withFormat(null) 应抛出 DataException")
+        void withFormatNullThrows() {
+            assertThrows(DataException.class, () -> saver.withFormat(null));
+        }
+
+        @Test
+        @DisplayName("YAML 格式：loadInto 回填已有实例")
+        void yamlLoadIntoBackfills() {
+            saver.setFormat(SaveFormat.YAML);
+
+            saver.save(new PlayerData("Steve", 50, 18.0, true), "p");
+
+            PlayerData existing = new PlayerData();
+            saver.loadInto(existing, "p");
+
+            assertEquals("Steve", existing.name);
+            assertEquals(50, existing.level);
+            assertTrue(existing.vip);
+        }
+
+        @Test
+        @DisplayName("YAML 格式：exists 判断 .yml 文件")
+        void yamlExistsChecksYmlFile() {
+            saver.setFormat(SaveFormat.YAML);
+
+            assertFalse(saver.exists("config"));
+            saver.save(new PlayerData("Steve", 1, 1.0, false), "config");
+            assertTrue(saver.exists("config"));
+            assertTrue(new File(tempRoot, "config.yml").exists());
+        }
+
+        @Test
+        @DisplayName("显式 .yml 扩展名不重复追加")
+        void explicitYmlExtensionNotDuplicated() {
+            saver.setFormat(SaveFormat.YAML);
+
+            saver.save(new PlayerData("Steve", 1, 1.0, false), "data.yml");
+
+            assertTrue(new File(tempRoot, "data.yml").exists());
+            assertFalse(new File(tempRoot, "data.yml.yml").exists());
+        }
+    }
+
     // ========== 工具方法 ==========
 
     private void deleteRecursively(File file) {

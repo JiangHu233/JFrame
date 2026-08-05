@@ -15,6 +15,7 @@ io\github\JiangHu\jframe\command\resolve\ArgumentResolver.class
 io\github\JiangHu\jframe\command\routing\CommandRoute$BindingFailure.class
 io\github\JiangHu\jframe\command\CommandAPI.class
 io\github\JiangHu\jframe\command\CommandEngine.class
+io\github\JiangHu\jframe\command\CommandPluginScope.class
 io\github\JiangHu\jframe\command\CommandEngine$CommandMeta.class
 io\github\JiangHu\jframe\command\config\CommandSpringConfig.class
 io\github\JiangHu\jframe\command\routing\CommandRoute$InvokeResult.class

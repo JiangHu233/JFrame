@@ -5,6 +5,7 @@ import cn.nukkit.event.Event;
 import cn.nukkit.event.EventPriority;
 import cn.nukkit.event.Listener;
 import cn.nukkit.plugin.Plugin;
+import io.github.JiangHu.jframe.core.JFrameLog;
 import io.github.JiangHu.jframe.core.module.PluginAware;
 import io.github.JiangHu.jframe.event.routing.HandlerRegistry;
 import lombok.Getter;
@@ -191,7 +192,7 @@ public class EventEngine implements Listener, PluginAware {
             try {
                 consumer.handleEvent(event);
             } catch (Exception e) {
-                Server.getInstance().getLogger().error(
+                JFrameLog.error("EventEngine",
                         "EventConsumer 处理事件 " + eventType.getSimpleName() + " 时发生异常", e);
             }
         }

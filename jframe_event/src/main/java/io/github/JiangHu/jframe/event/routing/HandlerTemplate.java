@@ -3,6 +3,7 @@ package io.github.JiangHu.jframe.event.routing;
 import cn.nukkit.Server;
 import cn.nukkit.event.Event;
 import cn.nukkit.event.EventPriority;
+import io.github.JiangHu.jframe.core.JFrameLog;
 import io.github.JiangHu.jframe.event.annotation.EventHandler;
 import io.github.JiangHu.jframe.event.annotation.EventRoute;
 import org.springframework.expression.EvaluationContext;
@@ -171,7 +172,7 @@ public class HandlerTemplate {
                 }
                 return false;
             } catch (Throwable e) {
-                Server.getInstance().getLogger().error(
+                JFrameLog.error("HandlerTemplate",
                         "filter 方法执行失败: " + filterMethod.getName(), e);
                 return false;
             }
