@@ -2,8 +2,9 @@ package io.github.JiangHu.jframe.scoreboard;
 
 import cn.nukkit.Player;
 import cn.nukkit.Server;
-import cn.nukkit.scoreboard.manager.IScoreboardManager;
+import io.github.JiangHu.jframe.content_template.HierarchicalDataContext;
 import io.github.JiangHu.jframe.content_template.TemplateEngine;
+import io.github.JiangHu.jframe.core.JFrameLog;
 import io.github.JiangHu.jframe.core.data.reactive.DataContext;
 import java.util.Map;
 import java.util.UUID;
@@ -24,7 +25,7 @@ import java.util.function.Predicate;
  *
  * <h3>线程安全</h3>
  * <p>使用 {@link ConcurrentHashMap} 存储模板和视图，线程安全。
- * 但 Nukkit 计分板 API 的调用应在主线程执行。
+ * 但发包操作应在主线程执行。
  *
  * @see ScoreboardTemplate
  * @see ScoreboardView
@@ -33,9 +34,6 @@ public class ScoreboardManager {
 
     private final TemplateEngine engine;
 
-    /** Nukkit 计分板管理器（延迟初始化：首次 show 时从 Server 获取） */
-    private volatile IScoreboardManager nukkitManager;
-
     /** 模板注册表：模板名称 → ScoreboardTemplate */
     private final ConcurrentHashMap<String, ScoreboardTemplate> templates = new ConcurrentHashMap<>();
 
@@ -43,27 +41,17 @@ public class ScoreboardManager {
     private final ConcurrentHashMap<UUID, ScoreboardView> views = new ConcurrentHashMap<>();
 
     /**
+     * 模板全局数据上下文：模板名称 → HierarchicalDataContext（parent = engine.globalData）。
+     * <p>同模板的所有玩家共享此数据，不同模板之间隔离。
+     * 变更会通过 parent → child 监听链自动传播到使用该模板的所有玩家视图。
+     */
+    private final ConcurrentHashMap<String, HierarchicalDataContext> templateGlobals = new ConcurrentHashMap<>();
+
+    /**
      * @param engine 模板引擎
      */
     public ScoreboardManager(TemplateEngine engine) {
         this.engine = engine;
-    }
-
-    /**
-     * 延迟获取 Nukkit 计分板管理器（首次调用时从 {@code Server.getInstance()} 获取）。
-     * <p>采用延迟初始化避免 Spring 容器启动阶段 Server 尚未就绪的问题。
-     *
-     * @return Nukkit 计分板管理器
-     */
-    private IScoreboardManager getNukkitManager() {
-        if (nukkitManager == null) {
-            synchronized (this) {
-                if (nukkitManager == null) {
-                    nukkitManager = Server.getInstance().getScoreboardManager();
-                }
-            }
-        }
-        return nukkitManager;
     }
 
     // ==================== 模板管理 ====================
@@ -75,6 +63,7 @@ public class ScoreboardManager {
      */
     public void loadTemplate(ScoreboardTemplate template) {
         templates.put(template.getName(), template);
+        logInfo("计分板模板注册成功: " + template.getName());
     }
 
     /**
@@ -94,6 +83,11 @@ public class ScoreboardManager {
      */
     public void removeTemplate(String name) {
         templates.remove(name);
+        // 清理模板全局数据上下文，解除对引擎全局数据的监听，防止内存泄漏
+        HierarchicalDataContext tg = templateGlobals.remove(name);
+        if (tg != null) {
+            tg.dispose();
+        }
     }
 
     // ==================== 显示控制 ====================
@@ -109,6 +103,7 @@ public class ScoreboardManager {
     public ScoreboardView show(Player player, String templateName) {
         ScoreboardTemplate sbTemplate = templates.get(templateName);
         if (sbTemplate == null) {
+            logWarning("计分板模板未注册: " + templateName + "，请检查 loadTemplate 名称是否与 show 一致");
             return null;
         }
         return show(player, sbTemplate);
@@ -131,8 +126,11 @@ public class ScoreboardManager {
         }
 
         // 创建新视图并显示
-        DataContext data = DataContext.of();
-        ScoreboardView view = new ScoreboardView(uuid, sbTemplate, data, engine, getNukkitManager());
+        // 三层 parent 链：引擎全局（engine.getGlobalData()）→ 模板全局（templateGlobals）→ 玩家局部
+        // 读取优先级：玩家 > 模板 > 引擎；任一层变更都会沿链自动传播，触发增量刷新
+        DataContext templateGlobal = getTemplateDataContext(sbTemplate.getName());
+        HierarchicalDataContext data = HierarchicalDataContext.of(templateGlobal);
+        ScoreboardView view = new ScoreboardView(uuid, sbTemplate, data, engine);
         view.show(player);
         views.put(uuid, view);
         return view;
@@ -148,6 +146,7 @@ public class ScoreboardManager {
     public int showIf(Predicate<Player> predicate, String templateName) {
         ScoreboardTemplate sbTemplate = templates.get(templateName);
         if (sbTemplate == null) {
+            logWarning("计分板模板未注册: " + templateName + "，请检查 loadTemplate 名称是否与 show 一致");
             return 0;
         }
         int count = 0;
@@ -182,6 +181,7 @@ public class ScoreboardManager {
         ScoreboardView view = views.remove(uuid);
         if (view != null) {
             view.hide(player);
+            disposeDataContext(view);
         }
     }
 
@@ -194,6 +194,7 @@ public class ScoreboardManager {
             if (player != null) {
                 entry.getValue().hide(player);
             }
+            disposeDataContext(entry.getValue());
         }
         views.clear();
     }
@@ -250,6 +251,54 @@ public class ScoreboardManager {
         }
     }
 
+    /**
+     * 更新全局数据——所有正在显示计分板的玩家都会自动收到变更并增量刷新。
+     * <p>全局数据对所有玩家共享，适合存放服务器名称、在线人数、当前时间等公共信息。
+     * <p>当玩家数据与全局数据存在同名 key 时，<b>玩家数据优先</b>（覆盖全局值）。
+     *
+     * @param key   全局数据键名
+     * @param value 数据值
+     */
+    public void updateGlobal(String key, Object value) {
+        engine.setGlobal(key, value);
+    }
+
+    /**
+     * 批量更新全局数据——所有正在显示计分板的玩家都会自动收到变更并增量刷新。
+     *
+     * @param entries 键值对
+     * @see #updateGlobal(String, Object)
+     */
+    public void updateGlobalAll(Map<String, Object> entries) {
+        engine.setGlobalAll(entries);
+    }
+
+    /**
+     * 更新模板全局数据——所有正在使用该模板的玩家都会自动收到变更并增量刷新。
+     * <p>模板全局数据对同模板的所有玩家共享，不同模板之间隔离。
+     * 适合存放该模板特有的公共信息（如游戏模式、队伍名称等）。
+     * <p>当玩家数据与模板/引擎全局数据存在同名 key 时，<b>玩家数据优先</b>；
+     * 当模板数据与引擎全局数据存在同名 key 时，<b>模板数据优先</b>。
+     *
+     * @param templateName 模板名称
+     * @param key          数据键名
+     * @param value        数据值
+     */
+    public void updateTemplate(String templateName, String key, Object value) {
+        getTemplateDataContext(templateName).put(key, value);
+    }
+
+    /**
+     * 批量更新模板全局数据——所有正在使用该模板的玩家都会自动收到变更并增量刷新。
+     *
+     * @param templateName 模板名称
+     * @param entries      键值对
+     * @see #updateTemplate(String, String, Object)
+     */
+    public void updateTemplateAll(String templateName, Map<String, Object> entries) {
+        getTemplateDataContext(templateName).putAll(entries);
+    }
+
     // ==================== 查询 ====================
 
     /**
@@ -278,6 +327,28 @@ public class ScoreboardManager {
         return views.size();
     }
 
+    /**
+     * 获取全局数据上下文（可直接操作全局数据，变更会自动传播到所有玩家视图）。
+     *
+     * @return 全局数据上下文
+     */
+    public DataContext getGlobalDataContext() {
+        return engine.getGlobalData();
+    }
+
+    /**
+     * 获取指定模板的全局数据上下文（可直接操作模板级数据，变更会自动传播到使用该模板的所有玩家视图）。
+     * <p>模板全局数据对同模板的所有玩家共享，不同模板之间隔离。
+     * 首次访问时自动创建（parent 为引擎全局数据）。
+     *
+     * @param templateName 模板名称
+     * @return 模板全局数据上下文
+     */
+    public DataContext getTemplateDataContext(String templateName) {
+        return templateGlobals.computeIfAbsent(templateName,
+                k -> HierarchicalDataContext.of(engine.getGlobalData()));
+    }
+
     // ==================== 生命周期 ====================
 
     /**
@@ -287,5 +358,51 @@ public class ScoreboardManager {
      */
     public void onPlayerQuit(Player player) {
         hide(player);
+    }
+
+    /**
+     * 清理视图的数据上下文——如果是 {@link HierarchicalDataContext}，
+     * 移除其对全局数据的监听引用，防止内存泄漏。
+     * <p>HierarchicalDataContext 在构造时向 parent（全局数据）注册了 onChange 监听器，
+     * ScoreboardView.hide() 只移除了自己的监听器，不会移除 parent 上的监听器。
+     * 因此必须在 hide 后调用 {@link HierarchicalDataContext#dispose()} 显式清理。
+     *
+     * @param view 要清理的视图
+     */
+    private void disposeDataContext(ScoreboardView view) {
+        DataContext data = view.getDataContext();
+        if (data instanceof HierarchicalDataContext) {
+            ((HierarchicalDataContext) data).dispose();
+        }
+    }
+
+    // ==================== 日志 ====================
+
+    /**
+     * 安全输出 INFO 日志。
+     * <p>当 Nukkit Server 尚未初始化时（如单元测试环境）静默忽略，避免抛出异常。
+     *
+     * @param message 日志消息
+     */
+    private void logInfo(String message) {
+        try {
+            JFrameLog.info("ScoreboardManager", message);
+        } catch (IllegalStateException ignored) {
+            // Server 尚未初始化（如单元测试环境），静默忽略
+        }
+    }
+
+    /**
+     * 安全输出 WARNING 日志。
+     * <p>当 Nukkit Server 尚未初始化时（如单元测试环境）静默忽略，避免抛出异常。
+     *
+     * @param message 日志消息
+     */
+    private void logWarning(String message) {
+        try {
+            JFrameLog.warning("ScoreboardManager", message);
+        } catch (IllegalStateException ignored) {
+            // Server 尚未初始化（如单元测试环境），静默忽略
+        }
     }
 }

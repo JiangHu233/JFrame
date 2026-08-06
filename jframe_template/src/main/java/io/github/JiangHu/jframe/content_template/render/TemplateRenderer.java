@@ -82,6 +82,8 @@ public class TemplateRenderer {
 
     /**
      * 渲染单个行条目，将结果追加到 lines 列表。
+     * <p>每行渲染后调用 {@link String#strip()} 去除首尾空白（换行/缩进），
+     * 避免多行写法的元素内容前后换行符导致基岩版 sidebar 显示异常。
      * <ul>
      *   <li>{@link StaticLine}：检查 ifCond，为真渲染节点为一行，为假输出 elseText（若配置）</li>
      *   <li>{@link DynamicLine}：遍历 itemsKey 列表，每元素渲染为一行，受 max 限制</li>
@@ -92,12 +94,12 @@ public class TemplateRenderer {
             case StaticLine sl -> {
                 if (sl.ifCond() != null && !sl.ifCond().isBlank()) {
                     if (ctx.evaluateBoolean(sl.ifCond())) {
-                        lines.add(renderNodes(sl.nodes(), ctx));
+                        lines.add(renderNodes(sl.nodes(), ctx).strip());
                     } else if (sl.elseText() != null) {
-                        lines.add(sl.elseText());
+                        lines.add(sl.elseText().strip());
                     }
                 } else {
-                    lines.add(renderNodes(sl.nodes(), ctx));
+                    lines.add(renderNodes(sl.nodes(), ctx).strip());
                 }
             }
             case DynamicLine dl -> {
@@ -108,7 +110,7 @@ public class TemplateRenderer {
                         break;
                     }
                     RenderContext itemCtx = ctx.withLoopVariable(item, count);
-                    lines.add(renderNodes(dl.bodyNodes(), itemCtx));
+                    lines.add(renderNodes(dl.bodyNodes(), itemCtx).strip());
                     count++;
                 }
             }

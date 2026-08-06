@@ -2,6 +2,43 @@
 
 > 面向贡献者和二次开发者的内部实现文档。
 
+## 📑 目录
+
+- [Nukkit 原生 Scoreboard API](#nukkit-原生-scoreboard-api)
+- [目录结构](#目录结构)
+- [类职责矩阵](#类职责矩阵)
+- [核心机制](#核心机制)
+  - [1. 模板编译与缓存](#1-模板编译与缓存)
+  - [2. 响应式更新机制](#2-响应式更新机制)
+  - [3. Nukkit 原生 API 架构](#3-nukkit-原生-api-架构)
+  - [4. 三层数据粒度](#4-三层数据粒度)
+  - [5. 玩家退出清理](#5-玩家退出清理)
+- [Spring 集成](#spring-集成)
+- [模板引擎内部原理](#模板引擎内部原理)
+
+---
+
+## Nukkit 原生 Scoreboard API
+
+> **背景**：早期版本的 Nukkit-MOT scoreboard API 缺少客户端同步逻辑，导致计分板无法显示。
+> 当时本模块通过直接构造网络数据包（`player.dataPacket()`）绕过此问题。
+>
+> **现在**：Nukkit-MOT 已补全原生 Scoreboard API 的客户端同步逻辑，本模块已全面迁移至
+> `cn.nukkit.scoreboard.scoreboard.IScoreboard` 原生 API。
+
+| 对比项 | 旧方案（直接发包） | 新方案（Nukkit 原生 API） |
+|--------|---------------------|---------------------------|
+| 实现方式 | 手动构造 `SetScorePacket` 等数据包 | `IScoreboard` + `FakeScorer` + `addViewer()` |
+| 客户端同步 | 手动 `player.dataPacket()` | ✅ Nukkit 内部自动同步 |
+| 行管理 | 手动维护 `scoreIdCounter` + `scoreIds` | `IScoreboard.addLine()` / `removeLine()` |
+| 重复行去重 | `makeUniqueName()` 追加颜色码后缀 | `makeUniqueName()` 追加颜色码后缀（仍需要） |
+| 依赖 | `cn.nukkit.network.protocol.*` | `cn.nukkit.scoreboard.*` |
+
+> **结论**：迁移到原生 API 后，本模块不再需要手动管理数据包协议细节，
+> 由 Nukkit 框架负责 `SetDisplayObjectivePacket` / `SetScorePacket` 的构造与发送。
+
+---
+
 ## 目录结构
 
 ```
@@ -10,10 +47,11 @@ jframe_scoreboard/
 └── src/main/
     ├── java/io/github/JiangHu/jframe/scoreboard/
     │   ├── ScoreboardAPI.java           ← 用户门面（API 入口）
-    │   ├── ScoreboardManager.java       ← 管理器（模板注册表 + 玩家视图映射）
-    │   ├── ScoreboardView.java          ← 玩家视图（DataContext + Nukkit IScoreboard 绑定）
+    │   ├── ScoreboardManager.java       ← 管理器（模板注册表 + 玩家视图映射 + 模板全局数据）
+    │   ├── ScoreboardView.java          ← 玩家视图（DataContext + Nukkit IScoreboard）
     │   ├── ScoreboardTemplate.java      ← 模板配置（Template + 显示参数）
     │   ├── ScoreboardConstants.java     ← 常量（前缀、默认值、限制）
+    │   ├── ScoreboardPluginScope.java   ← forPlugin 作用域代理
     │   ├── config/
     │   │   └── ScoreboardSpringConfig.java  ← Spring 配置类
     │   └── README.md                    ← 用户文档
@@ -26,8 +64,8 @@ jframe_scoreboard/
 | 类 | 职责 | 依赖 |
 |----|------|------|
 | [`ScoreboardAPI`](ScoreboardAPI.java:64) | 用户入口门面，委托转发给 Manager | `ScoreboardManager`, `TemplateEngine` |
-| [`ScoreboardManager`](ScoreboardManager.java:32) | 模板注册表 + 玩家视图映射 + 生命周期 | `TemplateEngine`, `IScoreboardManager` |
-| [`ScoreboardView`](ScoreboardView.java:50) | 单玩家计分板实例，绑定 DataContext ↔ Nukkit | `ScoreboardTemplate`, `DataContext`, `IScoreboard` |
+| [`ScoreboardManager`](ScoreboardManager.java:32) | 模板注册表 + 玩家视图映射 + 模板全局数据 + 生命周期 | `TemplateEngine` |
+| [`ScoreboardView`](ScoreboardView.java:50) | 单玩家计分板实例，绑定 DataContext ↔ Nukkit IScoreboard | `ScoreboardTemplate`, `DataContext`, `IScoreboard` |
 | [`ScoreboardTemplate`](ScoreboardTemplate.java:40) | 模板配置（Template + DisplaySlot + SortOrder） | `Template` |
 | [`ScoreboardConstants`](ScoreboardConstants.java:14) | 常量集中管理 | — |
 
@@ -44,7 +82,7 @@ ScoreboardAPI（门面）
 
 **为什么分三层？**
 - **API**：对用户隐藏内部细节，提供简洁的方法签名
-- **Manager**：管理共享状态（模板注册表、视图映射），可被多个 API 实例共享
+- **Manager**：管理共享状态（模板注册表、视图映射、模板全局数据），可被多个 API 实例共享
 - **View**：封装单玩家状态，隔离玩家间的数据
 
 ### 2. 响应式更新机制
@@ -63,40 +101,114 @@ DataContext.put("coins", 1000)
     ↓ 触发 changeListener
 ScoreboardView.refresh()
     ↓
-TemplateEngine.render(template, dataContext)
+IncrementalRenderer.renderIncremental(template, dataContext)
     ↓
-RenderResult(title, lines)
+IncrementalRenderResult(title, allLines, changedLineIndices)
     ↓
-IScoreboard.setLines(lines)
-    ↓
-Nukkit 自动发包给客户端
+IScoreboard.addLine() / removeLine()   ← Nukkit 原生 API
+    ↓ Nukkit 内部自动发包
+客户端收到 SetScorePacket → 计分板更新
 
 // hide() 时解绑
 dataContext.removeListener(changeListener);
 ```
 
-### 3. 延迟初始化 IScoreboardManager
+### 3. Nukkit 原生 API 架构
 
-[`ScoreboardManager`](ScoreboardManager.java:32) 使用**双重检查锁定**延迟获取 Nukkit 管理器：
+> **背景**：Nukkit-MOT 的 `IScoreboard` 原生 API 现在已包含完整的客户端同步逻辑。
+> 本模块通过 `IScoreboard` 接口管理计分板，由 Nukkit 内部负责数据包的构造与发送。
 
-```java
-private volatile IScoreboardManager nukkitManager;
+[`ScoreboardView`](ScoreboardView.java:50) 使用以下 Nukkit 原生 API：
 
-private IScoreboardManager getNukkitManager() {
-    if (nukkitManager == null) {
-        synchronized (this) {
-            if (nukkitManager == null) {
-                nukkitManager = Server.getInstance().getScoreboardManager();
-            }
-        }
-    }
-    return nukkitManager;
-}
+| Nukkit API | 作用 | 调用时机 |
+|------------|------|----------|
+| `new Scoreboard(name, displayName, criteria, sortOrder)` | 创建计分板实例 | `show()` 首次显示 |
+| `addViewer(player, displaySlot)` | 将计分板显示给玩家（内部发送 `SetDisplayObjectivePacket` + `SetScorePacket`） | `show()` |
+| `removeViewer(player, displaySlot)` | 从玩家移除计分板（内部发送 `RemoveObjectivePacket`） | `hide()` |
+| `addLine(FakeScorer, score)` | 添加分数行（内部发送 `SetScorePacket`） | `show()` / `refresh()` |
+| `removeLine(IScorer)` | 移除分数行（内部发送 `SetScorePacket REMOVE`） | `refresh()` 行数减少 |
+| `removeAllLine(true)` | 移除所有行并重发 | `refresh()` 全量更新 |
+
+**FakeScorer 管理**：Bedrock 计分板的每一行本质上是一个 "fake player entry"。
+[`ScoreboardView`](ScoreboardView.java:50) 内部维护 `List<FakeScorer> scorers`，
+在行数变化时同步增删。
+
+**重复行合并问题**：Bedrock 计分板客户端用 **FakeScorer 的 fakeName** 进行去重。
+如果两行的 fakeName 完全相同（如多个空行、重复的分隔符），客户端会认为是同一个 "玩家"
+而**合并成一行**，导致计分板内容显示不全。
+
+[`ScoreboardView.makeUniqueName()`](ScoreboardView.java:50) 通过给每行追加**唯一的
+不可见颜色代码后缀**（`§0`~`§f`，共 16 个）来解决这个问题：
+
+```
+行 0: "§e金币: 100" → fakeName = "§e金币: 100§0"
+行 1: ""            → fakeName = "§1"            （空行也能正常显示）
+行 2: "§e金币: 100" → fakeName = "§e金币: 100§2"  （与行 0 不再合并）
 ```
 
-**原因**：Spring 容器在 `onEnable` 阶段初始化 Bean，此时 `Server.getInstance()` 可能尚未就绪。延迟到首次 `show()` 调用时获取，确保 Server 已完全启动。
+颜色代码追加在文本末尾且后面无可见字符，玩家不可见，不影响显示效果。
+`show()` / `applyFullUpdate()` / `applyPerLineUpdate()` 内部自动调用此方法。
 
-### 4. 玩家退出清理
+### 4. 三层数据粒度
+
+本模块支持三层数据粒度，通过 [`HierarchicalDataContext`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/HierarchicalDataContext.java) 多级父链实现：
+
+```
+引擎全局（Engine Global）
+    ↑ parent
+模板全局（Template Global）
+    ↑ parent
+玩家本地（Player Local）
+```
+
+#### 父链构建
+
+[`ScoreboardManager.show()`](ScoreboardManager.java) 内部为每个玩家构建三层父链：
+
+```java
+// 第一层：引擎全局（TemplateEngine 持有）
+DataContext engineGlobal = engine.getGlobalData();
+
+// 第二层：模板全局（ScoreboardManager 持有，按模板名缓存）
+DataContext templateGlobal = getTemplateDataContext(templateName);
+// → HierarchicalDataContext.of(engineGlobal)
+
+// 第三层：玩家本地（每玩家独立）
+HierarchicalDataContext playerData = HierarchicalDataContext.of(templateGlobal);
+```
+
+#### 读取优先级
+
+`HierarchicalDataContext.asMap()` 先合并 parent（模板全局 → 引擎全局），再覆盖 local（玩家本地）：
+
+```
+玩家本地 > 模板全局 > 引擎全局
+```
+
+#### 写入隔离
+
+每层 `put()` 只写入自己的存储，不影响父层：
+
+```java
+playerData.put("coins", 1000);     // 只写入玩家本地
+templateGlobal.put("score", 500);  // 只写入模板全局
+engineGlobal.put("online", 42);    // 只写入引擎全局
+```
+
+#### 变更传播
+
+- **父层变更 → 向下传播**：`HierarchicalDataContext.onChange()` 同时注册到本地和 parent，
+  parent 变化时通过 `onParentChange` 回调通知子层
+- **本地变更 → 不向上传播**：子层 `put()` 不会触发 parent 的 `onChange`
+
+#### 资源释放
+
+- **玩家退出**：`onPlayerQuit()` 调用 `view.hide()` → `dataContext.dispose()`，
+  自动移除玩家本地对模板全局的监听器引用
+- **模板注销**：`removeTemplate()` 调用 `templateGlobals.remove(name).dispose()`，
+  自动移除模板全局对引擎全局的监听器引用
+
+### 5. 玩家退出清理
 
 [`ScoreboardManager.onPlayerQuit()`](ScoreboardManager.java:288) 执行完整的资源释放：
 
@@ -104,11 +216,11 @@ private IScoreboardManager getNukkitManager() {
 onPlayerQuit(player)
     ↓
 hide(player)
-    ├→ view.hide(player)
-    │    ├→ dataContext.removeListener(changeListener)  ← 移除监听器
-    │    ├→ nukkitScoreboard.removeViewer(player)        ← 移除 viewer
-    │    └→ manager.removeScoreboard(nukkitScoreboard)   ← 注销计分板
-    └→ views.remove(uuid)                                 ← 移除映射
+    ├→ view.hide()
+    │    ├→ dataContext.removeListener(changeListener)   ← 移除监听器
+    │    ├→ dataContext.dispose()                         ← 释放 HierarchicalDataContext
+    │    └→ nukkitScoreboard.removeViewer(player, slot)  ← Nukkit 原生移除
+    └→ views.remove(uuid)                                  ← 移除映射
 ```
 
 > **重要**：必须在 `PlayerQuitEvent` 中调用 `scoreboard.onPlayerQuit(player)`，否则会内存泄漏。
@@ -311,7 +423,9 @@ scoreboard.getDataContext(player).onChange(change -> {
 | Nukkit 类 | 包路径 | 用途 |
 |-----------|--------|------|
 | `Scoreboard` | `cn.nukkit.scoreboard.scoreboard` | 计分板实例（实现 `IScoreboard`） |
-| `IScoreboardManager` | `cn.nukkit.scoreboard.manager` | 管理器（注册/注销计分板） |
+| `IScoreboard` | `cn.nukkit.scoreboard.scoreboard` | 计分板接口 |
+| `FakeScorer` | `cn.nukkit.scoreboard.scorer` | 假玩家计分者（用于自定义文本行） |
+| `IScorer` | `cn.nukkit.scoreboard.scorer` | 计分者接口 |
 | `DisplaySlot` | `cn.nukkit.network.protocol.types` | 显示槽位枚举 |
 | `SortOrder` | `cn.nukkit.network.protocol.types` | 排序方式枚举 |
 
@@ -320,16 +434,22 @@ scoreboard.getDataContext(player).onChange(change -> {
 ```java
 // 创建
 nukkitScoreboard = new Scoreboard(objectiveName, displayName, criteriaName, sortOrder);
-manager.addScoreboard(nukkitScoreboard);
-nukkitScoreboard.setLines(lines);
-nukkitScoreboard.addViewer(player, displaySlot);
+List<FakeScorer> scorers = addAllLines(lines);  // 内部调用 makeUniqueName
+nukkitScoreboard.addViewer(player, displaySlot);  // Nukkit 自动发送 SetDisplayObjectivePacket + SetScorePacket
 
-// 更新
-nukkitScoreboard.setLines(newLines);
+// 更新（全量）
+nukkitScoreboard.removeAllLine(true);
+scorers = addAllLines(newLines);
+
+// 更新（增量，仅变化的行）
+nukkitScoreboard.removeLine(scorers.get(idx));
+FakeScorer newScorer = new FakeScorer(makeUniqueName(newText, idx));
+nukkitScoreboard.addLine(newScorer, score);
+scorers.set(idx, newScorer);
 
 // 销毁
-nukkitScoreboard.removeViewer(player, displaySlot);
-manager.removeScoreboard(nukkitScoreboard);
+nukkitScoreboard.removeViewer(player, displaySlot);  // Nukkit 自动发送 RemoveObjectivePacket
 ```
 
-> **注意**：`Scoreboard` 的 `displayName` 在构造时设置，`refresh()` 目前只更新 `lines`。如需动态标题，需扩展 Nukkit API 调用。
+> **注意**：`Scoreboard` 的 `displayName` 在构造时设置，`refresh()` 目前只更新 `lines`。
+> 如需动态标题，需扩展 Nukkit API 调用。

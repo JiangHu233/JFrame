@@ -1,7 +1,6 @@
 package io.github.JiangHu.jframe.scoreboard;
 
 import io.github.JiangHu.jframe.content_template.Template;
-import io.github.JiangHu.jframe.content_template.loader.ClasspathTemplateLoader;
 
 /**
  * 记分板插件作用域 — 绑定了指定插件 ClassLoader 的模板加载代理。
@@ -69,17 +68,15 @@ public class ScoreboardPluginScope {
      * @throws RuntimeException 模板加载或编译失败时抛出
      */
     public ScoreboardTemplate loadTemplate(String name) {
-        ClasspathTemplateLoader loader = new ClasspathTemplateLoader(prefix, ".xml", classLoader);
-        try {
-            String source = loader.load(name);
-            Template template = api.getEngine().compile(source);
-            ScoreboardTemplate sbTemplate = ScoreboardTemplate.of(name, template);
-            api.getManager().loadTemplate(sbTemplate);
-            return sbTemplate;
-        } catch (RuntimeException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new RuntimeException("从插件类路径加载模板失败: " + prefix + name + ".xml", e);
-        }
+        // 委托：加载+编译交给 TemplateEngine 的 TemplatePluginScope（复用缓存、prefix/suffix 逻辑）
+        // 不再自己 new ClasspathTemplateLoader，消除与 template 模块的重复加载逻辑
+        Template template = api.getEngine()
+                .forPlugin(classLoader)
+                .withPrefix(prefix)
+                .getTemplate(name);
+        // 独有：只负责计分板专属包装 + 注册
+        ScoreboardTemplate sbTemplate = ScoreboardTemplate.of(name, template);
+        api.getManager().loadTemplate(sbTemplate);
+        return sbTemplate;
     }
 }

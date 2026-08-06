@@ -5,6 +5,7 @@ import io.github.JiangHu.jframe.content_template.loader.CompositeTemplateLoader;
 import io.github.JiangHu.jframe.content_template.loader.TemplateLoader;
 import io.github.JiangHu.jframe.content_template.parser.TemplateParser;
 import io.github.JiangHu.jframe.content_template.render.TemplateRenderer;
+import io.github.JiangHu.jframe.core.JFrameLog;
 import io.github.JiangHu.jframe.core.classloader.PluginClassLoaderFactory;
 import io.github.JiangHu.jframe.core.data.reactive.DataContext;
 import io.github.JiangHu.jframe.core.module.ForPlugin;
@@ -62,6 +63,27 @@ public class TemplateEngine implements ForPlugin<TemplatePluginScope> {
     /** 按源码哈希缓存：SHA-256 → 编译后的 Template */
     private final ConcurrentHashMap<String, Template> sourceCache = new ConcurrentHashMap<>();
 
+    /**
+     * 全局数据上下文——所有玩家共享的数据（如服务器名称、在线人数）。
+     * <p>配合 {@link HierarchicalDataContext} 使用：玩家 context 以此为 parent，
+     * 渲染时自动合并全局 + 玩家数据（玩家同名 key 优先）。
+     *
+     * @see HierarchicalDataContext
+     */
+    private final DataContext globalData = DataContext.of();
+
+    /**
+     * 模板级全局数据上下文映射——按模板名称隔离的共享数据（第二层）。
+     * <p>每个模板名对应一个 {@link HierarchicalDataContext}，parent 为 {@link #globalData}（第一层）。
+     * 同一模板的所有玩家共享此数据（如公会战分数、副本进度、队伍信息）。
+     * <p>下游模块（scoreboard、inventory、bossbar 等）通过 {@link #getTemplateData} 获取，
+     * 再以返回值为 parent 创建玩家级 {@link HierarchicalDataContext}（第三层），形成完整三层链。
+     *
+     * @see #getTemplateData(String)
+     * @see HierarchicalDataContext
+     */
+    private final ConcurrentHashMap<String, HierarchicalDataContext> templateGlobals = new ConcurrentHashMap<>();
+
     /** 无参构造：使用默认 Parser 和 Renderer */
     public TemplateEngine() {
         this.parser = new TemplateParser();
@@ -76,6 +98,127 @@ public class TemplateEngine implements ForPlugin<TemplatePluginScope> {
      */
     public void registerLoader(TemplateLoader loader) {
         loaderChain.addLoader(loader);
+    }
+
+    // ==================== 全局数据 API ====================
+
+    /**
+     * 获取全局数据上下文（所有玩家共享）。
+     * <p>返回的 DataContext 可直接操作（put / putAll / onChange），
+     * 修改会自动传播到所有以它为 parent 的 {@link HierarchicalDataContext}。
+     *
+     * @return 全局 DataContext
+     * @see HierarchicalDataContext
+     */
+    public DataContext getGlobalData() {
+        return globalData;
+    }
+
+    /**
+     * 写入单个全局数据（所有玩家共享），触发变更通知。
+     * <p>等价于 {@code getGlobalData().put(key, value)}。
+     *
+     * @param key   键名
+     * @param value 值
+     * @return this（链式调用）
+     */
+    public TemplateEngine setGlobal(String key, Object value) {
+        globalData.put(key, value);
+        return this;
+    }
+
+    /**
+     * 批量写入全局数据（只触发一次变更通知）。
+     * <p>等价于 {@code getGlobalData().putAll(data)}。
+     *
+     * @param data 键值对集合
+     * @return this（链式调用）
+     */
+    public TemplateEngine setGlobalAll(java.util.Map<String, Object> data) {
+        if (data != null && !data.isEmpty()) {
+            globalData.putAll(data);
+        }
+        return this;
+    }
+
+    // ==================== 模板全局数据 API（第二层） ====================
+
+    /**
+     * 获取指定模板的全局数据上下文（同一模板的所有玩家共享）。
+     * <p>首次调用时自动创建 {@link HierarchicalDataContext}，parent 为 {@link #globalData}（引擎全局）。
+     * 后续对同一模板名的调用返回同一实例（缓存）。
+     *
+     * <p><b>三层数据粒度</b>：
+     * <pre>{@code
+     * 引擎全局（getGlobalData）        ← 所有模板、所有玩家共享
+     *     ↑ parent
+     * 模板全局（getTemplateData(name）  ← 同一模板的所有玩家共享
+     *     ↑ parent
+     * 玩家本地（下游模块创建）          ← 仅该玩家可见
+     * }</pre>
+     *
+     * <p>下游模块使用示例：
+     * <pre>{@code
+     * DataContext templateGlobal = engine.getTemplateData("main");
+     * HierarchicalDataContext playerData = HierarchicalDataContext.of(templateGlobal);
+     * playerData.put("coins", 1000);  // 玩家本地数据
+     * }</pre>
+     *
+     * @param templateName 模板名称
+     * @return 模板级全局数据上下文（parent 为引擎全局）
+     * @see HierarchicalDataContext
+     */
+    public DataContext getTemplateData(String templateName) {
+        return templateGlobals.computeIfAbsent(templateName,
+                k -> HierarchicalDataContext.of(globalData));
+    }
+
+    /**
+     * 写入单个模板全局数据（同一模板的所有玩家共享），触发变更通知。
+     * <p>等价于 {@code getTemplateData(templateName).put(key, value)}。
+     *
+     * @param templateName 模板名称
+     * @param key          键名
+     * @param value        值
+     * @return this（链式调用）
+     */
+    public TemplateEngine setTemplateData(String templateName, String key, Object value) {
+        getTemplateData(templateName).put(key, value);
+        return this;
+    }
+
+    /**
+     * 批量写入模板全局数据（只触发一次变更通知）。
+     * <p>等价于 {@code getTemplateData(templateName).putAll(data)}。
+     *
+     * @param templateName 模板名称
+     * @param data         键值对集合
+     * @return this（链式调用）
+     */
+    public TemplateEngine setTemplateDataAll(String templateName, java.util.Map<String, Object> data) {
+        if (data != null && !data.isEmpty()) {
+            getTemplateData(templateName).putAll(data);
+        }
+        return this;
+    }
+
+    /**
+     * 移除并释放指定模板的全局数据上下文。
+     * <p>调用 {@link HierarchicalDataContext#dispose()} 断开与引擎全局的监听器引用，
+     * 然后从内部映射中移除，避免内存泄漏。
+     *
+     * <p><b>使用场景</b>：模板注销（{@code removeTemplate}）时调用，
+     * 确保不再有玩家使用该模板时释放资源。
+     *
+     * @param templateName 模板名称
+     * @return 被移除的数据上下文（可能为 null，如果之前未创建过）
+     */
+    public DataContext removeTemplateData(String templateName) {
+        HierarchicalDataContext removed = templateGlobals.remove(templateName);
+        if (removed != null) {
+            removed.dispose();
+        }
+        return removed;
     }
 
     // ==================== 编译 API ====================
@@ -129,6 +272,7 @@ public class TemplateEngine implements ForPlugin<TemplatePluginScope> {
             Template template = parser.parseXml(source);
             nameCache.put(name, template);
             nameLastModified.put(name, currentModified);
+            logInfo("模板加载成功: " + name);
             return template;
         } catch (TemplateNotFoundException e) {
             throw e;
@@ -200,6 +344,20 @@ public class TemplateEngine implements ForPlugin<TemplatePluginScope> {
 
     // ==================== 内部工具 ====================
 
+    /**
+     * 安全输出 INFO 日志。
+     * <p>当 Nukkit Server 尚未初始化时（如单元测试环境）静默忽略，避免抛出异常。
+     *
+     * @param message 日志消息
+     */
+    private void logInfo(String message) {
+        try {
+            JFrameLog.info("TemplateEngine", message);
+        } catch (IllegalStateException ignored) {
+            // Server 尚未初始化（如单元测试环境），静默忽略
+        }
+    }
+
     /** 计算源码的 SHA-256 哈希作为缓存 key */
     private String hashKey(String source) {
         try {
@@ -241,5 +399,18 @@ public class TemplateEngine implements ForPlugin<TemplatePluginScope> {
     @Override
     public TemplatePluginScope forPlugin(String pluginName) {
         return new TemplatePluginScope(this, PluginClassLoaderFactory.getClassLoader(pluginName));
+    }
+
+    /**
+     * 直接按 ClassLoader 绑定，返回一个绑定了该类加载器的模板加载作用域。
+     * <p>适用于下游模块（如 scoreboard）已持有 ClassLoader 的场景，避免重复通过
+     * 插件名/插件实例间接获取。本方法是 {@link ForPlugin} 契约之外的扩展入口，
+     * 供跨模块委托加载时使用。
+     *
+     * @param classLoader 类加载器（通常为目标插件的 PluginClassLoader）
+     * @return 绑定了该类加载器的模板加载作用域
+     */
+    public TemplatePluginScope forPlugin(ClassLoader classLoader) {
+        return new TemplatePluginScope(this, classLoader);
     }
 }

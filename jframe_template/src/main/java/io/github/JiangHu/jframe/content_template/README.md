@@ -43,7 +43,8 @@
 
 ```
 content_template/
-├── TemplateEngine.java          # 门面：编译 + 加载 + 渲染 + 缓存
+├── TemplateEngine.java          # 门面：编译 + 加载 + 渲染 + 缓存 + 全局数据
+├── HierarchicalDataContext.java # 分层数据上下文（全局 + 玩家数据合并）
 ├── Template.java                # 编译后的模板（不可变 AST）
 ├── TemplateConstants.java       # 保留字常量（标签名/属性名/定界符）
 ├── RenderResult.java            # 全量渲染结果（title + lines）
@@ -240,7 +241,62 @@ String text = engine.renderText(template, data);   // "欢迎 Steve 来到 生�
 | [`registerLoader(loader)`](TemplateEngine.java:74) | 注册模板加载器 |
 | [`clearCache()`](TemplateEngine.java:186) | 清除所有缓存 |
 | [`invalidate(name)`](TemplateEngine.java:193) | 清除指定名称的缓存 |
+| [`getGlobalData()`](TemplateEngine.java:201) | 获取全局数据上下文（所有玩家共享） |
+| [`setGlobal(key, value)`](TemplateEngine.java:209) | 写入全局数据（返回 this，支持链式） |
+| [`setGlobalAll(map)`](TemplateEngine.java:218) | 批量写入全局数据 |
 | `forPlugin(Plugin)` / `forPlugin(String)` | 返回 [`TemplatePluginScope`](TemplatePluginScope.java)，绑定指定插件的 ClassLoader |
+
+### 4.5 全局数据 + 玩家数据分层合并
+
+实际场景中，有些数据是**所有玩家共享**的（如服务器名称、在线人数、全局公告），有些是**每个玩家独有**的（如金币、等级、VIP 状态）。
+
+[`TemplateEngine`](TemplateEngine.java) 内置一个**全局数据上下文** [`globalData`](TemplateEngine.java:201)，配合 [`HierarchicalDataContext`](HierarchicalDataContext.java) 实现「全局 + 玩家」自动合并：
+
+```java
+TemplateEngine engine = new TemplateEngine();
+
+// 写入全局数据（所有玩家共享）
+engine.setGlobal("serverName", "我的服务器");
+engine.setGlobal("online", 42);
+engine.setGlobalAll(Map.of(
+    "maxPlayers", 100,
+    "motd", "欢迎来到生存服"
+));
+
+// 为每个玩家创建分层数据上下文
+DataContext global = engine.getGlobalData();
+HierarchicalDataContext playerData = HierarchicalDataContext.of(global);
+
+// 玩家私有数据
+playerData.put("coins", 1000);
+playerData.put("level", 30);
+
+// 渲染时自动合并：global + player（player 同名 key 优先）
+RenderResult result = engine.render("main", playerData);
+// 模板中 {{serverName}} → 全局值，{{coins}} → 玩家值
+```
+
+#### 合并规则
+
+| 操作 | 行为 |
+|------|------|
+| **读取** `get(key)` | 先查玩家数据，未命中则查全局数据 |
+| **写入** `put(key, val)` | 只写入玩家数据，**不污染全局** |
+| **快照** `asMap()` / `snapshot()` | 返回全局 + 玩家的合并视图（玩家覆盖同名全局 key） |
+| **变更通知** `onChange()` | 玩家数据变更 **和** 全局数据变更都会触发监听器 |
+
+#### [`HierarchicalDataContext`](HierarchicalDataContext.java) API
+
+| 方法 | 说明 |
+|------|------|
+| `of(parent)` | 创建分层上下文，`parent` 为全局 [`DataContext`](../../../../../../../../core/data/reactive/DataContext.java)（可为 null） |
+| `get(key)` | 先查本地，未命中查 parent |
+| `asMap()` | 合并 parent + 本地（本地覆盖同名 key） |
+| `snapshot()` | 合并后返回不可变快照 |
+| `onChange(listener)` | 本地变更 + parent 变更都触发 |
+| `dispose()` | 清理 parent 监听器引用，**玩家退出时必须调用** |
+
+> **内存管理**：[`HierarchicalDataContext`](HierarchicalDataContext.java) 在构造时向 parent 注册了变更监听器。玩家退出时必须调用 [`dispose()`](HierarchicalDataContext.java:142) 移除该引用，否则会导致内存泄漏。计分板模块（[`ScoreboardManager`](../../jframe_scoreboard_depend_template/src/main/java/io/github/JiangHu/jframe/scoreboard/ScoreboardManager.java)）已在 `hide()` 时自动调用。
 
 ---
 

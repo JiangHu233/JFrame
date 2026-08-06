@@ -30,8 +30,8 @@ import java.util.function.Predicate;
  *   <li><b>模板管理</b>：{@link #loadTemplate} 注册模板（支持 XML 源码或预编译 Template）</li>
  *   <li><b>显示控制</b>：{@link #show}（指定玩家）/ {@link #showIf}（条件筛选）/ {@link #showAll}（全体）</li>
  *   <li><b>隐藏控制</b>：{@link #hide} / {@link #hideAll}</li>
- *   <li><b>数据更新</b>：{@link #update}（单玩家）/ {@link #updateAll}（全体同 key）—— 自动触发重新渲染</li>
- *   <li><b>数据访问</b>：{@link #getDataContext} 获取玩家专属数据上下文</li>
+ *   <li><b>数据更新</b>：{@link #update}（单玩家）/ {@link #updateAll}（全体同 key）/ {@link #updateGlobal}（全局共享）—— 自动触发重新渲染</li>
+ *   <li><b>数据访问</b>：{@link #getDataContext} 获取玩家专属数据上下文 / {@link #getGlobalDataContext} 获取全局数据上下文</li>
  * </ul>
  *
  * <h3>使用示例</h3>
@@ -59,6 +59,9 @@ import java.util.function.Predicate;
  *
  * // 6. 隐藏
  * scoreboard.hide(player);
+ *
+ * // 7. 更新全局数据（所有玩家共享，如在线人数）
+ * scoreboard.updateGlobal("online", Server.getInstance().getOnlinePlayers().size());
  * }</pre>
  *
  * @see ScoreboardManager
@@ -261,6 +264,53 @@ public class ScoreboardAPI implements ForPlugin<ScoreboardPluginScope> {
         manager.updateAll(entries);
     }
 
+    /**
+     * 更新全局数据——所有正在显示计分板的玩家都会自动收到变更并增量刷新。
+     * <p>全局数据对所有玩家共享，适合存放服务器名称、在线人数、当前时间等公共信息。
+     * <p>当玩家数据与全局数据存在同名 key 时，<b>玩家数据优先</b>（覆盖全局值）。
+     *
+     * @param key   全局数据键名
+     * @param value 数据值
+     */
+    public void updateGlobal(String key, Object value) {
+        manager.updateGlobal(key, value);
+    }
+
+    /**
+     * 批量更新全局数据——所有正在显示计分板的玩家都会自动收到变更并增量刷新。
+     *
+     * @param entries 键值对
+     * @see #updateGlobal(String, Object)
+     */
+    public void updateGlobalAll(Map<String, Object> entries) {
+        manager.updateGlobalAll(entries);
+    }
+
+    /**
+     * 更新模板全局数据——所有正在使用该模板的玩家都会自动收到变更并增量刷新。
+     * <p>模板全局数据对同模板的所有玩家共享，不同模板之间隔离。
+     * 适合存放该模板特有的公共信息（如游戏模式、队伍名称等）。
+     * <p>读取优先级：玩家 > 模板 > 引擎。同名 key 玩家覆盖模板，模板覆盖引擎全局。
+     *
+     * @param templateName 模板名称
+     * @param key          数据键名
+     * @param value        数据值
+     */
+    public void updateTemplate(String templateName, String key, Object value) {
+        manager.updateTemplate(templateName, key, value);
+    }
+
+    /**
+     * 批量更新模板全局数据——所有正在使用该模板的玩家都会自动收到变更并增量刷新。
+     *
+     * @param templateName 模板名称
+     * @param entries      键值对
+     * @see #updateTemplate(String, String, Object)
+     */
+    public void updateTemplateAll(String templateName, Map<String, Object> entries) {
+        manager.updateTemplateAll(templateName, entries);
+    }
+
     // ==================== 数据访问 ====================
 
     /**
@@ -271,6 +321,28 @@ public class ScoreboardAPI implements ForPlugin<ScoreboardPluginScope> {
      */
     public DataContext getDataContext(Player player) {
         return manager.getDataContext(player);
+    }
+
+    /**
+     * 获取全局数据上下文（可直接操作全局数据，变更会自动传播到所有玩家视图）。
+     * <p>全局数据对所有玩家共享，适合存放服务器名称、在线人数、当前时间等公共信息。
+     *
+     * @return 全局数据上下文
+     */
+    public DataContext getGlobalDataContext() {
+        return manager.getGlobalDataContext();
+    }
+
+    /**
+     * 获取指定模板的全局数据上下文（可直接操作模板级数据，变更会自动传播到使用该模板的所有玩家视图）。
+     * <p>模板全局数据对同模板的所有玩家共享，不同模板之间隔离。
+     * 首次访问时自动创建（parent 为引擎全局数据）。
+     *
+     * @param templateName 模板名称
+     * @return 模板全局数据上下文
+     */
+    public DataContext getTemplateDataContext(String templateName) {
+        return manager.getTemplateDataContext(templateName);
     }
 
     /**
@@ -335,8 +407,8 @@ public class ScoreboardAPI implements ForPlugin<ScoreboardPluginScope> {
 
     /**
      * 静态工厂——创建 ScoreboardAPI。
-     * <p>IScoreboardManager 由 {@link ScoreboardManager} 在首次 {@code show} 时延迟获取，
-     * 避免容器初始化阶段 Server 尚未就绪的问题。
+     * <p>计分板使用 Nukkit 原生 {@code IScoreboard} API 显示给客户端，
+     * 由 Nukkit-MOT 内部处理客户端同步，无需延迟初始化。
      *
      * @param engine 模板引擎
      * @return ScoreboardAPI 实例

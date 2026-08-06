@@ -2,6 +2,47 @@
 
 > 像前端开发一样写计分板——定义模板，改数据，自动刷新。
 
+## 📑 目录
+
+- [为什么用 Nukkit 原生 Scoreboard API](#为什么用-nukkit-原生-scoreboard-api)
+- [核心特性](#核心特性)
+- [架构](#架构)
+- [快速开始](#快速开始)
+  - [1. 获取 API](#1-获取-api)
+  - [2. 定义模板](#2-定义模板)
+  - [3. 显示 & 更新](#3-显示--更新)
+- [模板语法](#模板语法)
+- [API 参考](#api-参考)
+- [三层数据粒度](#三层数据粒度)
+- [跨插件加载模板](#跨插件加载模板)
+- [完整示例](#完整示例)
+- [最佳实践](#最佳实践)
+- [依赖模块](#依赖模块)
+
+---
+
+## 为什么用 Nukkit 原生 Scoreboard API
+
+> **背景**：早期版本的 Nukkit-MOT scoreboard API 缺少客户端同步逻辑，导致计分板无法显示。
+> 当时本模块通过直接构造网络数据包（`player.dataPacket()`）绕过此问题。
+>
+> **现在**：Nukkit-MOT 已补全原生 Scoreboard API 的客户端同步逻辑，本模块已全面迁移至
+> [`cn.nukkit.scoreboard.scoreboard.IScoreboard`](../../jframe_core/src/main/java/io/github/JiangHu/jframe/core/README.md)
+> 原生 API，由 Nukkit 内部负责数据包的构造与发送。
+
+| 对比项 | 旧方案（直接发包） | 新方案（Nukkit 原生 API） |
+|--------|---------------------|---------------------------|
+| 实现方式 | 手动构造 `SetScorePacket` 等数据包 | `IScoreboard` + `FakeScorer` + `addViewer()` |
+| 客户端同步 | 手动 `player.dataPacket()` | ✅ Nukkit 内部自动同步 |
+| 行管理 | 手动维护 `scoreIdCounter` + `scoreIds` | `IScoreboard.addLine()` / `removeLine()` |
+| 重复行去重 | `makeUniqueName()` 追加颜色码后缀 | `makeUniqueName()` 追加颜色码后缀（仍需要） |
+| 依赖 | `cn.nukkit.network.protocol.*` | `cn.nukkit.scoreboard.*` |
+
+> **结论**：迁移到原生 API 后，本模块不再需要手动管理数据包协议细节，
+> 由 Nukkit 框架负责 `SetDisplayObjectivePacket` / `SetScorePacket` 的构造与发送。
+
+---
+
 ## 核心特性
 
 | 特性 | 说明 |
@@ -10,7 +51,8 @@
 | **响应式更新** | 数据变化自动触发重新渲染，无需手动刷新 |
 | **SpEL 表达式** | `{{ }}` 插值 + `<if>` 条件 + `<each>` 循环，SpEL 语法全覆盖 |
 | **三种发送模式** | 指定玩家 / 条件筛选 / 全体广播 |
-| **玩家隔离** | 每个玩家拥有独立的 `DataContext`，互不干扰 |
+| **三层数据粒度** | 引擎全局 / 模板全局 / 玩家本地，像前端状态管理一样分层管理数据 |
+| **增量渲染** | 基于依赖图只重新渲染受影响的行，而非全量重建 |
 | **Spring 集成** | 一行 `@Autowired ScoreboardAPI` 即可使用 |
 
 ## 架构
@@ -25,8 +67,9 @@
 ┌──────────────────────▼──────────────────────────────┐
 │                  ScoreboardManager                   │  ← 管理器
 │         模板注册表 + 玩家视图映射                       │
-│    templates: Map<String, ScoreboardTemplate>        │
-│    views:     Map<UUID,    ScoreboardView>           │
+│    templates:      Map<String, ScoreboardTemplate>   │
+│    templateGlobals: Map<String, HierarchicalDataContext> │
+│    views:          Map<UUID,    ScoreboardView>      │
 └──────┬───────────────────────────────┬───────────────┘
        │                               │
        ▼                               ▼
@@ -35,7 +78,7 @@
 │ Template     │              │                        │
 │              │              │  DataContext (响应式)   │
 │ • name       │◄─────────────│  TemplateEngine        │
-│ • template   │              │  IScoreboard (Nukkit)  │
+│ • template   │              │  IScoreboard (原生API) │
 │ • displaySlot│              │                        │
 │ • sortOrder  │              │  onChange → refresh()  │
 └──────────────┘              └────────────────────────┘
@@ -50,10 +93,14 @@ TemplateEngine.render(template, data)
     ↓ SpEL 求值
 RenderResult(title, lines)
     ↓
-IScoreboard.setLines(lines)
-    ↓
+IScoreboard.addLine() / removeLine()   ← Nukkit 原生 API
+    ↓ Nukkit 内部自动发包
 玩家看到更新后的计分板
 ```
+
+> **原生 API**：计分板通过 Nukkit 的 `IScoreboard` 接口管理，
+> `addViewer()` / `removeViewer()` / `addLine()` / `removeLine()` 等方法
+> 内部自动构造并发送 `SetDisplayObjectivePacket` / `SetScorePacket` 给客户端。
 
 ## 快速开始
 
@@ -185,6 +232,8 @@ scoreboard.hide(player);
 
 ### [`ScoreboardAPI`](ScoreboardAPI.java:64) — 用户入口
 
+#### 模板管理
+
 | 方法 | 说明 |
 |------|------|
 | `loadTemplate(name, xmlSource)` | 从 XML 源码编译并注册模板 |
@@ -192,18 +241,49 @@ scoreboard.hide(player);
 | `loadTemplate(name, plugin)` | 从指定插件 jar 加载模板（默认前缀 `templates/`） |
 | `loadTemplate(name, plugin, prefix)` | 从指定插件 jar 的 `prefix` 目录加载模板 |
 | `forPlugin(Plugin)` / `forPlugin(String)` | 返回 [`ScoreboardPluginScope`](ScoreboardPluginScope.java)，绑定指定插件的 ClassLoader |
+
+#### 显示 / 隐藏
+
+| 方法 | 说明 |
+|------|------|
 | `show(player, templateName)` | 给指定玩家显示计分板 |
 | `showIf(predicate, templateName)` | 给满足条件的玩家显示，返回成功数量 |
 | `showAll(templateName)` | 给所有在线玩家显示，返回成功数量 |
 | `hide(player)` | 隐藏指定玩家的计分板 |
 | `hideAll()` | 隐藏所有玩家的计分板 |
+| `onPlayerQuit(player)` | 玩家退出时清理（应在事件中调用） |
+
+#### 玩家数据（第三层：玩家本地）
+
+| 方法 | 说明 |
+|------|------|
 | `update(player, key, value)` | 更新单玩家数据（自动刷新） |
 | `update(player, Map)` | 批量更新单玩家数据（一次刷新） |
 | `updateAll(key, value)` | 更新所有玩家的同一数据项 |
 | `updateAll(Map)` | 批量更新所有玩家的同一批数据 |
 | `getDataContext(player)` | 获取玩家数据上下文（可直接操作） |
+
+#### 模板数据（第二层：模板全局）
+
+| 方法 | 说明 |
+|------|------|
+| `updateTemplate(templateName, key, value)` | 更新模板级共享数据（同模板所有玩家可见） |
+| `updateTemplateAll(templateName, Map)` | 批量更新模板级共享数据 |
+| `getTemplateDataContext(templateName)` | 获取模板数据上下文（可直接操作） |
+
+#### 引擎数据（第一层：引擎全局）
+
+| 方法 | 说明 |
+|------|------|
+| `updateGlobal(key, value)` | 更新全局数据（所有玩家共享，自动刷新所有在线玩家） |
+| `updateGlobalAll(Map)` | 批量更新全局数据 |
+| `getGlobalDataContext()` | 获取全局数据上下文（可直接操作） |
+
+#### 其他
+
+| 方法 | 说明 |
+|------|------|
 | `getView(player)` | 获取玩家计分板视图 |
-| `onPlayerQuit(player)` | 玩家退出时清理（应在事件中调用） |
 
 ### [`ScoreboardTemplate`](ScoreboardTemplate.java:40) — 模板配置
 
@@ -230,6 +310,91 @@ data.put("player.name", "Steve");         // 嵌套路径（自动创建 Map）
 data.get("coins");                        // 读取
 data.onChange(change -> { ... });         // 注册监听器
 ```
+
+## 三层数据粒度
+
+本模块支持**三层数据粒度**，类似前端框架的状态管理分层：
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  第一层：引擎全局（Engine Global）                          │
+│  所有模板、所有玩家共享                                      │
+│  例：服务器名、在线人数、全局公告                             │
+│  API: updateGlobal() / getGlobalDataContext()             │
+├──────────────────────────────────────────────────────────┤
+│  第二层：模板全局（Template Global）                        │
+│  同一模板的所有玩家共享                                      │
+│  例：公会战分数、副本进度、队伍信息                          │
+│  API: updateTemplate() / getTemplateDataContext()         │
+├──────────────────────────────────────────────────────────┤
+│  第三层：玩家本地（Player Local）                           │
+│  仅该玩家可见                                              │
+│  例：玩家名称、金币、等级                                    │
+│  API: update() / getDataContext()                         │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 读取优先级
+
+**玩家本地 > 模板全局 > 引擎全局**
+
+同名 key 时，层级越低（越靠近玩家）优先级越高。
+
+### 写入隔离
+
+每层 `put()` 只写入自己的存储，**不影响父层**。
+
+```java
+// 引擎全局写入
+scoreboard.updateGlobal("serverName", "我的服务器");
+
+// 模板全局写入
+scoreboard.updateTemplate("main", "guildScore", 5000);
+
+// 玩家本地写入
+scoreboard.update(player, "coins", 1000);
+```
+
+### 变更传播
+
+- **父层变更 → 向下传播**：引擎全局数据变化时，所有模板全局和玩家本地都会收到通知并刷新
+- **本地变更 → 不向上传播**：玩家本地数据变化不会影响模板全局或引擎全局
+
+### 模板间隔离
+
+不同模板的模板全局数据**互相隔离**：
+
+```java
+// "main" 模板的玩家看到 guildScore = 5000
+scoreboard.updateTemplate("main", "guildScore", 5000);
+
+// "admin" 模板的玩家看不到这个值（除非自己模板也设置了）
+scoreboard.updateTemplate("admin", "guildScore", 9999);
+```
+
+### 模板中使用三层混合数据
+
+```xml
+<template>
+    <title>§e{{serverName}}</title>                    <!-- 引擎全局 -->
+    <line>§7公会战: §f{{guildScore}}</line>             <!-- 模板全局 -->
+    <line>§7玩家: §f{{player.name}}</line>              <!-- 玩家本地 -->
+    <line>§7金币: §6{{coins}}</line>                    <!-- 玩家本地 -->
+</template>
+```
+
+> **原理**：[`ScoreboardManager.show()`](ScoreboardManager.java) 内部为每个玩家创建三层
+> [`HierarchicalDataContext`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/HierarchicalDataContext.java)
+> 父链：`玩家本地 → 模板全局 → 引擎全局`。渲染时自动合并三层数据，
+> 玩家退出时自动 `dispose()` 清理监听器引用，模板注销时自动释放模板全局数据。
+
+### 三层对比表
+
+| 层级 | 作用域 | 典型场景 | API |
+|------|--------|----------|-----|
+| **引擎全局** | 所有模板 + 所有玩家 | 服务器名、在线人数、全局公告 | `updateGlobal()` |
+| **模板全局** | 同一模板的所有玩家 | 公会战分数、副本进度、队伍信息 | `updateTemplate()` |
+| **玩家本地** | 单个玩家 | 玩家名称、金币、等级 | `update()` |
 
 ## 跨插件加载模板
 
@@ -358,11 +523,39 @@ public void onGameModeChange(PlayerGameModeChangeEvent event) {
 }
 ```
 
+### 场景：三层数据混合使用
+
+```java
+// 第一层：引擎全局（所有玩家共享）
+scoreboard.updateGlobal("serverName", "我的服务器");
+scoreboard.updateGlobal("online", server.getOnlinePlayers().size());
+
+// 第二层：模板全局（同一模板的玩家共享）
+scoreboard.updateTemplate("guildwar", "redScore", 3);
+scoreboard.updateTemplate("guildwar", "blueScore", 2);
+
+// 第三层：玩家本地
+scoreboard.update(player, "kills", 15);
+scoreboard.update(player, "deaths", 3);
+```
+
+```xml
+<!-- 模板中混合引用三层 -->
+<template>
+    <title>§e{{serverName}} §7| §f公会战</title>   <!-- 引擎全局 -->
+    <line>§c红队: {{redScore}} §9蓝队: {{blueScore}}</line>  <!-- 模板全局 -->
+    <line>§7击杀: §f{{kills}} §7死亡: §f{{deaths}}</line>    <!-- 玩家本地 -->
+</template>
+```
+
 ## 最佳实践
 
 1. **模板注册一次**：在插件 `onEnable` 或玩家首次加入时注册模板，不要重复注册
 2. **批量更新**：多个字段同时变化时用 `update(player, Map)` 或 `updateAll(Map)`，只触发一次渲染
-3. **主线程操作**：Nukkit 计分板 API 应在主线程调用，异步线程更新数据时用 `Server.getScheduler().scheduleTask`
+3. **选择正确的数据层**：
+   - 所有玩家共享 → `updateGlobal()`
+   - 同模板玩家共享 → `updateTemplate()`
+   - 仅当前玩家 → `update()`
 4. **退出清理**：在 `PlayerQuitEvent` 中调用 `onPlayerQuit(player)` 避免内存泄漏
 5. **行数限制**：Nukkit 侧边栏最多 15 行，单行最长 30 字符（见 [`ScoreboardConstants`](ScoreboardConstants.java:14)）
 

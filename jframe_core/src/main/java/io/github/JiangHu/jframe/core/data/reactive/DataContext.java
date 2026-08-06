@@ -63,9 +63,9 @@ public class DataContext {
     private final ConcurrentHashMap<String, Object> data = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<Consumer<ChangeSet>> listeners = new CopyOnWriteArrayList<>();
 
-    private DataContext() {}
+    protected DataContext() {}
 
-    private DataContext(Map<String, Object> initial) {
+    protected DataContext(Map<String, Object> initial) {
         if (initial != null) {
             data.putAll(initial);
         }

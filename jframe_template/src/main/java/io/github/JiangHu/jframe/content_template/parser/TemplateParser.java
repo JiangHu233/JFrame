@@ -146,6 +146,8 @@ public class TemplateParser {
     /**
      * 解析节点列表为行内 AST 节点列表。
      * <p>处理文本节点（TextNode / ExpressionNode）、{@code <if>} 链、{@code <each>}。
+     * <p><b>空白处理</b>：跳过纯空白文本节点（元素间的换行/缩进），避免渲染输出包含
+     * 换行符导致基岩版 sidebar 显示异常。非空白文本节点（含实际内容）正常保留。
      *
      * @param children DOM 子节点列表
      * @return AST 节点列表
@@ -156,7 +158,10 @@ public class TemplateParser {
         while (i < children.getLength()) {
             Node child = children.item(i);
             if (isTextNode(child)) {
-                nodes.addAll(parseInlineText(child.getTextContent()));
+                // 跳过纯空白文本节点（元素间的换行/缩进），避免渲染输出包含 \n 导致 sidebar 显示异常
+                if (!isBlankTextNode(child)) {
+                    nodes.addAll(parseInlineText(child.getTextContent()));
+                }
                 i++;
             } else if (child.getNodeType() == Node.ELEMENT_NODE) {
                 Element el = (Element) child;
