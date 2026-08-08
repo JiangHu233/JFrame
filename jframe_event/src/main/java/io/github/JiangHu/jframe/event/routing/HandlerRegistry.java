@@ -72,18 +72,26 @@ public class HandlerRegistry {
             Method instanceProvider,
             ConcurrentHashMap<Object, Object> defaultCache,
             Map<Class<? extends Event>, List<Method>> extractors,
-            Map<Class<? extends Event>, List<HandlerTemplate>> handlers
+            Map<Class<? extends Event>, List<HandlerTemplate>> handlers,
+            HandlerMode mode,
+            Object singletonInstance
     ) {}
 
     /** 已绑定的处理器：实例 + 模板 */
     private record BoundHandler(Object instance, HandlerTemplate template) {}
 
-    /** 核心存储：事件类型 → [WrapperRegistration] */
+    /** STATIC 模式注册记录：事件类型 + 消费者（用于注销） */
+    private record StaticConsumer(Class<? extends Event> eventType, EventConsumer<?> consumer) {}
+
+    /** 核心存储：事件类型 → [WrapperRegistration]（仅 OBJECT/SINGLETON） */
     private final Map<Class<? extends Event>, CopyOnWriteArrayList<WrapperRegistration>> registry =
             new ConcurrentHashMap<>();
 
-    /** 类 → Registration 反向索引（用于注销） */
+    /** 类 → Registration 反向索引（OBJECT/SINGLETON，用于注销） */
     private final Map<Class<?>, WrapperRegistration> classToReg = new ConcurrentHashMap<>();
+
+    /** STATIC 模式：类 → [StaticConsumer]（用于注销） */
+    private final Map<Class<?>, List<StaticConsumer>> staticConsumers = new ConcurrentHashMap<>();
 
     /** 已订阅的事件类型集合 */
     private final Set<Class<? extends Event>> subscribed = ConcurrentHashMap.newKeySet();
@@ -97,12 +105,19 @@ public class HandlerRegistry {
     // ========== 注册 ==========
 
     /**
-     * 注册包装类为对象处理器。
+     * 注册包装类。
      * <p>
      * 扫描类中的 {@link KeyExtractor}、{@link InstanceProvider}、{@link EventHandler} 方法，
-     * 创建类级注册。实例在分发时通过工厂方法或默认缓存按需创建。
-     * <p>
-     * <b>必须声明至少一个 {@link KeyExtractor}</b>，否则无法从事件中提取身份，注册将被拒绝。
+     * 按 <b>handler 级别</b>（而非类级别）分流注册：
+     * <ul>
+     *   <li><b>static handler</b> → 始终走 {@link #registerStatic}（EventEngine 兜底链），
+     *       与类内是否存在实例 handler 无关，保证 STATIC 的兜底语义不被吞。</li>
+     *   <li><b>实例 handler</b> → 有 {@link KeyExtractor} 走 {@link #registerObject}（OBJECT），
+     *       否则走 {@link #registerSingleton}（SINGLETON）。</li>
+     * </ul>
+     * 因此一个类可同时产生「STATIC +（OBJECT 或 SINGLETON）」两类注册：
+     * 例如「实例 handler + static handler」的混合写法，static 部分兜底最后执行，
+     * 实例部分按身份/单例正常参与优先级排序。
      * <p>
      * <b>内部 API</b>：用户应通过 {@link EventAPI#register} 调用，本类作为内部实现。
      *
@@ -113,17 +128,6 @@ public class HandlerRegistry {
         // 扫描 @KeyExtractor 方法（static）
         Map<Class<? extends Event>, List<Method>> extractors = scanExtractors(wrapperClass);
 
-        // 强制要求 @KeyExtractor：无提取器则无法路由
-        if (extractors.isEmpty()) {
-            JFrameLog.warning("HandlerRegistry",
-                    "类 " + wrapperClass.getName() + " 无 @KeyExtractor 方法，无法提取身份，注册被拒绝。"
-                            + "请声明至少一个 @KeyExtractor static 方法。");
-            return;
-        }
-
-        // 扫描 @InstanceProvider 方法（static）
-        Method instanceProvider = scanInstanceProvider(wrapperClass);
-
         // 扫描 @EventHandler + @EventRoute 方法
         Map<Class<? extends Event>, List<HandlerTemplate>> handlers = scanHandlers(wrapperClass, wrapperClass);
         if (handlers.isEmpty()) {
@@ -132,18 +136,142 @@ public class HandlerRegistry {
             return;
         }
 
-        // 默认缓存（仅当无 @InstanceProvider 时使用）
+        // 按 static 拆分 handler：static handler 始终走兜底链，实例 handler 走 OBJECT/SINGLETON。
+        // 这样「实例 handler + static handler」的混合写法不会再把 static 误判为 SINGLETON。
+        Map<Class<? extends Event>, List<HandlerTemplate>> staticHandlers = new HashMap<>();
+        Map<Class<? extends Event>, List<HandlerTemplate>> instanceHandlers = new HashMap<>();
+        partitionHandlers(handlers, staticHandlers, instanceHandlers);
+
+        // ① static handler：始终走 EventEngine 兜底链（tailConsumers），
+        //    与类内是否存在实例 handler 无关，保证 STATIC 的兜底语义不被吞。
+        if (!staticHandlers.isEmpty()) {
+            registerStatic(wrapperClass, staticHandlers);
+        }
+
+        // ② 实例 handler：有 @KeyExtractor → OBJECT，否则 → SINGLETON。
+        if (!instanceHandlers.isEmpty()) {
+            if (!extractors.isEmpty()) {
+                registerObject(wrapperClass, extractors, instanceHandlers);
+            } else {
+                registerSingleton(wrapperClass, instanceHandlers);
+            }
+        }
+    }
+
+    /**
+     * 将 handler 按是否 static 拆分到两个集合。
+     * <p>
+     * static handler → {@code staticHandlers}（走兜底链）；
+     * 实例 handler → {@code instanceHandlers}（走 OBJECT/SINGLETON）。
+     *
+     * @param handlers        全部 handler（按事件类型分组）
+     * @param staticHandlers  接收 static handler（输出参数）
+     * @param instanceHandlers 接收实例 handler（输出参数）
+     */
+    private void partitionHandlers(Map<Class<? extends Event>, List<HandlerTemplate>> handlers,
+                                   Map<Class<? extends Event>, List<HandlerTemplate>> staticHandlers,
+                                   Map<Class<? extends Event>, List<HandlerTemplate>> instanceHandlers) {
+        for (Map.Entry<Class<? extends Event>, List<HandlerTemplate>> entry : handlers.entrySet()) {
+            Class<? extends Event> eventType = entry.getKey();
+            for (HandlerTemplate template : entry.getValue()) {
+                Map<Class<? extends Event>, List<HandlerTemplate>> target =
+                        template.isHandlerStatic() ? staticHandlers : instanceHandlers;
+                target.computeIfAbsent(eventType, k -> new ArrayList<>()).add(template);
+            }
+        }
+    }
+
+    /**
+     * OBJECT 模式注册：有 @KeyExtractor，按身份提取实例。
+     */
+    private void registerObject(Class<?> wrapperClass,
+                                Map<Class<? extends Event>, List<Method>> extractors,
+                                Map<Class<? extends Event>, List<HandlerTemplate>> handlers) {
+        // 检测：每个 handler 的事件类型必须有对应的 @KeyExtractor，否则该 handler 永远不会执行（静默失败）
+        warnMissingExtractors(wrapperClass, extractors, handlers);
+
+        Method instanceProvider = scanInstanceProvider(wrapperClass);
         ConcurrentHashMap<Object, Object> defaultCache =
                 instanceProvider == null ? new ConcurrentHashMap<>() : null;
 
         WrapperRegistration reg = new WrapperRegistration(
-                wrapperClass,
-                instanceProvider, defaultCache,
-                extractors, handlers
+                wrapperClass, instanceProvider, defaultCache,
+                extractors, handlers, HandlerMode.OBJECT, null
         );
-
         classToReg.put(wrapperClass, reg);
         addToRegistry(reg);
+    }
+
+    /**
+     * 检测 OBJECT 模式下，handler 处理的某些事件类型缺少对应的 @KeyExtractor。
+     * <p>
+     * 缺少 extractor 的事件类型，其 handler 在 dispatch 时会被 collectObjectHandlers 静默跳过
+     * （因为无法提取身份路由到实例）。此处提前打 WARNING 日志，帮助开发者发现配置错误。
+     */
+    private void warnMissingExtractors(Class<?> wrapperClass,
+                                       Map<Class<? extends Event>, List<Method>> extractors,
+                                       Map<Class<? extends Event>, List<HandlerTemplate>> handlers) {
+        for (Map.Entry<Class<? extends Event>, List<HandlerTemplate>> entry : handlers.entrySet()) {
+            Class<? extends Event> eventType = entry.getKey();
+            if (!extractors.containsKey(eventType)) {
+                JFrameLog.warning("HandlerRegistry",
+                        "类 " + wrapperClass.getName()
+                                + " 处理 " + eventType.getSimpleName()
+                                + " 的 @EventHandler 方法缺少对应的 @KeyExtractor，这些 handler 将永远不会被执行。"
+                                + "请为 " + eventType.getSimpleName()
+                                + " 添加 @KeyExtractor，或将这些 handler 移到独立的 SINGLETON/STATIC wrapper。");
+            }
+        }
+    }
+
+    /**
+     * SINGLETON 模式注册：无 @KeyExtractor，创建唯一单例实例。
+     */
+    private void registerSingleton(Class<?> wrapperClass,
+                                   Map<Class<? extends Event>, List<HandlerTemplate>> handlers) {
+        Object singleton = createSingleton(wrapperClass);
+
+        WrapperRegistration reg = new WrapperRegistration(
+                wrapperClass, null, null,
+                Collections.emptyMap(), handlers, HandlerMode.SINGLETON, singleton
+        );
+        classToReg.put(wrapperClass, reg);
+        addToRegistry(reg);
+    }
+
+    /**
+     * STATIC 模式注册：全 static handler，走 EventEngine 兜底链。
+     * <p>
+     * 不进入 registry，直接为每个 static handler 生成 EventConsumer 走 engine.subscribeTail。
+     * STATIC 不参与优先级排序和独占逻辑，始终兜底最后执行。
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void registerStatic(Class<?> wrapperClass,
+                                Map<Class<? extends Event>, List<HandlerTemplate>> handlers) {
+        List<StaticConsumer> consumers = new ArrayList<>();
+
+        for (Map.Entry<Class<? extends Event>, List<HandlerTemplate>> entry : handlers.entrySet()) {
+            Class<? extends Event> eventType = entry.getKey();
+
+            for (HandlerTemplate template : entry.getValue()) {
+                // STATIC 忽略 priority/exclusive，提示日志
+                if (template.getPriority() != EventPriority.NORMAL || template.isExclusive()) {
+                    JFrameLog.info("HandlerRegistry",
+                            "STATIC 模式忽略 priority/exclusive 属性: "
+                                    + wrapperClass.getName() + "." + template.getMethod().getName()
+                                    + "（STATIC 始终兜底最后执行，不参与优先级/独占）");
+                }
+
+                EventConsumer consumer = event -> {
+                    template.handle(null, event); // static 方法无需 receiver
+                    return false;
+                };
+                engine.subscribeTail(eventType, consumer);
+                consumers.add(new StaticConsumer(eventType, consumer));
+            }
+        }
+
+        staticConsumers.put(wrapperClass, consumers);
     }
 
     // ========== 注销 ==========
@@ -155,18 +283,28 @@ public class HandlerRegistry {
      *
      * @param wrapperClass 要注销的包装类
      */
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void unregister(Class<?> wrapperClass) {
+        // OBJECT/SINGLETON
         WrapperRegistration reg = classToReg.remove(wrapperClass);
-        if (reg == null) return;
+        if (reg != null) {
+            // 从所有事件类型列表中移除
+            for (List<WrapperRegistration> regs : registry.values()) {
+                regs.removeIf(r -> r == reg);
+            }
 
-        // 从所有事件类型列表中移除
-        for (List<WrapperRegistration> regs : registry.values()) {
-            regs.removeIf(r -> r == reg);
+            // 清理默认缓存
+            if (reg.defaultCache() != null) {
+                reg.defaultCache().clear();
+            }
         }
 
-        // 清理默认缓存
-        if (reg.defaultCache() != null) {
-            reg.defaultCache().clear();
+        // STATIC：注销兜底消费者
+        List<StaticConsumer> statics = staticConsumers.remove(wrapperClass);
+        if (statics != null) {
+            for (StaticConsumer sc : statics) {
+                engine.unsubscribe((Class) sc.eventType(), (EventConsumer) sc.consumer());
+            }
         }
     }
 
@@ -244,8 +382,10 @@ public class HandlerRegistry {
                     exclusiveClaimed = true;
                 }
             } catch (Exception e) {
+                // 用 declaringClass 而非 instance.getClass()，避免 instance 为 null 时二次 NPE，
+                // 同时保持错误定位信息一致（指向声明处理器的类）。
                 JFrameLog.error("HandlerRegistry",
-                        "事件处理器异常: " + bh.instance().getClass().getName()
+                        "事件处理器异常: " + bh.template().getDeclaringClass().getName()
                                 + "." + bh.template().getMethod().getName(), e);
             }
         }
@@ -258,8 +398,17 @@ public class HandlerRegistry {
     private void collectObjectHandlers(List<BoundHandler> matched, Set<Object> dispatched,
                                        WrapperRegistration reg,
                                        Class<? extends Event> eventType, Event event) {
-        List<Method> extractors = reg.extractors().get(eventType);
+        // SINGLETON 模式：直接用单例实例，按 reg 去重
+        if (reg.mode() == HandlerMode.SINGLETON) {
+            Object instance = reg.singletonInstance();
+            if (instance != null && dispatched.add(reg)) {
+                addHandlers(matched, instance, reg, eventType);
+            }
+            return;
+        }
 
+        // OBJECT 模式：提取身份 → 获取/创建实例，按 instance 去重
+        List<Method> extractors = reg.extractors().get(eventType);
         if (extractors == null || extractors.isEmpty()) {
             return; // 该事件类型无 @KeyExtractor，无法路由到此 wrapper
         }
@@ -376,6 +525,69 @@ public class HandlerRegistry {
         }
 
         return matched.newInstance(args);
+    }
+
+    /**
+     * 创建 SINGLETON 模式的单例实例。
+     * <p>
+     * 优先使用无参 @InstanceProvider（参数数为 0 的 static 工厂方法），
+     * 其次使用无参构造函数。
+     *
+     * @param wrapperClass 包装类
+     * @return 单例实例
+     * @throws IllegalStateException 如果无法创建（无无参构造且无无参工厂）
+     */
+    private Object createSingleton(Class<?> wrapperClass) {
+        // 优先：无参 @InstanceProvider
+        Method provider = scanNoArgInstanceProvider(wrapperClass);
+        if (provider != null) {
+            try {
+                Object instance = provider.invoke(null);
+                if (instance != null) return instance;
+                JFrameLog.warning("HandlerRegistry",
+                        "SINGLETON InstanceProvider 返回 null: " + wrapperClass.getName()
+                                + "，回退到无参构造");
+            } catch (Exception e) {
+                JFrameLog.error("HandlerRegistry",
+                        "SINGLETON InstanceProvider 调用失败: " + wrapperClass.getName(), e);
+            }
+        }
+
+        // 无参构造
+        try {
+            Constructor<?> ctor = wrapperClass.getDeclaredConstructor();
+            ctor.setAccessible(true);
+            return ctor.newInstance();
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "SINGLETON 模式需要无参构造函数或无参 @InstanceProvider: "
+                            + wrapperClass.getName(), e);
+        }
+    }
+
+    /**
+     * 扫描无参 @InstanceProvider 方法（static，参数数为 0）。
+     *
+     * @return 无参工厂方法，或 null
+     */
+    private Method scanNoArgInstanceProvider(Class<?> clazz) {
+        Class<?> current = clazz;
+        while (current != null && current != Object.class) {
+            for (Method method : current.getDeclaredMethods()) {
+                if (!method.isAnnotationPresent(InstanceProvider.class)) continue;
+                if (!java.lang.reflect.Modifier.isStatic(method.getModifiers())) {
+                    throw new IllegalArgumentException(
+                            "@InstanceProvider 方法必须是 static: " + current.getName()
+                                    + "." + method.getName());
+                }
+                if (method.getParameterCount() == 0) {
+                    method.setAccessible(true);
+                    return method;
+                }
+            }
+            current = current.getSuperclass();
+        }
+        return null;
     }
 
     // ========== 注解扫描 ==========

@@ -11,16 +11,22 @@ import io.github.JiangHu.jframe.event.test.fixture.FactoryWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.FilterWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.StaticFilterWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.MultiSlotWrapper;
+import io.github.JiangHu.jframe.event.test.fixture.MixedStaticSingletonWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.MutualExclusionWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.NoExtractorWrapper;
+import io.github.JiangHu.jframe.event.test.fixture.PartialExtractorWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.PriorityWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.ScanTargetWrapper;
+import io.github.JiangHu.jframe.event.test.fixture.ExecutionOrderTracker;
+import io.github.JiangHu.jframe.event.test.fixture.SingletonWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.StatWrapper;
+import io.github.JiangHu.jframe.event.test.fixture.StaticWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.TestEvents.ChatEvent;
 import io.github.JiangHu.jframe.event.test.fixture.TestEvents.CombatEvent;
 import io.github.JiangHu.jframe.event.test.fixture.TestEvents.MoveEvent;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 
@@ -72,7 +78,13 @@ public final class EventRoutingTest {
         testMultiSlotOrSemantics();
         testInstanceProviderFactory();
         testUnregister();
-        testNoExtractorRejected();
+        testSingletonCreationFailure();
+        testSingletonMode();
+        testStaticMode();
+        testStaticTailOrdering();
+        testMixedStaticAndInstance();
+        testSingletonDedup();
+        testMissingExtractorWarning();
         testConditionFilterMutualExclusion();
         testWrapperScan();
         testEventEngineSubscribeUnsubscribe();
@@ -198,15 +210,16 @@ public final class EventRoutingTest {
         reg.register(MultiSlotWrapper.class);
         MultiSlotWrapper.reset();
 
-        // 攻击者 Alice + 受害者 Bob → 两个槽位都匹配 → 两个实例被通知
+        // 攻击者 Alice + 受害者 Bob → 两个槽位都匹配 → 两个实例被通知（顺序不保证）
         reg.dispatch(CombatEvent.class, new CombatEvent("Alice", "Bob", 10));
         check("7a. 双槽位匹配通知两个身份",
-                MultiSlotWrapper.getNotified().equals(List.of("Alice", "Bob")));
+                MultiSlotWrapper.getNotified().size() == 2
+                        && MultiSlotWrapper.getNotified().containsAll(List.of("Alice", "Bob")));
 
-        // 受害者为 null → 仅攻击者槽位匹配
+        // 受害者为 null → 仅攻击者槽位匹配（累计 3 次通知）
         reg.dispatch(CombatEvent.class, new CombatEvent("Alice", null, 5));
         check("7b. null 槽位跳过，仅攻击者通知",
-                MultiSlotWrapper.getNotified().equals(List.of("Alice", "Bob", "Alice")));
+                MultiSlotWrapper.getNotified().size() == 3);
     }
 
     /** 8. @InstanceProvider 工厂 + 显式事件类型 + 工厂返回 null 跳过 */
@@ -252,17 +265,149 @@ public final class EventRoutingTest {
         check("9b. 注销后不再分发", StatWrapper.getInvocations().isEmpty());
     }
 
-    /** 10. 无 @KeyExtractor 注册被拒绝 */
-    private static void testNoExtractorRejected() {
+    /**
+     * 10. SINGLETON 无无参构造时创建失败抛异常。
+     * <p>
+     * NoExtractorWrapper 无 @KeyExtractor + 实例方法 → 判定为 SINGLETON，
+     * 但它只有 `NoExtractorWrapper(String)` 构造，无无参构造 → createSingleton 抛 IllegalStateException。
+     */
+    private static void testSingletonCreationFailure() {
         HandlerRegistry reg = newRegistry();
         NoExtractorWrapper.reset();
-        // 注册不应抛异常（内部记录警告并返回）
-        reg.register(NoExtractorWrapper.class);
+        boolean threw = false;
+        try {
+            reg.register(NoExtractorWrapper.class);
+        } catch (IllegalStateException e) {
+            threw = true;
+        }
+        check("10. SINGLETON 无无参构造时抛 IllegalStateException", threw);
+    }
 
-        // 分发后处理器不应被调用
-        reg.dispatch(MoveEvent.class, new MoveEvent("X", 1, 0));
-        check("10. 无 @KeyExtractor 的类注册被拒绝，处理器不执行",
-                !NoExtractorWrapper.isInvoked());
+    /** 14. SINGLETON 模式：单例实例复用 */
+    private static void testSingletonMode() {
+        SingletonWrapper.reset();
+        HandlerRegistry reg = newRegistry();
+        reg.register(SingletonWrapper.class);
+
+        // 多次分发不同身份 → 始终复用同一单例实例
+        reg.dispatch(MoveEvent.class, new MoveEvent("Alice", 1, 0));
+        reg.dispatch(MoveEvent.class, new MoveEvent("Bob", 2, 0));
+        reg.dispatch(MoveEvent.class, new MoveEvent("Charlie", 3, 0));
+
+        check("14a. SINGLETON 所有事件共享1个实例", SingletonWrapper.getInstanceCount() == 1);
+        check("14b. SINGLETON 处理器被调用3次",
+                SingletonWrapper.getInvocations().equals(List.of("Alice@1", "Bob@2", "Charlie@3")));
+    }
+
+    /** 15. STATIC 模式：走兜底链执行 */
+    private static void testStaticMode() {
+        EventEngine engine = new EventEngine();
+        HandlerRegistry reg = new HandlerRegistry(engine);
+        reg.register(StaticWrapper.class);
+        ExecutionOrderTracker.reset();
+
+        // STATIC 走 tailConsumers，需通过 EventEngine.dispatch 触发
+        invokeEngineDispatch(engine, MoveEvent.class, new MoveEvent("Static", 1, 0));
+
+        check("15. STATIC handler 通过兜底链执行",
+                ExecutionOrderTracker.getOrder().equals(List.of("STATIC:Static")));
+    }
+
+    /** 16. STATIC 兜底顺序：primary 先于 tail */
+    private static void testStaticTailOrdering() {
+        EventEngine engine = new EventEngine();
+        HandlerRegistry reg = new HandlerRegistry(engine);
+
+        // 注册一个 primary consumer（模拟 OBJECT/SINGLETON 走 primaryConsumers）
+        engine.subscribe(MoveEvent.class, event -> {
+            ExecutionOrderTracker.record("PRIMARY:" + event.getPlayerName());
+            return false;
+        });
+
+        // 注册 STATIC wrapper → tail
+        reg.register(StaticWrapper.class);
+        ExecutionOrderTracker.reset();
+
+        // 通过 EventEngine.dispatch 触发两段分发（primary → tail）
+        invokeEngineDispatch(engine, MoveEvent.class, new MoveEvent("Order", 1, 0));
+
+        // PRIMARY 先执行，STATIC 后执行
+        List<String> order = ExecutionOrderTracker.getOrder();
+        check("16a. PRIMARY 和 STATIC 都执行", order.size() == 2);
+        check("16b. PRIMARY 先于 STATIC 执行（兜底顺序保证）",
+                order.equals(List.of("PRIMARY:Order", "STATIC:Order")));
+    }
+
+    /**
+     * 16c. 混合写法（实例 handler + static handler）：static 始终走兜底链，不被误判为 SINGLETON。
+     * <p>
+     * MixedStaticSingletonWrapper 无 @KeyExtractor，同时含实例方法 onMove 与 static 方法 onMoveStatic。
+     * 修复前：类级判定 allStatic=false → 整体 SINGLETON，static handler 被卷入 primary 链路。
+     * 修复后：按 handler 级别分流，static handler 进 tailConsumers，实例 handler 进 SINGLETON。
+     */
+    private static void testMixedStaticAndInstance() {
+        EventEngine engine = new EventEngine();
+        HandlerRegistry reg = new HandlerRegistry(engine);
+        MixedStaticSingletonWrapper.reset();
+        reg.register(MixedStaticSingletonWrapper.class);
+
+        // static handler 应进入 tailConsumers（兜底链），而非被卷入 SINGLETON 的 primary 链
+        check("16c-1. 混合写法下 static handler 走兜底链（tailConsumers >= 1）",
+                tailConsumerCount(engine, MoveEvent.class) >= 1);
+
+        // 通过 EventEngine.dispatch 触发 primary → tail 两段
+        invokeEngineDispatch(engine, MoveEvent.class, new MoveEvent("Mix", 1, 0));
+
+        List<String> order = MixedStaticSingletonWrapper.getOrder();
+        check("16c-2. 实例与 static handler 均执行", order.size() == 2);
+        check("16c-3. 实例 handler（primary）先于 static handler（tail）执行",
+                order.equals(List.of("INSTANCE:Mix", "STATIC:Mix")));
+        // 实例 handler 走 SINGLETON：只创建 1 个实例
+        check("16c-4. 实例 handler 走 SINGLETON（单例复用）",
+                MixedStaticSingletonWrapper.getInstanceCount() == 1);
+
+        // reg.dispatch 仅触发 primary（OBJECT/SINGLETON），不应触发 tail 中的 static handler
+        MixedStaticSingletonWrapper.reset();
+        reg.dispatch(MoveEvent.class, new MoveEvent("Mix2", 2, 0));
+        check("16c-5. reg.dispatch（仅 primary）不触发 static 兜底 handler",
+                MixedStaticSingletonWrapper.getOrder().equals(List.of("INSTANCE:Mix2")));
+    }
+
+    /** 17. SINGLETON 去重：共享引用不被吞 */
+    private static void testSingletonDedup() {
+        SingletonWrapper.reset();
+        HandlerRegistry reg = newRegistry();
+        reg.register(SingletonWrapper.class);
+
+        // 同一事件多次分发 → 单例实例只创建一次，handler 每次都触发
+        reg.dispatch(MoveEvent.class, new MoveEvent("A", 1, 0));
+        reg.dispatch(MoveEvent.class, new MoveEvent("A", 2, 0));
+
+        check("17a. SINGLETON 去重后实例仍为1", SingletonWrapper.getInstanceCount() == 1);
+        check("17b. SINGLETON 每次分发都触发 handler",
+                SingletonWrapper.getInvocations().size() == 2);
+    }
+
+    /**
+     * 18. OBJECT 模式下 handler 事件类型缺失 @KeyExtractor → 注册时 WARNING，dispatch 时静默跳过。
+     * <p>
+     * PartialExtractorWrapper 仅为 MoveEvent 声明了 @KeyExtractor，ChatEvent 的 handler 无对应 extractor。
+     * 注册时控制台应输出 WARNING（人工可见），dispatch ChatEvent 时 onChat 不执行。
+     */
+    private static void testMissingExtractorWarning() {
+        PartialExtractorWrapper.reset();
+        HandlerRegistry reg = newRegistry();
+        // 注册时触发 WARNING 日志（ChatEvent 缺少 @KeyExtractor）
+        reg.register(PartialExtractorWrapper.class);
+
+        // MoveEvent 有 extractor → onMove 正常执行
+        reg.dispatch(MoveEvent.class, new MoveEvent("Alice", 1, 0));
+        check("18a. 有 extractor 的事件类型正常执行", PartialExtractorWrapper.isMoveInvoked());
+
+        // ChatEvent 无 extractor → onChat 静默跳过（不执行）
+        reg.dispatch(ChatEvent.class, new ChatEvent("Alice", "hi"));
+        check("18b. 缺少 extractor 的事件类型静默跳过（handler 不执行）",
+                !PartialExtractorWrapper.isChatInvoked());
     }
 
     /** 11. condition 与 filter 互斥（抛 IllegalArgumentException） */
@@ -325,13 +470,37 @@ public final class EventRoutingTest {
     /** 通过反射读取 EventEngine 内部消费者列表大小（用于断言订阅管理） */
     @SuppressWarnings("unchecked")
     private static int consumerCount(EventEngine engine, Class<? extends Event> eventType) {
+        return countInField(engine, "primaryConsumers", eventType);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int tailConsumerCount(EventEngine engine, Class<? extends Event> eventType) {
+        return countInField(engine, "tailConsumers", eventType);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int countInField(EventEngine engine, String fieldName,
+                                    Class<? extends Event> eventType) {
         try {
-            Field consumersField = EventEngine.class.getDeclaredField("consumers");
-            consumersField.setAccessible(true);
+            Field field = EventEngine.class.getDeclaredField(fieldName);
+            field.setAccessible(true);
             Map<Class<? extends Event>, List<EventConsumer<?>>> map =
-                    (Map<Class<? extends Event>, List<EventConsumer<?>>>) consumersField.get(engine);
+                    (Map<Class<? extends Event>, List<EventConsumer<?>>>) field.get(engine);
             List<?> list = map.get(eventType);
             return list == null ? 0 : list.size();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** 通过反射调用 EventEngine.dispatch（private），模拟 Nukkit 事件触发 */
+    private static void invokeEngineDispatch(EventEngine engine,
+                                             Class<? extends Event> eventType, Event event) {
+        try {
+            Method dispatch = EventEngine.class.getDeclaredMethod(
+                    "dispatch", Class.class, Event.class);
+            dispatch.setAccessible(true);
+            dispatch.invoke(engine, eventType, event);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

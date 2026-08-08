@@ -116,9 +116,10 @@ public class PlayerListener implements Listener {
 │                         事件引擎层                                    │
 │                                                                     │
 │  EventAPI (implements Listener)                                 │
-│  ├── consumers: 事件类型 → [EventConsumer]                        │
+│  ├── primaryConsumers: 事件类型 → [EventConsumer]（OBJECT/SINGLETON）│
+│  ├── tailConsumers: 事件类型 → [EventConsumer]（STATIC 兜底）        │
 │  ├── 固定 LOWEST 优先级注册                                         │
-│  └── dispatch(): 转发给 HandlerRegistry                             │
+│  └── dispatch(): 先遍历 primary，再遍历 tail（保证 STATIC 最后执行）  │
 │     ↓                                                               │
 │  Nukkit 原生事件系统（按类型精准触发）                               │
 └─────────────────────────────────────────────────────────────────────┘
@@ -407,12 +408,16 @@ public boolean handle(Object target, Event event) {
 ```java
 record WrapperRegistration(
     Class<?> wrapperClass,
+    HandlerMode mode,                   // OBJECT / SINGLETON（STATIC 不进 registry）
+    Object singletonInstance,           // SINGLETON 模式的共享实例（OBJECT 为 null）
     MethodRef instanceProvider,          // @InstanceProvider（MethodRef = Method + MethodHandle）
-    ConcurrentHashMap<Object, Object> defaultCache,  // 默认缓存
+    ConcurrentHashMap<Object, Object> defaultCache,  // 默认缓存（仅 OBJECT）
     Map<Class<? extends Event>, List<MethodRef>> extractors,  // @KeyExtractor（MethodRef）
     Map<Class<? extends Event>, List<HandlerTemplate>> handlers  // 处理器模板
 ) {}
 ```
+
+> **HandlerMode 判定规则**（[`HandlerMode`](routing/HandlerMode.java)）：`extractors` 非空 → OBJECT；handlers 全为 static → STATIC；否则 → SINGLETON。STATIC 模式不创建 WrapperRegistration，而是为每个 static handler 生成独立 EventConsumer 注册到 EventEngine 的 tail 列表。
 
 #### MethodRef 记录
 
@@ -443,10 +448,17 @@ record MethodRef(Method method, MethodHandle handle) {
 ```
 register(wrapperClass)
     │
-    ├── scanExtractors() → 若为空 → 警告并拒绝（必须有 @KeyExtractor）
-    ├── scanInstanceProvider()
-    ├── scanHandlers() → 若为空 → 警告并返回
-    └── 创建 WrapperRegistration + addToRegistry()
+    ├── scanExtractors() + scanInstanceProvider() + scanHandlers()
+    ├── detectMode():
+    │   ├── extractors 非空 → OBJECT（按身份路由）
+    │   ├── handlers 全为 static → STATIC（全局兜底，走 tail 列表）
+    │   └── 否则 → SINGLETON（框架创建单例）
+    │
+    ├── OBJECT/SINGLETON → 创建 WrapperRegistration + addToRegistry()
+    │   └── SINGLETON 额外调用 createSingleton()（无参构造或 @InstanceProvider）
+    │
+    └── STATIC → 为每个 static handler 生成 EventConsumer
+        └── engine.subscribeTail()（不进 registry，不走优先级/独占）
 ```
 
 #### dispatch 方法核心逻辑
@@ -594,7 +606,7 @@ unregister(Class) → 不清理工厂的缓存（需工厂自行清理）
 - **对接外部缓存**：`return ExternalManager.getWrapper(identity);`
 - **一次性实例**：`return new OneTimeHandler(identity);`
 - **条件创建**：`return shouldCreate ? new Wrapper(identity) : null;`
-- **全局单例语义**：`@KeyExtractor` 返回恒定身份 + `@InstanceProvider` 始终返回同一实例
+- **全局单例语义**：不声明 `@KeyExtractor` + 实例方法 → SINGLETON 模式（框架自动创建单例）；或全 static 方法 → STATIC 模式（无实例开销，最后执行）
 
 ### 7.2 扩展构造函数注入
 
@@ -632,9 +644,9 @@ for (int i = 1; i < args.length; i++) {
 
 **解决方案：** 使用 `@InstanceProvider` 自行管理缓存（如 `computeIfAbsent`）。
 
-### 8.3 无 @KeyExtractor 的包装类无法注册
+### 8.3 STATIC 模式的 priority/exclusive 被忽略
 
-`register(Class)` 会检查 `@KeyExtractor`。若一个包装类没有声明任何 `@KeyExtractor`，注册会被拒绝并打印警告。**身份提取是路由的前提**，没有提取器就无法确定事件该路由给哪个实例。
+STATIC 模式（无 `@KeyExtractor` + 全 static handler）的处理器走 EventEngine 的 tail 列表，不参与 HandlerRegistry 的优先级排序和独占逻辑。若 static handler 标注了 `@EventHandler(priority/exclusive)`，注册时会打 INFO 日志提示这些属性被忽略。**STATIC 模式的设计目标是全局兜底监听**，语义上应在所有 OBJECT/SINGLETON 之后执行。
 
 ### 8.4 unregister 不清理工厂缓存
 
@@ -775,3 +787,21 @@ record MethodRef(Method method, MethodHandle handle) { ... }
 | MethodHandle | 方法调用 5~50× | 无 |
 
 **综合效果：** 高频事件热路径整体提升 **3~10×**，GC 压力大幅降低。
+
+### 10.6 三种模式分发性能基准
+
+基于 [`EventDispatchBenchmark`](../../../test/java/io/github/JiangHu/jframe/event/routing/EventDispatchBenchmark.java)（200 万次测量，JDK 21，预热后 JIT 编译）：
+
+| 模式 | 单次分发 | 吞吐量 | 开销来源 |
+|------|---------|--------|----------|
+| 基线（直接 static 调用） | 0.5 ns | 2056 M ops/s | 无（理论极限） |
+| **STATIC** | **5.1 ns** | **197 M ops/s** | EventConsumer lambda + MethodHandle(static) |
+| OBJECT | 71.4 ns | 14.0 M ops/s | KeyExtractor.invoke + ConcurrentHashMap.get + MethodHandle |
+| SINGLETON | 86.3 ns | 11.6 M ops/s | 字段访问去重 + MethodHandle(实例) |
+
+**分析：**
+- STATIC 最快（5.1 ns）：跳过 HandlerRegistry 的身份提取和 map 查找，直接在 EventEngine tail 列表中 lambda 调用 static MethodHandle
+- OBJECT（71.4 ns）：每次 dispatch 调用 KeyExtractor 提取身份 + ConcurrentHashMap.get 查找槽位 + MethodHandle 调用实例方法
+- SINGLETON（86.3 ns）：跳过 KeyExtractor，但 collectObjectHandlers 仍需遍历 + 按 reg 去重 + MethodHandle 调用实例方法
+- **STATIC 比 OBJECT 快 14 倍**，适合高频全局监听（如 MoveEvent 统计）
+- 即使最慢的 SINGLETON，每秒可处理 1100 万次，对游戏服务器事件量（每秒数千次）无感知影响

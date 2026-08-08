@@ -41,13 +41,6 @@ public class ScoreboardManager {
     private final ConcurrentHashMap<UUID, ScoreboardView> views = new ConcurrentHashMap<>();
 
     /**
-     * 模板全局数据上下文：模板名称 → HierarchicalDataContext（parent = engine.globalData）。
-     * <p>同模板的所有玩家共享此数据，不同模板之间隔离。
-     * 变更会通过 parent → child 监听链自动传播到使用该模板的所有玩家视图。
-     */
-    private final ConcurrentHashMap<String, HierarchicalDataContext> templateGlobals = new ConcurrentHashMap<>();
-
-    /**
      * @param engine 模板引擎
      */
     public ScoreboardManager(TemplateEngine engine) {
@@ -83,11 +76,8 @@ public class ScoreboardManager {
      */
     public void removeTemplate(String name) {
         templates.remove(name);
-        // 清理模板全局数据上下文，解除对引擎全局数据的监听，防止内存泄漏
-        HierarchicalDataContext tg = templateGlobals.remove(name);
-        if (tg != null) {
-            tg.dispose();
-        }
+        // 清理模板全局数据上下文（委托 TemplateEngine），解除对引擎全局数据的监听，防止内存泄漏
+        engine.removeTemplateData(name);
     }
 
     // ==================== 显示控制 ====================
@@ -126,9 +116,9 @@ public class ScoreboardManager {
         }
 
         // 创建新视图并显示
-        // 三层 parent 链：引擎全局（engine.getGlobalData()）→ 模板全局（templateGlobals）→ 玩家局部
+        // 三层 parent 链：引擎全局 → 模板全局 → 玩家局部（由 TemplateEngine 统一管理前两层）
         // 读取优先级：玩家 > 模板 > 引擎；任一层变更都会沿链自动传播，触发增量刷新
-        DataContext templateGlobal = getTemplateDataContext(sbTemplate.getName());
+        DataContext templateGlobal = engine.getTemplateData(sbTemplate.getName());
         HierarchicalDataContext data = HierarchicalDataContext.of(templateGlobal);
         ScoreboardView view = new ScoreboardView(uuid, sbTemplate, data, engine);
         view.show(player);
@@ -285,7 +275,7 @@ public class ScoreboardManager {
      * @param value        数据值
      */
     public void updateTemplate(String templateName, String key, Object value) {
-        getTemplateDataContext(templateName).put(key, value);
+        engine.setTemplateData(templateName, key, value);
     }
 
     /**
@@ -296,7 +286,7 @@ public class ScoreboardManager {
      * @see #updateTemplate(String, String, Object)
      */
     public void updateTemplateAll(String templateName, Map<String, Object> entries) {
-        getTemplateDataContext(templateName).putAll(entries);
+        engine.setTemplateDataAll(templateName, entries);
     }
 
     // ==================== 查询 ====================
@@ -345,8 +335,7 @@ public class ScoreboardManager {
      * @return 模板全局数据上下文
      */
     public DataContext getTemplateDataContext(String templateName) {
-        return templateGlobals.computeIfAbsent(templateName,
-                k -> HierarchicalDataContext.of(engine.getGlobalData()));
+        return engine.getTemplateData(templateName);
     }
 
     // ==================== 生命周期 ====================

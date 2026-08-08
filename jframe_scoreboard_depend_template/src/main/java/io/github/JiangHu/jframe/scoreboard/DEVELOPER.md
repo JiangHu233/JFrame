@@ -47,7 +47,7 @@ jframe_scoreboard/
 └── src/main/
     ├── java/io/github/JiangHu/jframe/scoreboard/
     │   ├── ScoreboardAPI.java           ← 用户门面（API 入口）
-    │   ├── ScoreboardManager.java       ← 管理器（模板注册表 + 玩家视图映射 + 模板全局数据）
+    │   ├── ScoreboardManager.java       ← 管理器（模板注册表 + 玩家视图映射，模板全局数据委托 TemplateEngine）
     │   ├── ScoreboardView.java          ← 玩家视图（DataContext + Nukkit IScoreboard）
     │   ├── ScoreboardTemplate.java      ← 模板配置（Template + 显示参数）
     │   ├── ScoreboardConstants.java     ← 常量（前缀、默认值、限制）
@@ -64,7 +64,7 @@ jframe_scoreboard/
 | 类 | 职责 | 依赖 |
 |----|------|------|
 | [`ScoreboardAPI`](ScoreboardAPI.java:64) | 用户入口门面，委托转发给 Manager | `ScoreboardManager`, `TemplateEngine` |
-| [`ScoreboardManager`](ScoreboardManager.java:32) | 模板注册表 + 玩家视图映射 + 模板全局数据 + 生命周期 | `TemplateEngine` |
+| [`ScoreboardManager`](ScoreboardManager.java:32) | 模板注册表 + 玩家视图映射 + 生命周期（模板全局数据委托 `TemplateEngine`） | `TemplateEngine` |
 | [`ScoreboardView`](ScoreboardView.java:50) | 单玩家计分板实例，绑定 DataContext ↔ Nukkit IScoreboard | `ScoreboardTemplate`, `DataContext`, `IScoreboard` |
 | [`ScoreboardTemplate`](ScoreboardTemplate.java:40) | 模板配置（Template + DisplaySlot + SortOrder） | `Template` |
 | [`ScoreboardConstants`](ScoreboardConstants.java:14) | 常量集中管理 | — |
@@ -82,7 +82,7 @@ ScoreboardAPI（门面）
 
 **为什么分三层？**
 - **API**：对用户隐藏内部细节，提供简洁的方法签名
-- **Manager**：管理共享状态（模板注册表、视图映射、模板全局数据），可被多个 API 实例共享
+- **Manager**：管理共享状态（模板注册表、视图映射），模板全局数据委托 [`TemplateEngine`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/TemplateEngine.java) 管理，可被多个 API 实例共享
 - **View**：封装单玩家状态，隔离玩家间的数据
 
 ### 2. 响应式更新机制
@@ -151,14 +151,18 @@ dataContext.removeListener(changeListener);
 
 ### 4. 三层数据粒度
 
-本模块支持三层数据粒度，通过 [`HierarchicalDataContext`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/HierarchicalDataContext.java) 多级父链实现：
+本模块支持三层数据粒度，通过 [`HierarchicalDataContext`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/HierarchicalDataContext.java) 多级父链实现。
+
+> **架构说明**：三层中的**前两层（引擎全局 + 模板全局）由 [`TemplateEngine`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/TemplateEngine.java) 统一管理**，
+> 本模块（[`ScoreboardManager`](ScoreboardManager.java)）通过委托调用 `engine.getTemplateData()` / `engine.setTemplateData()` 等方法操作模板全局数据。
+> 这样设计使得 inventory、bossbar 等其他模块也能共享同一套三层数据架构。
 
 ```
-引擎全局（Engine Global）
+引擎全局（engine.getGlobalData）    ← TemplateEngine 持有，所有模块共享
     ↑ parent
-模板全局（Template Global）
+模板全局（engine.getTemplateData）  ← TemplateEngine 持有，按模板名隔离
     ↑ parent
-玩家本地（Player Local）
+玩家本地（HierarchicalDataContext）  ← ScoreboardView 持有，每玩家独立
 ```
 
 #### 父链构建
@@ -169,9 +173,9 @@ dataContext.removeListener(changeListener);
 // 第一层：引擎全局（TemplateEngine 持有）
 DataContext engineGlobal = engine.getGlobalData();
 
-// 第二层：模板全局（ScoreboardManager 持有，按模板名缓存）
-DataContext templateGlobal = getTemplateDataContext(templateName);
-// → HierarchicalDataContext.of(engineGlobal)
+// 第二层：模板全局（委托 TemplateEngine 管理，按模板名缓存）
+DataContext templateGlobal = engine.getTemplateData(templateName);
+// → 内部 HierarchicalDataContext.of(engineGlobal)
 
 // 第三层：玩家本地（每玩家独立）
 HierarchicalDataContext playerData = HierarchicalDataContext.of(templateGlobal);
@@ -190,9 +194,9 @@ HierarchicalDataContext playerData = HierarchicalDataContext.of(templateGlobal);
 每层 `put()` 只写入自己的存储，不影响父层：
 
 ```java
-playerData.put("coins", 1000);     // 只写入玩家本地
-templateGlobal.put("score", 500);  // 只写入模板全局
-engineGlobal.put("online", 42);    // 只写入引擎全局
+playerData.put("coins", 1000);                    // 只写入玩家本地
+engine.setTemplateData(name, "score", 500);       // 只写入模板全局（委托）
+engine.setGlobal("online", 42);                   // 只写入引擎全局
 ```
 
 #### 变更传播
@@ -205,8 +209,8 @@ engineGlobal.put("online", 42);    // 只写入引擎全局
 
 - **玩家退出**：`onPlayerQuit()` 调用 `view.hide()` → `dataContext.dispose()`，
   自动移除玩家本地对模板全局的监听器引用
-- **模板注销**：`removeTemplate()` 调用 `templateGlobals.remove(name).dispose()`，
-  自动移除模板全局对引擎全局的监听器引用
+- **模板注销**：`removeTemplate()` 调用 `engine.removeTemplateData(name)`，
+  TemplateEngine 内部自动调用模板全局的 `dispose()`，移除对引擎全局的监听器引用
 
 ### 5. 玩家退出清理
 

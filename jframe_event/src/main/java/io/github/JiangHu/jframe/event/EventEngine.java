@@ -60,12 +60,21 @@ public class EventEngine implements Listener, PluginAware {
     public static final EventPriority REGISTER_PRIORITY = EventPriority.LOWEST;
 
     /**
-     * 消费者注册表：事件类型 → 消费者列表。
+     * 主消费者注册表：事件类型 → 消费者列表（OBJECT/SINGLETON 模式 + 原始 subscribe）。
      * <p>
      * 外层 {@link ConcurrentHashMap} 保证线程安全，
      * 内层 {@link CopyOnWriteArrayList} 保证遍历时线程安全（读多写少场景）。
      */
-    private final Map<Class<? extends Event>, List<EventConsumer<?>>> consumers =
+    private final Map<Class<? extends Event>, List<EventConsumer<?>>> primaryConsumers =
+            new ConcurrentHashMap<>();
+
+    /**
+     * 兜底消费者注册表（STATIC 模式专用）。
+     * <p>
+     * 与 {@link #primaryConsumers} 分离，确保 STATIC 处理器始终在
+     * OBJECT/SINGLETON 之后执行（兜底语义）。
+     */
+    private final Map<Class<? extends Event>, List<EventConsumer<?>>> tailConsumers =
             new ConcurrentHashMap<>();
 
     /**
@@ -96,7 +105,22 @@ public class EventEngine implements Listener, PluginAware {
      * @param <T>       事件泛型
      */
     public <T extends Event> void subscribe(Class<T> eventType, EventConsumer<T> consumer) {
-        consumers.computeIfAbsent(eventType, k -> new CopyOnWriteArrayList<>()).add(consumer);
+        primaryConsumers.computeIfAbsent(eventType, k -> new CopyOnWriteArrayList<>()).add(consumer);
+        ensureRegistered(eventType);
+    }
+
+    /**
+     * 订阅兜底消费者（STATIC 模式专用）。
+     * <p>
+     * 兜底消费者在 {@link #dispatch} 时晚于 {@link #primaryConsumers} 执行，
+     * 保证 STATIC 处理器始终在 OBJECT/SINGLETON 之后运行。
+     *
+     * @param eventType 事件类型
+     * @param consumer  兜底消费者
+     * @param <T>       事件泛型
+     */
+    public <T extends Event> void subscribeTail(Class<T> eventType, EventConsumer<T> consumer) {
+        tailConsumers.computeIfAbsent(eventType, k -> new CopyOnWriteArrayList<>()).add(consumer);
         ensureRegistered(eventType);
     }
 
@@ -108,9 +132,13 @@ public class EventEngine implements Listener, PluginAware {
      * @param <T>       事件泛型
      */
     public <T extends Event> void unsubscribe(Class<T> eventType, EventConsumer<T> consumer) {
-        List<EventConsumer<?>> list = consumers.get(eventType);
+        List<EventConsumer<?>> list = primaryConsumers.get(eventType);
         if (list != null) {
             list.remove(consumer);
+        }
+        List<EventConsumer<?>> tailList = tailConsumers.get(eventType);
+        if (tailList != null) {
+            tailList.remove(consumer);
         }
     }
 
@@ -120,7 +148,8 @@ public class EventEngine implements Listener, PluginAware {
      * @param consumer 要注销的消费者
      */
     public void unsubscribeAll(EventConsumer<?> consumer) {
-        consumers.values().forEach(list -> list.remove(consumer));
+        primaryConsumers.values().forEach(list -> list.remove(consumer));
+        tailConsumers.values().forEach(list -> list.remove(consumer));
     }
 
     /**
@@ -184,7 +213,18 @@ public class EventEngine implements Listener, PluginAware {
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void dispatch(Class<? extends Event> eventType, Event event) {
-        List<EventConsumer<?>> list = consumers.get(eventType);
+        // ① 主消费者（OBJECT/SINGLETON + 原始 subscribe）
+        dispatchList(primaryConsumers.get(eventType), eventType, event);
+        // ② 兜底消费者（STATIC，保证最后执行）
+        dispatchList(tailConsumers.get(eventType), eventType, event);
+    }
+
+    /**
+     * 分发事件给单个消费者列表。
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void dispatchList(List<EventConsumer<?>> list,
+                              Class<? extends Event> eventType, Event event) {
         if (list == null || list.isEmpty()) {
             return;
         }

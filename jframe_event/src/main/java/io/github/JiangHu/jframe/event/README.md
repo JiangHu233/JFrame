@@ -4,7 +4,7 @@
 >
 > 通过 **4 个注解** 声明事件处理器，框架自动完成类型过滤、身份提取、实例创建和优先级分发。
 >
-> **所有处理器都是基于身份标识的对象处理器**：每个包装类必须声明 `@KeyExtractor` 从事件中提取身份，框架据此路由到对应实例。
+> 支持三种处理器模式（框架自动判定）：**OBJECT**（有 `@KeyExtractor`，按身份路由到独立实例）、**SINGLETON**（无 `@KeyExtractor` + 实例方法，框架创建单例）、**STATIC**（无 `@KeyExtractor` + 全 static 方法，全局兜底监听）。
 
 ## 📑 目录
 
@@ -38,7 +38,10 @@
 
 > **为什么拆成 4 个注解？** 职责分离：`@EventRoute` 管"匹配"（事件类型+条件），`@EventHandler` 管"执行"（优先级+独占），`@KeyExtractor` 管"身份提取"，`@InstanceProvider` 管"实例创建"。每个注解只做一件事。
 >
-> **⚠️ `@KeyExtractor` 是必需的**：没有身份提取器，框架无法确定事件该路由给哪个实例，注册会被拒绝。
+> **三种模式自动判定：**
+> - 声明了 `@KeyExtractor` → **OBJECT 模式**（按身份路由，每个玩家/实体独立实例）
+> - 未声明 `@KeyExtractor` + handler 为实例方法 → **SINGLETON 模式**（框架创建单例，所有事件路由到同一实例）
+> - 未声明 `@KeyExtractor` + handler 全为 `static` → **STATIC 模式**（全局兜底，无实例开销，最后执行）
 
 ---
 
@@ -349,34 +352,78 @@ public class CombatantWrapper {
 
 ---
 
-### 💡 如何实现"全局单例"语义？
+### 用法七：单例处理器（SINGLETON 模式）⭐
 
-统一后所有处理器都是对象级（按身份路由）。如果某个处理器需要"所有事件路由到同一个实例"（类似经典 Listener 的单例监听），用 `@KeyExtractor` 返回恒定身份 + `@InstanceProvider` 返回固定单例：
+当处理器需要"所有事件路由到同一个实例"（类似经典 Listener 的单例监听），但 handler 是**实例方法**（需要访问实例字段）时，**不声明 `@KeyExtractor`** 即可。框架自动判定为 SINGLETON 模式，创建一个共享单例。
 
 ```java
-public class GlobalChatLogger {
+// 不加 @KeyExtractor！框架自动创建单例
+public class ChatLogger {
 
-    private static final GlobalChatLogger INSTANCE = new GlobalChatLogger();
+    private int messageCount = 0;  // 实例字段，所有事件共享
 
-    // 提取一个恒定身份（所有同类事件都映射到同一实例）
-    @KeyExtractor
-    public static Object extract(PlayerChatEvent event) {
-        return Boolean.TRUE;
+    // 实例方法：框架创建单例后调用
+    @EventHandler
+    @EventRoute
+    public void onChat(PlayerChatEvent event) {
+        messageCount++;
+        System.out.println("第 " + messageCount + " 条消息: " + event.getMessage());
     }
+}
+```
 
-    // 工厂始终返回同一个实例
-    @InstanceProvider
-    public static GlobalChatLogger get(Object identity) {
-        return INSTANCE;
+**注册：**
+```java
+eventAPI.register(ChatLogger.class);
+// 框架自动 new ChatLogger() 创建单例，所有 PlayerChatEvent 都路由到这个实例
+```
+
+> **SINGLETON vs OBJECT：** SINGLETON 不需要 `@KeyExtractor`，框架创建一个实例处理所有事件；OBJECT 需要 `@KeyExtractor`，每个身份一个实例。
+
+---
+
+### 用法八：静态全局处理器（STATIC 模式）⭐⭐
+
+当处理器是**纯无状态的 static 方法**（不需要实例字段），用于全局兜底监听（如日志、统计、监控）时，将所有 handler 声明为 `static` 且不声明 `@KeyExtractor`。框架自动判定为 STATIC 模式。
+
+```java
+// 不加 @KeyExtractor！所有 handler 都是 static
+public class EventMonitor {
+
+    // static 方法：无实例开销，直接 MethodHandle 调用
+    @EventHandler
+    @EventRoute
+    public static void onMove(PlayerMoveEvent event) {
+        Metrics.record("player_move");  // 全局监控逻辑，无需实例状态
     }
 
     @EventHandler
     @EventRoute
-    public void onChat(PlayerChatEvent event) {
-        System.out.println(event.getPlayer().getName() + ": " + event.getMessage());
+    public static void onChat(PlayerChatEvent event) {
+        Metrics.record("player_chat");
     }
 }
 ```
+
+**注册：**
+```java
+eventAPI.register(EventMonitor.class);
+// 框架为每个 static handler 生成独立的 EventConsumer，走 tail 列表最后执行
+```
+
+**STATIC 模式特性：**
+- **最后执行**：STATIC 处理器在 EventEngine 的 tail 列表中，保证在所有 OBJECT/SINGLETON 处理器之后执行（兜底语义）
+- **最高性能**：跳过身份提取和实例查找，仅 lambda + MethodHandle(static)，单次分发 ~5ns（比 OBJECT 快 14 倍）
+- **无独占/优先级**：`@EventHandler` 的 `priority`/`exclusive` 在 STATIC 模式下被忽略（注册时打 INFO 日志提示）
+- **无去重**：每个 static handler 独立注册，同一事件类型的多个 static handler 都会执行
+
+> **三种模式选择指南：**
+>
+> | 需求 | 模式 | 标志 |
+> |------|------|------|
+> | 每个玩家/实体独立状态 | OBJECT | 有 `@KeyExtractor` |
+> | 全局共享单例状态 | SINGLETON | 无 `@KeyExtractor` + 实例方法 |
+> | 纯无状态全局兜底 | STATIC | 无 `@KeyExtractor` + 全 static 方法 |
 
 ---
 
@@ -401,16 +448,16 @@ public class GlobalChatLogger {
 
 ---
 
-### `@KeyExtractor`（身份提取，必需）
+### `@KeyExtractor`（身份提取，OBJECT 模式必需）
 
-标记一个 **static 方法**为身份提取器。
+标记一个 **static 方法**为身份提取器。**声明了 `@KeyExtractor` 的包装类走 OBJECT 模式**；不声明则走 SINGLETON/STATIC 模式。
 
 **规则：**
 - 必须 `static`（提取身份时实例尚未创建）
 - 签名：`static IdentityType extract(EventType event)`
 - 返回值 = 身份标识；返回 `null` = 该事件不含此槽位，跳过
 - 同一事件类型可有多个 `@KeyExtractor`（OR 语义）
-- **每个包装类必须至少声明一个**，否则注册被拒绝
+- **仅 OBJECT 模式需要**：不声明时框架按 handler 是否 static 判定 SINGLETON/STATIC 模式
 
 ---
 
@@ -473,6 +520,22 @@ eventAPI.forPlugin("OtherPlugin").scan("com.otherplugin.event");
 | **注册时预排序** | handler 列表在 `register()` 时按优先级排序，`dispatch` 时 TimSort 对已有序列退化为线性扫描 | 排序开销 O(N log N) → O(N) |
 
 > 💡 这些优化对用户透明，不影响 API 使用方式。详见 [DEVELOPER.md 第 10 节](DEVELOPER.md#10-性能优化)。
+
+### 三种模式分发性能基准
+
+基于 [`EventDispatchBenchmark`](../../../test/java/io/github/JiangHu/jframe/event/routing/EventDispatchBenchmark.java)（200 万次测量，JDK 21，预热后 JIT 编译）：
+
+| 模式 | 单次分发耗时 | 吞吐量 | 开销来源 |
+|------|-------------|--------|----------|
+| 基线（直接 static 调用） | 0.5 ns | 2056 M ops/s | 无（理论极限） |
+| **STATIC** | **5.1 ns** | **197 M ops/s** | EventConsumer lambda + MethodHandle(static) |
+| OBJECT | 71.4 ns | 14.0 M ops/s | KeyExtractor.invoke + ConcurrentHashMap.get + MethodHandle |
+| SINGLETON | 86.3 ns | 11.6 M ops/s | 字段访问去重 + MethodHandle(实例) |
+
+**结论：**
+- **STATIC 模式比 OBJECT 快 14 倍**：跳过身份提取和 map 查找，适合高频全局监听
+- 即使最慢的 SINGLETON（86 ns/op），每秒可处理 **1100 万次**，远超游戏服务器事件量（百人服务器每秒数千次事件）
+- 1000 个监听器 × 86 ns = 86 μs/事件，对 TPS 无感知影响
 
 ---
 

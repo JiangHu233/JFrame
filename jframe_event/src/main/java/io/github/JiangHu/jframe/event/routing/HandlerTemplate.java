@@ -121,6 +121,17 @@ public class HandlerTemplate {
         // 预计算 filter 是否为 static：static 方法的 MethodHandle 不含 receiver 参数，
         // invoke 时只能传 event，否则抛 WrongMethodTypeException
         this.filterStatic = this.filterMethod != null && Modifier.isStatic(this.filterMethod.getModifiers());
+
+        // ③ 校验：static handler 不能搭配实例 filter。
+        // STATIC 模式下 target 恒为 null，实例 filter 调用时会 NPE（被 passesCondition 捕获后
+        // 静默返回 false），导致 handler 永远不执行。此处提前报错，帮助开发者发现配置错误。
+        if (this.filterMethod != null && this.handlerStatic && !this.filterStatic) {
+            throw new IllegalArgumentException(
+                    "static handler 不能搭配实例 filter（方法: "
+                            + declaringClass.getName() + "." + method.getName()
+                            + "，filter: " + this.filterMethod.getName()
+                            + "）。STATIC 模式下无实例可用，请将 filter 改为 static。");
+        }
     }
 
     /**
@@ -147,9 +158,11 @@ public class HandlerTemplate {
             return exclusive; // 执行了，返回 exclusive 标记
         } catch (Throwable e) {
             // MethodHandle 直接传播目标方法异常（不像反射包装为 InvocationTargetException），
-            // 故用 catch(Throwable) 确保管线不被中断
+            // 故用 catch(Throwable) 确保管线不被中断。
+            // 注意：STATIC 模式下 target 为 null，不能用 target.getClass()，否则会抛出
+            // 二次 NPE 并彻底掩盖原始异常。改用永不为 null 的 declaringClass。
             throw new RuntimeException(
-                    "事件处理器执行失败: " + target.getClass().getName() + "." + method.getName(), e);
+                    "事件处理器执行失败: " + declaringClass.getName() + "." + method.getName(), e);
         }
     }
 
@@ -280,5 +293,16 @@ public class HandlerTemplate {
 
     public Class<?> getDeclaringClass() {
         return declaringClass;
+    }
+
+    /**
+     * 该 handler 方法是否为 static。
+     * <p>
+     * 用于 {@link HandlerRegistry} 判定包装类的工作模式（STATIC vs SINGLETON）。
+     *
+     * @return true 表示方法是 static（invoke 时不传 receiver）
+     */
+    public boolean isHandlerStatic() {
+        return handlerStatic;
     }
 }
