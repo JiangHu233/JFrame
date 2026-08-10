@@ -1,5 +1,6 @@
 package io.github.JiangHu.jframe.content_template;
 
+import io.github.JiangHu.jframe.core.JFrameLog;
 import io.github.JiangHu.jframe.core.data.reactive.ChangeSet;
 import io.github.JiangHu.jframe.core.data.reactive.DataContext;
 
@@ -186,6 +187,7 @@ public class HierarchicalDataContext extends DataContext {
      * 导致无法被 GC 回收。
      * <p>多次调用安全（幂等）。
      */
+    @Override
     public void dispose() {
         if (disposed) {
             return;
@@ -195,6 +197,36 @@ public class HierarchicalDataContext extends DataContext {
             parent.removeListener(parentChangeListener);
         }
         globalListeners.clear();
+    }
+
+    // ==================== dispose 后防御写入 ====================
+
+    /**
+     * 写入单个键值——dispose 后安全降级(忽略写入,防止向僵尸 context 写入数据)。
+     * <p>dispose 后此 context 已与 parent 断开连接,写入的数据不会被任何监听器感知,
+     * 属于无效操作。防御性地忽略,避免产生难以追踪的僵尸数据。
+     */
+    @Override
+    public HierarchicalDataContext put(String key, Object value) {
+        if (disposed) {
+            return this;
+        }
+        super.put(key, value);
+        return this;
+    }
+
+    /**
+     * 批量写入——dispose 后安全降级(忽略写入)。
+     *
+     * @see #put(String, Object)
+     */
+    @Override
+    public HierarchicalDataContext putAll(Map<String, Object> entries) {
+        if (disposed) {
+            return this;
+        }
+        super.putAll(entries);
+        return this;
     }
 
     // ==================== 内部方法 ====================
@@ -211,9 +243,22 @@ public class HierarchicalDataContext extends DataContext {
             try {
                 listener.accept(changeSet);
             } catch (Exception e) {
-                // 单个监听器异常不影响其他监听器
-                Thread.currentThread().interrupt();
+                // 单个监听器异常不影响其他监听器（仅记录日志，不中断线程）
+                logListenerException(e);
             }
+        }
+    }
+
+    /**
+     * 记录监听器执行异常——安全降级，不中断当前线程。
+     * <p>原实现错误地调用了 {@code Thread.currentThread().interrupt()}，会设置线程中断标志，
+     * 可能干扰后续阻塞操作。监听器异常属于业务层问题，不应影响线程中断状态。
+     */
+    private void logListenerException(Exception e) {
+        try {
+            JFrameLog.warning("HierarchicalDataContext", "parent 变更监听器执行异常: " + e.getMessage());
+        } catch (IllegalStateException ignored) {
+            // Server 尚未初始化（如单元测试环境），静默忽略
         }
     }
 }

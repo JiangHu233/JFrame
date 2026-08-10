@@ -9,6 +9,7 @@ import io.github.JiangHu.jframe.core.JFrameLog;
 import io.github.JiangHu.jframe.core.classloader.PluginClassLoaderFactory;
 import io.github.JiangHu.jframe.core.data.reactive.DataContext;
 import io.github.JiangHu.jframe.core.module.ForPlugin;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -83,6 +84,18 @@ public class TemplateEngine implements ForPlugin<TemplatePluginScope> {
      * @see HierarchicalDataContext
      */
     private final ConcurrentHashMap<String, HierarchicalDataContext> templateGlobals = new ConcurrentHashMap<>();
+
+    /**
+     * 玩家级全局数据上下文映射——按玩家 UUID 隔离的共享数据（第三层，Session 作用域）。
+     * <p>每个玩家 UUID 对应一个 {@link HierarchicalDataContext}，parent 为 {@link #globalData}（第一层，引擎全局）。
+     * 该玩家的所有模板、所有下游模块（scoreboard、bossbar、inventory 等）共享同一实例。
+     * <p><b>核心收益</b>：玩家核心数据（coins、level、player.name 等）独立于具体模板，
+     * 切换计分板时纹丝不动；玩家退出时通过 {@link #removePlayerData} 统一 dispose。
+     *
+     * @see #getPlayerData(UUID)
+     * @see HierarchicalDataContext
+     */
+    private final ConcurrentHashMap<UUID, HierarchicalDataContext> playerGlobals = new ConcurrentHashMap<>();
 
     /** 无参构造：使用默认 Parser 和 Renderer */
     public TemplateEngine() {
@@ -215,6 +228,78 @@ public class TemplateEngine implements ForPlugin<TemplatePluginScope> {
      */
     public DataContext removeTemplateData(String templateName) {
         HierarchicalDataContext removed = templateGlobals.remove(templateName);
+        if (removed != null) {
+            removed.dispose();
+        }
+        return removed;
+    }
+
+    // ==================== 玩家全局数据 API（第三层，Session 作用域） ====================
+
+    /**
+     * 获取指定玩家的全局数据上下文（Session 作用域，该玩家所有模板/下游模块共享）。
+     * <p>首次调用时自动创建 {@link HierarchicalDataContext}，parent 为 {@link #globalData}（引擎全局）。
+     * 后续对同一 UUID 的调用返回同一实例（缓存）。
+     * <p>玩家核心数据（coins、level 等）应存放于此层，切换计分板时不会丢失。
+     *
+     * <pre>{@code
+     * // 存入玩家核心数据（所有计分板共享）
+     * engine.setPlayerData(uuid, "coins", 1000);
+     * engine.setPlayerData(uuid, "level", 42);
+     *
+     * // 计分板 view 以玩家全局为 parent 创建局部层
+     * DataContext playerGlobal = engine.getPlayerData(uuid);
+     * HierarchicalDataContext viewLocal = HierarchicalDataContext.of(playerGlobal);
+     * }</pre>
+     *
+     * @param uuid 玩家 UUID
+     * @return 玩家级全局数据上下文（parent 为引擎全局）
+     * @see HierarchicalDataContext
+     */
+    public DataContext getPlayerData(UUID uuid) {
+        return playerGlobals.computeIfAbsent(uuid,
+                k -> HierarchicalDataContext.of(globalData));
+    }
+
+    /**
+     * 写入单个玩家全局数据（Session 作用域），触发变更通知。
+     * <p>等价于 {@code getPlayerData(uuid).put(key, value)}。
+     *
+     * @param uuid  玩家 UUID
+     * @param key   键名
+     * @param value 值
+     * @return this（链式调用）
+     */
+    public TemplateEngine setPlayerData(UUID uuid, String key, Object value) {
+        getPlayerData(uuid).put(key, value);
+        return this;
+    }
+
+    /**
+     * 批量写入玩家全局数据（只触发一次变更通知）。
+     *
+     * @param uuid 玩家 UUID
+     * @param data 键值对集合
+     * @return this（链式调用）
+     */
+    public TemplateEngine setPlayerDataAll(UUID uuid, java.util.Map<String, Object> data) {
+        if (data != null && !data.isEmpty()) {
+            getPlayerData(uuid).putAll(data);
+        }
+        return this;
+    }
+
+    /**
+     * 移除并释放指定玩家的全局数据上下文。
+     * <p>调用 {@link HierarchicalDataContext#dispose()} 断开与引擎全局的监听器引用，
+     * 然后从内部映射中移除，避免内存泄漏。
+     * <p><b>使用场景</b>：玩家退出游戏时调用，确保释放该玩家所有 Session 级资源。
+     *
+     * @param uuid 玩家 UUID
+     * @return 被移除的数据上下文（可能为 null，如果之前未创建过）
+     */
+    public DataContext removePlayerData(UUID uuid) {
+        HierarchicalDataContext removed = playerGlobals.remove(uuid);
         if (removed != null) {
             removed.dispose();
         }

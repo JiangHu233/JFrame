@@ -1,5 +1,6 @@
 package io.github.JiangHu.jframe.core.data.reactive;
 
+import io.github.JiangHu.jframe.core.JFrameLog;
 import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -58,7 +59,7 @@ import java.util.function.Consumer;
  * @see ChangeSet
  * @see EntangledValue
  */
-public class DataContext {
+public class DataContext implements Disposable {
 
     private final ConcurrentHashMap<String, Object> data = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<Consumer<ChangeSet>> listeners = new CopyOnWriteArrayList<>();
@@ -208,6 +209,18 @@ public class DataContext {
         return this;
     }
 
+    // ===== 生命周期 =====
+
+    /**
+     * 释放资源——基类默认无操作(无外部资源需释放)。
+     * <p>子类(如 {@link io.github.JiangHu.jframe.content_template.HierarchicalDataContext})
+     * override 此方法解除 parent 监听引用。多次调用安全(幂等)。
+     */
+    @Override
+    public void dispose() {
+        // 基类无外部资源,默认 no-op
+    }
+
     // ===== 内部方法 =====
 
     /** 触发变更通知（在锁外执行，单个异常不影响其他监听器） */
@@ -220,9 +233,25 @@ public class DataContext {
             try {
                 listener.accept(changeSet);
             } catch (Exception e) {
-                // 单个监听器异常不影响其他监听器
-                Thread.currentThread().interrupt();
+                // 单个监听器异常不影响其他监听器（仅记录日志，不中断线程）
+                logListenerException(e);
             }
+        }
+    }
+
+    /**
+     * 记录监听器执行异常——安全降级，不中断当前线程。
+     * <p>原实现错误地调用了 {@code Thread.currentThread().interrupt()}，这会设置线程的中断标志，
+     * 可能导致后续的阻塞操作（如 sleep/wait）抛出 InterruptedException，干扰正常逻辑。
+     * 监听器异常属于业务层问题，不应影响线程的中断状态。
+     *
+     * @param e 监听器抛出的异常
+     */
+    private void logListenerException(Exception e) {
+        try {
+            JFrameLog.warning("DataContext", "变更监听器执行异常: " + e.getMessage());
+        } catch (IllegalStateException ignored) {
+            // Server 尚未初始化（如单元测试环境），静默忽略
         }
     }
 

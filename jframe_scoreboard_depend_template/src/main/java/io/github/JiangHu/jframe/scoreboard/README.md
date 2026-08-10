@@ -13,7 +13,8 @@
   - [3. 显示 & 更新](#3-显示--更新)
 - [模板语法](#模板语法)
 - [API 参考](#api-参考)
-- [三层数据粒度](#三层数据粒度)
+- [四层数据粒度](#四层数据粒度)
+- [KeepAlive 与生命周期](#keepalive-与生命周期)
 - [跨插件加载模板](#跨插件加载模板)
 - [完整示例](#完整示例)
 - [最佳实践](#最佳实践)
@@ -51,7 +52,9 @@
 | **响应式更新** | 数据变化自动触发重新渲染，无需手动刷新 |
 | **SpEL 表达式** | `{{ }}` 插值 + `<if>` 条件 + `<each>` 循环，SpEL 语法全覆盖 |
 | **三种发送模式** | 指定玩家 / 条件筛选 / 全体广播 |
-| **三层数据粒度** | 引擎全局 / 模板全局 / 玩家本地，像前端状态管理一样分层管理数据 |
+| **四层数据粒度** | 引擎全局 / 玩家全局(Session) / 计分板局部(Request)，像前端状态管理一样分层管理数据 |
+| **KeepAlive 缓存** | 切换计分板时保留数据和渲染状态，切回时秒恢复，不丢数据 |
+| **自动清理** | EffectScope 集中管理副作用，玩家退出自动释放全部资源，杜绝内存泄漏 |
 | **增量渲染** | 基于依赖图只重新渲染受影响的行，而非全量重建 |
 | **Spring 集成** | 一行 `@Autowired ScoreboardAPI` 即可使用 |
 
@@ -66,10 +69,10 @@
                        │ 委托
 ┌──────────────────────▼──────────────────────────────┐
 │                  ScoreboardManager                   │  ← 管理器
-│         模板注册表 + 玩家视图映射                       │
+│      模板注册表 + KeepAlive 视图缓存                    │
 │    templates:      Map<String, ScoreboardTemplate>   │
-│    templateGlobals: Map<String, HierarchicalDataContext> │
-│    views:          Map<UUID,    ScoreboardView>      │
+│    cachedViews:    Map<UUID, Map<String, View>>      │
+│    activeTemplate: Map<UUID, String>                 │
 └──────┬───────────────────────────────┬───────────────┘
        │                               │
        ▼                               ▼
@@ -253,15 +256,23 @@ scoreboard.hide(player);
 | `hideAll()` | 隐藏所有玩家的计分板 |
 | `onPlayerQuit(player)` | 玩家退出时清理（应在事件中调用） |
 
-#### 玩家数据（第三层：玩家本地）
+#### 玩家全局数据（Session 作用域：该玩家所有计分板共享）
 
 | 方法 | 说明 |
 |------|------|
-| `update(player, key, value)` | 更新单玩家数据（自动刷新） |
-| `update(player, Map)` | 批量更新单玩家数据（一次刷新） |
-| `updateAll(key, value)` | 更新所有玩家的同一数据项 |
-| `updateAll(Map)` | 批量更新所有玩家的同一批数据 |
-| `getDataContext(player)` | 获取玩家数据上下文（可直接操作） |
+| `updatePlayer(player, key, value)` | 更新玩家全局数据（**切换计分板不丢**） |
+| `updatePlayerAll(player, Map)` | 批量更新玩家全局数据 |
+| `getPlayerDataContext(player)` | 获取玩家全局数据上下文 |
+
+#### 计分板局部数据（Request 作用域：仅当前激活计分板）
+
+| 方法 | 说明 |
+|------|------|
+| `update(player, key, value)` | 更新当前计分板局部数据（自动刷新） |
+| `update(player, Map)` | 批量更新局部数据（一次刷新） |
+| `updateAll(key, value)` | 更新所有玩家当前计分板的同一数据项 |
+| `updateAll(Map)` | 批量更新所有玩家当前计分板的同一批数据 |
+| `getDataContext(player)` | 获取当前计分板局部数据上下文 |
 
 #### 模板数据（第二层：模板全局）
 
@@ -311,32 +322,35 @@ data.get("coins");                        // 读取
 data.onChange(change -> { ... });         // 注册监听器
 ```
 
-## 三层数据粒度
+## 四层数据粒度
 
-本模块支持**三层数据粒度**，类似前端框架的状态管理分层：
+本模块采用**四层数据粒度**，对齐 Java EE 的 Application / Session / Request 作用域模型，像前端框架的状态管理一样分层管理数据：
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  第一层：引擎全局（Engine Global）                          │
-│  所有模板、所有玩家共享                                      │
+│  第一层：引擎全局（Engine Global）— Application           │
+│  所有玩家共享，进程级生命周期                                │
 │  例：服务器名、在线人数、全局公告                             │
 │  API: updateGlobal() / getGlobalDataContext()             │
 ├──────────────────────────────────────────────────────────┤
-│  第二层：模板全局（Template Global）                        │
-│  同一模板的所有玩家共享                                      │
-│  例：公会战分数、副本进度、队伍信息                          │
-│  API: updateTemplate() / getTemplateDataContext()         │
+│  第二层：玩家全局（Player Global）— Session               │
+│  该玩家所有计分板、所有下游模块共享                          │
+│  例：玩家名称、金币、等级（切换计分板不丢）                   │
+│  API: updatePlayer() / getPlayerDataContext()             │
 ├──────────────────────────────────────────────────────────┤
-│  第三层：玩家本地（Player Local）                           │
-│  仅该玩家可见                                              │
-│  例：玩家名称、金币、等级                                    │
+│  第三层：计分板局部（View Local）— Request                │
+│  仅当前激活的计分板可见                                      │
+│  例：临时状态、当前面板特有数据                              │
 │  API: update() / getDataContext()                         │
 └──────────────────────────────────────────────────────────┘
+
+  ※ 模板全局（Template Global）作为可选独立层保留 API，
+    不强制进入主 parent 链。API: updateTemplate()
 ```
 
 ### 读取优先级
 
-**玩家本地 > 模板全局 > 引擎全局**
+**计分板局部 > 玩家全局 > 引擎全局**
 
 同名 key 时，层级越低（越靠近玩家）优先级越高。
 
@@ -345,56 +359,104 @@ data.onChange(change -> { ... });         // 注册监听器
 每层 `put()` 只写入自己的存储，**不影响父层**。
 
 ```java
-// 引擎全局写入
+// 引擎全局写入（所有玩家共享）
 scoreboard.updateGlobal("serverName", "我的服务器");
 
-// 模板全局写入
-scoreboard.updateTemplate("main", "guildScore", 5000);
+// 玩家全局写入（该玩家所有计分板共享，切换不丢）
+scoreboard.updatePlayer(player, "coins", 1000);
 
-// 玩家本地写入
-scoreboard.update(player, "coins", 1000);
+// 计分板局部写入（仅当前激活计分板可见）
+scoreboard.update(player, "tmpKey", "tmpVal");
 ```
 
 ### 变更传播
 
-- **父层变更 → 向下传播**：引擎全局数据变化时，所有模板全局和玩家本地都会收到通知并刷新
-- **本地变更 → 不向上传播**：玩家本地数据变化不会影响模板全局或引擎全局
+- **父层变更 → 向下传播**：引擎全局数据变化时，所有玩家全局和计分板局部都会收到通知并刷新
+- **局部变更 → 不向上传播**：计分板局部数据变化不会影响玩家全局或引擎全局
 
-### 模板间隔离
+### 玩家全局 vs 计分板局部——如何选择？
 
-不同模板的模板全局数据**互相隔离**：
+| 场景 | 推荐层 | API |
+|------|--------|-----|
+| 玩家核心数据（coins、level、player.name），切换计分板后仍需保留 | **玩家全局** | `updatePlayer()` |
+| 当前面板临时数据（如战斗面板的 buff 倒计时），切走后不需要 | **计分板局部** | `update()` |
 
-```java
-// "main" 模板的玩家看到 guildScore = 5000
-scoreboard.updateTemplate("main", "guildScore", 5000);
+> **关键区别**：玩家全局数据在切换计分板时**纹丝不动**；计分板局部数据随 view 的
+> deactivate/reactivate 生命周期走（KeepAlive 缓存命中时保留，否则随 dispose 释放）。
 
-// "admin" 模板的玩家看不到这个值（除非自己模板也设置了）
-scoreboard.updateTemplate("admin", "guildScore", 9999);
-```
-
-### 模板中使用三层混合数据
+### 模板中使用四层混合数据
 
 ```xml
 <template>
     <title>§e{{serverName}}</title>                    <!-- 引擎全局 -->
-    <line>§7公会战: §f{{guildScore}}</line>             <!-- 模板全局 -->
-    <line>§7玩家: §f{{player.name}}</line>              <!-- 玩家本地 -->
-    <line>§7金币: §6{{coins}}</line>                    <!-- 玩家本地 -->
+    <line>§7玩家: §f{{player.name}}</line>              <!-- 玩家全局 -->
+    <line>§7金币: §6{{coins}}</line>                    <!-- 玩家全局 -->
+    <line>§7Buff: §d{{buffTimer}}</line>                <!-- 计分板局部 -->
 </template>
 ```
 
-> **原理**：[`ScoreboardManager.show()`](ScoreboardManager.java) 内部为每个玩家创建三层
+> **原理**：[`ScoreboardManager.show()`](ScoreboardManager.java) 内部为每个玩家创建
 > [`HierarchicalDataContext`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/HierarchicalDataContext.java)
-> 父链：`玩家本地 → 模板全局 → 引擎全局`。渲染时自动合并三层数据，
-> 玩家退出时自动 `dispose()` 清理监听器引用，模板注销时自动释放模板全局数据。
+> 父链：`计分板局部 → 玩家全局 → 引擎全局`。玩家全局由
+> [`TemplateEngine`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/TemplateEngine.java)
+> 统一管理（Session 作用域），玩家退出时自动 `dispose()` 清理。
 
-### 三层对比表
+### 四层对比表
 
-| 层级 | 作用域 | 典型场景 | API |
-|------|--------|----------|-----|
-| **引擎全局** | 所有模板 + 所有玩家 | 服务器名、在线人数、全局公告 | `updateGlobal()` |
-| **模板全局** | 同一模板的所有玩家 | 公会战分数、副本进度、队伍信息 | `updateTemplate()` |
-| **玩家本地** | 单个玩家 | 玩家名称、金币、等级 | `update()` |
+| 层级 | 作用域 | 生命周期 | 典型场景 | API |
+|------|--------|----------|----------|-----|
+| **引擎全局** | 所有玩家 | Application | 服务器名、在线人数 | `updateGlobal()` |
+| **玩家全局** | 单个玩家 | Session | 玩家名称、金币、等级 | `updatePlayer()` |
+| **计分板局部** | 单个计分板 | Request | 面板临时状态 | `update()` |
+| *模板全局* | *同模板玩家* | *Application* | *公会战分数（可选）* | `updateTemplate()` |
+
+---
+
+## KeepAlive 与生命周期
+
+### 三段式生命周期
+
+[`ScoreboardView`](ScoreboardView.java) 采用 KeepAlive 模式，切换计分板时**不销毁**旧视图，而是停用（deactivate）保留状态：
+
+| 方法 | 显示 | dataContext | 渲染监听 | 用途 |
+|------|------|-------------|----------|------|
+| `show` / `reactivate` | 显示 | 不动 | 注册 | 进入或恢复激活 |
+| `deactivate` | 隐藏 | **保留** | 移除（停渲染） | 切换/隐藏（KeepAlive） |
+| `dispose` | 隐藏 | **销毁** | 全部摘除 | 玩家退出 |
+
+### 切换计分板的数据保留
+
+```
+玩家显示 "main" 计分板
+    ↓ show(player, "admin")
+"main" view → deactivate（数据/渲染状态保留在缓存）
+"admin" view → reactivate（从缓存恢复，秒显示）
+    ↓ show(player, "main")
+"admin" view → deactivate
+"main" view → reactivate（coins 等玩家全局数据从未离开）
+```
+
+> **核心保证**：玩家全局数据（`updatePlayer` 写入）独立于具体计分板，
+> 无论怎么切换都**不会丢失**。计分板局部数据（`update` 写入）在 KeepAlive 缓存命中时保留。
+
+### EffectScope 自动清理
+
+[`EffectScope`](../../jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EffectScope.java)
+集中管理 view 的全部副作用（监听器、dataContext），dispose 时自动执行清理链，**从根上杜绝内存泄漏**：
+
+```
+ScoreboardView 构造时：
+    effectScope.register(dataContext::dispose)
+
+玩家退出 onPlayerQuit(player)：
+    view.dispose(player)
+        → effectScope.dispose()
+            → dataContext.dispose()  // 摘除对玩家全局的监听引用
+    engine.removePlayerData(uuid)     // dispose 玩家全局，摘除对引擎全局的监听引用
+```
+
+> **设计灵感**：对齐 Vue 3 的 `effectScope`——注册副作用时一并注册清理逻辑，
+> scope 销毁时框架自动执行全部清理，无需开发者手动逐个摘除。
 
 ## 跨插件加载模板
 
@@ -523,28 +585,27 @@ public void onGameModeChange(PlayerGameModeChangeEvent event) {
 }
 ```
 
-### 场景：三层数据混合使用
+### 场景：四层数据混合使用
 
 ```java
 // 第一层：引擎全局（所有玩家共享）
 scoreboard.updateGlobal("serverName", "我的服务器");
 scoreboard.updateGlobal("online", server.getOnlinePlayers().size());
 
-// 第二层：模板全局（同一模板的玩家共享）
-scoreboard.updateTemplate("guildwar", "redScore", 3);
-scoreboard.updateTemplate("guildwar", "blueScore", 2);
+// 第二层：玩家全局（该玩家所有计分板共享，切换不丢）
+scoreboard.updatePlayer(player, "kills", 15);
+scoreboard.updatePlayer(player, "deaths", 3);
 
-// 第三层：玩家本地
-scoreboard.update(player, "kills", 15);
-scoreboard.update(player, "deaths", 3);
+// 第三层：计分板局部（仅当前激活计分板）
+scoreboard.update(player, "buffTimer", 30);
 ```
 
 ```xml
-<!-- 模板中混合引用三层 -->
+<!-- 模板中混合引用四层 -->
 <template>
-    <title>§e{{serverName}} §7| §f公会战</title>   <!-- 引擎全局 -->
-    <line>§c红队: {{redScore}} §9蓝队: {{blueScore}}</line>  <!-- 模板全局 -->
-    <line>§7击杀: §f{{kills}} §7死亡: §f{{deaths}}</line>    <!-- 玩家本地 -->
+    <title>§e{{serverName}} §7| §f战斗面板</title>  <!-- 引擎全局 -->
+    <line>§7击杀: §f{{kills}} §7死亡: §f{{deaths}}</line>    <!-- 玩家全局 -->
+    <line>§dBuff: {{buffTimer}}s</line>                       <!-- 计分板局部 -->
 </template>
 ```
 
@@ -555,8 +616,9 @@ scoreboard.update(player, "deaths", 3);
 3. **选择正确的数据层**：
    - 所有玩家共享 → `updateGlobal()`
    - 同模板玩家共享 → `updateTemplate()`
-   - 仅当前玩家 → `update()`
-4. **退出清理**：在 `PlayerQuitEvent` 中调用 `onPlayerQuit(player)` 避免内存泄漏
+   - 玩家核心数据（切换不丢） → `updatePlayer()`
+   - 仅当前计分板 → `update()`
+4. **退出清理**：在 `PlayerQuitEvent` 中调用 `onPlayerQuit(player)`，框架自动 dispose 全部缓存视图和玩家全局数据，杜绝内存泄漏
 5. **行数限制**：Nukkit 侧边栏最多 15 行，单行最长 30 字符（见 [`ScoreboardConstants`](ScoreboardConstants.java:14)）
 
 ## 依赖模块

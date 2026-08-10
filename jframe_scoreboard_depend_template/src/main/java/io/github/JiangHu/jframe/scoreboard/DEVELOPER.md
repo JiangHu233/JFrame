@@ -11,8 +11,8 @@
   - [1. 模板编译与缓存](#1-模板编译与缓存)
   - [2. 响应式更新机制](#2-响应式更新机制)
   - [3. Nukkit 原生 API 架构](#3-nukkit-原生-api-架构)
-  - [4. 三层数据粒度](#4-三层数据粒度)
-  - [5. 玩家退出清理](#5-玩家退出清理)
+  - [4. 四层数据粒度](#4-四层数据粒度)
+  - [5. 生命周期与 KeepAlive](#5-生命周期与-keepalive)
 - [Spring 集成](#spring-集成)
 - [模板引擎内部原理](#模板引擎内部原理)
 
@@ -71,7 +71,7 @@ jframe_scoreboard/
 
 ## 核心设计
 
-### 1. 三层架构
+### 1. 类架构分层（API / Manager / View）
 
 ```
 ScoreboardAPI（门面）
@@ -79,6 +79,8 @@ ScoreboardAPI（门面）
          ├→ ScoreboardTemplate（模板配置）  ← 静态：注册一次
          └→ ScoreboardView（玩家视图）      ← 动态：每玩家一个
 ```
+
+> 注意：这里的「分层」指**类职责划分**（API → Manager → View），与下文 [4. 四层数据粒度](#4-四层数据粒度)（数据作用域划分）是不同维度。
 
 **为什么分三层？**
 - **API**：对用户隐藏内部细节，提供简洁的方法签名
@@ -149,44 +151,46 @@ dataContext.removeListener(changeListener);
 颜色代码追加在文本末尾且后面无可见字符，玩家不可见，不影响显示效果。
 `show()` / `applyFullUpdate()` / `applyPerLineUpdate()` 内部自动调用此方法。
 
-### 4. 三层数据粒度
+### 4. 四层数据粒度
 
-本模块支持三层数据粒度，通过 [`HierarchicalDataContext`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/HierarchicalDataContext.java) 多级父链实现。
+本模块采用**四层数据粒度**，通过 [`HierarchicalDataContext`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/HierarchicalDataContext.java) 多级父链实现，对齐 Java EE 的 Application / Session / Request 作用域模型。
 
-> **架构说明**：三层中的**前两层（引擎全局 + 模板全局）由 [`TemplateEngine`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/TemplateEngine.java) 统一管理**，
-> 本模块（[`ScoreboardManager`](ScoreboardManager.java)）通过委托调用 `engine.getTemplateData()` / `engine.setTemplateData()` 等方法操作模板全局数据。
-> 这样设计使得 inventory、bossbar 等其他模块也能共享同一套三层数据架构。
+> **架构说明**：四层中的**引擎全局 + 玩家全局由 [`TemplateEngine`](../../jframe_template/src/main/java/io/github/JiangHu/jframe/content_template/TemplateEngine.java) 统一管理**，
+> 本模块（[`ScoreboardManager`](ScoreboardManager.java)）通过委托调用 `engine.getPlayerData()` / `engine.setPlayerData()` 等方法操作玩家全局数据。
+> 这样设计使得 inventory、bossbar 等其他模块也能共享同一套四层数据架构。
 
 ```
-引擎全局（engine.getGlobalData）    ← TemplateEngine 持有，所有模块共享
+引擎全局（engine.getGlobalData）    ← TemplateEngine 持有，所有玩家共享（Application）
     ↑ parent
-模板全局（engine.getTemplateData）  ← TemplateEngine 持有，按模板名隔离
+玩家全局（engine.getPlayerData）    ← TemplateEngine 持有，按 UUID 隔离（Session）
     ↑ parent
-玩家本地（HierarchicalDataContext）  ← ScoreboardView 持有，每玩家独立
+计分板局部（HierarchicalDataContext） ← ScoreboardView 持有，每计分板独立（Request）
 ```
+
+> 模板全局（`engine.getTemplateData`）作为可选独立层保留 API，不强制进入主 parent 链。
 
 #### 父链构建
 
-[`ScoreboardManager.show()`](ScoreboardManager.java) 内部为每个玩家构建三层父链：
+[`ScoreboardManager.show()`](ScoreboardManager.java) 内部为每个玩家构建四层父链：
 
 ```java
-// 第一层：引擎全局（TemplateEngine 持有）
+// 第一层：引擎全局（TemplateEngine 持有，Application 作用域）
 DataContext engineGlobal = engine.getGlobalData();
 
-// 第二层：模板全局（委托 TemplateEngine 管理，按模板名缓存）
-DataContext templateGlobal = engine.getTemplateData(templateName);
-// → 内部 HierarchicalDataContext.of(engineGlobal)
+// 第二层：玩家全局（委托 TemplateEngine 管理，Session 作用域，切换计分板不丢）
+DataContext playerGlobal = engine.getPlayerData(uuid);
+// → 内部 new HierarchicalDataContext(engineGlobal)
 
-// 第三层：玩家本地（每玩家独立）
-HierarchicalDataContext playerData = HierarchicalDataContext.of(templateGlobal);
+// 第三层：计分板局部（每计分板独立，Request 作用域）
+HierarchicalDataContext viewData = new HierarchicalDataContext(playerGlobal);
 ```
 
 #### 读取优先级
 
-`HierarchicalDataContext.asMap()` 先合并 parent（模板全局 → 引擎全局），再覆盖 local（玩家本地）：
+`HierarchicalDataContext.asMap()` 先合并 parent（玩家全局 → 引擎全局），再覆盖 local（计分板局部）：
 
 ```
-玩家本地 > 模板全局 > 引擎全局
+计分板局部 > 玩家全局 > 引擎全局
 ```
 
 #### 写入隔离
@@ -194,40 +198,81 @@ HierarchicalDataContext playerData = HierarchicalDataContext.of(templateGlobal);
 每层 `put()` 只写入自己的存储，不影响父层：
 
 ```java
-playerData.put("coins", 1000);                    // 只写入玩家本地
-engine.setTemplateData(name, "score", 500);       // 只写入模板全局（委托）
-engine.setGlobal("online", 42);                   // 只写入引擎全局
+viewData.put("buffTimer", 30);                  // 只写入计分板局部
+engine.setPlayerData(uuid, "coins", 1000);      // 只写入玩家全局（委托）
+engine.setGlobal("online", 42);                 // 只写入引擎全局
 ```
 
 #### 变更传播
 
 - **父层变更 → 向下传播**：`HierarchicalDataContext.onChange()` 同时注册到本地和 parent，
   parent 变化时通过 `onParentChange` 回调通知子层
-- **本地变更 → 不向上传播**：子层 `put()` 不会触发 parent 的 `onChange`
+- **局部变更 → 不向上传播**：子层 `put()` 不会触发 parent 的 `onChange`
 
-#### 资源释放
+#### 玩家全局 vs 计分板局部
 
-- **玩家退出**：`onPlayerQuit()` 调用 `view.hide()` → `dataContext.dispose()`，
-  自动移除玩家本地对模板全局的监听器引用
-- **模板注销**：`removeTemplate()` 调用 `engine.removeTemplateData(name)`，
-  TemplateEngine 内部自动调用模板全局的 `dispose()`，移除对引擎全局的监听器引用
+| 维度 | 玩家全局（Session） | 计分板局部（Request） |
+|------|---------------------|----------------------|
+| API | `updatePlayer()` / `engine.setPlayerData()` | `update()` / `viewData.put()` |
+| 切换计分板 | **数据保留**（独立于 view） | 随 view 的 deactivate/reactivate 走 |
+| 玩家退出 | `engine.removePlayerData()` 销毁 | 随 view dispose 销毁 |
+| 典型数据 | coins、level、player.name | buffTimer、面板临时状态 |
 
-### 5. 玩家退出清理
+### 5. 生命周期与 KeepAlive
 
-[`ScoreboardManager.onPlayerQuit()`](ScoreboardManager.java:288) 执行完整的资源释放：
+[`ScoreboardView`](ScoreboardView.java) 采用 **KeepAlive 模式**，三段式生命周期管理：
+
+#### 三段式生命周期
+
+| 方法 | 显示 | dataContext | 渲染监听 | 触发场景 |
+|------|------|-------------|----------|----------|
+| `show` / `reactivate` | 显示 | 不动 | 注册 | 进入或恢复激活 |
+| `deactivate` | 隐藏 | **保留** | 移除（停渲染） | 切换/隐藏（KeepAlive） |
+| `dispose` | 隐藏 | **销毁** | 全部摘除 | 玩家退出 |
+
+#### EffectScope 自动清理
+
+[`EffectScope`](../../jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EffectScope.java)
+集中管理 view 的全部副作用（监听器、dataContext），dispose 时自动执行清理链：
+
+```java
+// ScoreboardView 构造时注册清理逻辑
+effectScope.register(dataContext::dispose);
+
+// dispose() 时
+effectScope.dispose()
+    → dataContext.dispose()   // 摘除对玩家全局的监听引用，杜绝内存泄漏
+```
+
+> **设计灵感**：对齐 Vue 3 的 `effectScope`——注册副作用时一并注册清理逻辑，
+> scope 销毁时框架自动执行全部清理，无需开发者手动逐个摘除监听器。
+
+#### 玩家退出清理
+
+[`ScoreboardManager.onPlayerQuit()`](ScoreboardManager.java) 执行完整的资源释放：
 
 ```
 onPlayerQuit(player)
     ↓
-hide(player)
-    ├→ view.hide()
-    │    ├→ dataContext.removeListener(changeListener)   ← 移除监听器
-    │    ├→ dataContext.dispose()                         ← 释放 HierarchicalDataContext
-    │    └→ nukkitScoreboard.removeViewer(player, slot)  ← Nukkit 原生移除
-    └→ views.remove(uuid)                                  ← 移除映射
+遍历该玩家所有 cachedViews
+    ├→ view.deactivate()         ← 停渲染、移除监听
+    └→ view.dispose()            ← effectScope.dispose() → dataContext.dispose()
+cachedViews.remove(uuid)         ← 移除全部缓存
+engine.removePlayerData(uuid)    ← dispose 玩家全局，摘除对引擎全局的监听引用
 ```
 
 > **重要**：必须在 `PlayerQuitEvent` 中调用 `scoreboard.onPlayerQuit(player)`，否则会内存泄漏。
+
+#### 切换计分板的数据保留
+
+```
+show(player, "admin")
+    ├→ 旧 view("main").deactivate()    ← 数据/渲染状态保留在 cachedViews
+    └→ 新 view("admin").reactivate()   ← 从缓存恢复，秒显示
+```
+
+> **核心保证**：玩家全局数据（`updatePlayer` 写入）独立于具体计分板，
+> 无论怎么切换都**不会丢失**。计分板局部数据在 KeepAlive 缓存命中时保留。
 
 ## Spring 集成
 

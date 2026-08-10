@@ -30,8 +30,8 @@ import java.util.function.Predicate;
  *   <li><b>模板管理</b>：{@link #loadTemplate} 注册模板（支持 XML 源码或预编译 Template）</li>
  *   <li><b>显示控制</b>：{@link #show}（指定玩家）/ {@link #showIf}（条件筛选）/ {@link #showAll}（全体）</li>
  *   <li><b>隐藏控制</b>：{@link #hide} / {@link #hideAll}</li>
- *   <li><b>数据更新</b>：{@link #update}（单玩家）/ {@link #updateAll}（全体同 key）/ {@link #updateGlobal}（全局共享）—— 自动触发重新渲染</li>
- *   <li><b>数据访问</b>：{@link #getDataContext} 获取玩家专属数据上下文 / {@link #getGlobalDataContext} 获取全局数据上下文</li>
+ *   <li><b>数据更新</b>：{@link #updatePlayer}（玩家全局 Session）/ {@link #update}（单计分板局部）/ {@link #updateAll}（全体同 key）/ {@link #updateGlobal}（引擎全局）—— 自动触发重新渲染</li>
+ *   <li><b>数据访问</b>：{@link #getPlayerDataContext}（玩家全局）/ {@link #getDataContext}（单计分板局部）/ {@link #getGlobalDataContext}（引擎全局）</li>
  * </ul>
  *
  * <h3>使用示例</h3>
@@ -48,8 +48,11 @@ import java.util.function.Predicate;
  * // 2. 给指定玩家显示计分板
  * scoreboard.show(player, "main");
  *
- * // 3. 更新数据（自动刷新计分板）
- * scoreboard.update(player, "coins", 1000);
+ * // 3. 更新玩家全局数据（Session，所有计分板共享，切换不丢）
+ * scoreboard.updatePlayer(player, "coins", 1000);
+ *
+ * // 3b. 更新当前计分板局部数据（仅该 view 可见）
+ * scoreboard.update(player, "tmpKey", "tmpVal");
  *
  * // 4. 给所有在线玩家显示
  * scoreboard.showAll("main");
@@ -225,7 +228,30 @@ public class ScoreboardAPI implements ForPlugin<ScoreboardPluginScope> {
     // ==================== 数据更新 ====================
 
     /**
-     * 更新指定玩家的计分板数据，自动触发重新渲染。
+     * 更新指定玩家的<b>玩家全局数据</b>（Session 作用域），自动触发重新渲染。
+     * <p>玩家全局数据对该玩家所有计分板、所有下游模块共享。适合存放玩家核心数据
+     * （coins、level、player.name 等），切换计分板时不会丢失。
+     *
+     * @param player 目标玩家
+     * @param key    数据键名
+     * @param value  数据值
+     */
+    public void updatePlayer(Player player, String key, Object value) {
+        manager.updatePlayer(player, key, value);
+    }
+
+    /**
+     * 批量更新指定玩家的玩家全局数据（只触发一次变更通知）。
+     *
+     * @param player  目标玩家
+     * @param entries 键值对
+     */
+    public void updatePlayerAll(Player player, Map<String, Object> entries) {
+        manager.updatePlayerAll(player, entries);
+    }
+
+    /**
+     * 更新指定玩家<b>当前激活计分板</b>的局部数据（Request 作用域），自动触发增量渲染。
      *
      * @param player 目标玩家
      * @param key    数据键名
@@ -314,10 +340,22 @@ public class ScoreboardAPI implements ForPlugin<ScoreboardPluginScope> {
     // ==================== 数据访问 ====================
 
     /**
-     * 获取指定玩家的数据上下文（可直接操作数据，变更会自动触发渲染）。
+     * 获取指定玩家的<b>玩家全局</b>数据上下文（Session 作用域）。
+     * <p>该玩家所有计分板、所有下游模块共享同一实例。变更会自动传播到所有以它为 parent 的 view。
      *
      * @param player 目标玩家
-     * @return 数据上下文，不存在返回 {@code null}
+     * @return 玩家全局数据上下文
+     */
+    public DataContext getPlayerDataContext(Player player) {
+        return manager.getPlayerDataContext(player);
+    }
+
+    /**
+     * 获取指定玩家<b>当前激活计分板</b>的局部数据上下文（Request 作用域）。
+     * <p>变更会自动触发该 view 的增量渲染。
+     *
+     * @param player 目标玩家
+     * @return 局部数据上下文，不存在返回 {@code null}
      */
     public DataContext getDataContext(Player player) {
         return manager.getDataContext(player);

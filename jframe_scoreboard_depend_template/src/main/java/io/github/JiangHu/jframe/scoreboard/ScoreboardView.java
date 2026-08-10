@@ -1,6 +1,7 @@
 package io.github.JiangHu.jframe.scoreboard;
 
 import cn.nukkit.Player;
+import cn.nukkit.Server;
 import cn.nukkit.network.protocol.types.SortOrder;
 import cn.nukkit.scoreboard.scoreboard.IScoreboard;
 import cn.nukkit.scoreboard.scoreboard.Scoreboard;
@@ -11,6 +12,7 @@ import io.github.JiangHu.jframe.content_template.TemplateEngine;
 import io.github.JiangHu.jframe.content_template.render.IncrementalRenderer;
 import io.github.JiangHu.jframe.core.data.reactive.ChangeSet;
 import io.github.JiangHu.jframe.core.data.reactive.DataContext;
+import io.github.JiangHu.jframe.core.data.reactive.EffectScope;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -19,6 +21,20 @@ import java.util.function.Consumer;
 /**
  * 单个玩家的计分板视图——将 {@link ScoreboardTemplate}（模板配置）、{@link DataContext}（数据）
  * 和 <b>Nukkit 原生 Scoreboard API</b> 三者绑定。
+ *
+ * <h3>三段式生命周期（KeepAlive）</h3>
+ * <table>
+ *   <tr><th>方法</th><th>显示</th><th>dataContext</th><th>渲染监听</th><th>用途</th></tr>
+ *   <tr><td>{@link #show} / {@link #reactivate}</td><td>显示</td><td>不动</td><td>注册</td><td>进入或恢复激活</td></tr>
+ *   <tr><td>{@link #deactivate}</td><td>隐藏</td><td>保留</td><td>移除（停渲染）</td><td>切换/隐藏（KeepAlive）</td></tr>
+ *   <tr><td>{@link #dispose}</td><td>隐藏</td><td>销毁</td><td>全部摘除</td><td>玩家退出</td></tr>
+ * </table>
+ * <p>切换计分板时调用 deactivate（保留数据和渲染状态），玩家退出时调用 dispose（彻底释放）。
+ * {@link #hide} 为 {@link #deactivate} 的向后兼容别名。
+ *
+ * <h3>EffectScope 自动清理</h3>
+ * <p>构造时将 {@code dataContext::dispose} 注册到 {@link EffectScope}。dispose 时 effectScope
+ * 自动执行清理链，保证 dataContext 与 parent（玩家全局）的监听引用必定断开，杜绝内存泄漏。
  *
  * <h3>核心机制（原生 API + 三层增量更新）</h3>
  * <ol>
@@ -43,26 +59,21 @@ import java.util.function.Consumer;
  *     无变更       → 跳过（不触发任何网络操作）
  * }</pre>
  *
- * <h3>Nukkit 原生 API 优势</h3>
- * <p>使用 {@link IScoreboard} 原生接口，由 Nukkit-MOT 内部处理客户端同步逻辑（自动发包）。
- * {@code addViewer} 时自动发送 {@code SetDisplayObjectivePacket} + 全部行；
- * {@code addLine} / {@code removeLine} 时自动发送增量 {@code SetScorePacket}。
- *
  * <h3>FakeScorer 管理与 makeUniqueName</h3>
  * <p>每行使用 {@link FakeScorer}（自定义文本行）作为 scorer。FakeScorer 的 {@code equals/hashCode}
  * 基于 fakeName，<b>重复 fakeName 会导致行合并</b>（Map key 覆盖）。因此通过 {@link #makeUniqueName}
  * 给每行追加唯一颜色代码后缀（{@code §0}~{@code §f}），确保每行唯一。
  *
  * <h3>线程安全</h3>
- * <p>所有操作同步执行。Scoreboard 操作应在主线程调用，
- * 若从异步线程更新数据，建议通过 {@code Server.getScheduler().scheduleTask} 调度。
+ * <p>所有操作同步执行。{@link #refresh} 自动检测主线程，若从异步线程触发数据变更，
+ * 自动调度到主线程执行（Nukkit Scoreboard 操作必须在主线程发包）。
  *
  * @see ScoreboardTemplate
  * @see IScoreboard
  * @see FakeScorer
  * @see DataContext
+ * @see EffectScope
  * @see IncrementalRenderer
- * @see IncrementalRenderResult
  */
 public class ScoreboardView {
 
@@ -82,31 +93,37 @@ public class ScoreboardView {
     private final DataContext dataContext;
     private final TemplateEngine engine;
 
-    /** Nukkit 原生 Scoreboard 对象（show 后非 null，hide 后置 null） */
+    /** Nukkit 原生 Scoreboard 对象（激活时非 null，deactivate/dispose 后置 null） */
     private IScoreboard nukkitScoreboard;
 
     /** 每行的 FakeScorer（与 currentLines 一一对应，用于增量更新定位旧行） */
     private List<FakeScorer> scorers = new ArrayList<>();
 
-    /** 当前绑定的玩家（show 时设置，hide 时清空） */
+    /** 当前绑定的玩家（激活时设置，deactivate 时清空） */
     private Player currentPlayer;
 
-    /** 增量渲染器（有状态，每个 View 独立持有） */
+    /** 增量渲染器（有状态，每个 View 独立持有；deactivate 时保留用于 KeepAlive） */
     private IncrementalRenderer incrementalRenderer;
 
-    /** 当前显示的行文本镜像（用于判断是否需要更新） */
+    /** 当前显示的行文本镜像（用于判断是否需要更新；deactivate 时保留用于 KeepAlive） */
     private List<String> currentLines = new ArrayList<>();
 
-    /** DataContext 变更监听器引用（用于 hide 时移除） */
+    /** DataContext 变更监听器引用（用于 deactivate/dispose 时移除） */
     private final Consumer<ChangeSet> changeListener;
 
-    /** 是否已显示 */
+    /** 副作用作用域——集中管理清理逻辑，dispose 时自动执行全部清理链 */
+    private final EffectScope effectScope = new EffectScope();
+
+    /** 是否正在显示（激活） */
     private boolean shown = false;
+
+    /** 是否已彻底销毁（dispose 后不可再用） */
+    private volatile boolean disposed = false;
 
     /**
      * @param playerId    玩家 UUID
      * @param sbTemplate  计分板模板配置
-     * @param dataContext 玩家专属数据上下文
+     * @param dataContext 玩家专属数据上下文（parent 应为玩家全局，构成单计分板局部层）
      * @param engine      模板引擎
      */
     public ScoreboardView(UUID playerId,
@@ -119,12 +136,14 @@ public class ScoreboardView {
         this.engine = engine;
         // 响应式监听：数据变化 → 增量渲染 + 混合输出
         this.changeListener = this::refresh;
+        // 注册 dataContext 清理到 effectScope——dispose 时自动断开 parent 监听，防止内存泄漏
+        this.effectScope.register(dataContext::dispose);
     }
 
     // ===== 生命周期 =====
 
     /**
-     * 向玩家显示计分板。
+     * 向玩家显示计分板（首次显示入口）。
      * <p>创建 Nukkit {@link Scoreboard} 对象，添加所有行（{@link FakeScorer}），
      * 再调用 {@code addViewer} 显示给玩家。{@code addViewer} 时 Nukkit 内部自动发送
      * {@code SetDisplayObjectivePacket} + 全部行的 {@code SetScorePacket}。
@@ -132,7 +151,28 @@ public class ScoreboardView {
      * @param player 目标玩家（实现了 {@code IScoreboardViewer}）
      */
     public synchronized void show(Player player) {
-        if (shown) {
+        activate(player);
+    }
+
+    /**
+     * 从 deactivate 状态恢复显示（KeepAlive 场景）。
+     * <p>重建 Nukkit Scoreboard 对象 + 重新添加行 + addViewer + 注册渲染监听。
+     * 数据和渲染状态（dataContext / incrementalRenderer）在 deactivate 期间保留。
+     *
+     * @param player 目标玩家
+     */
+    public synchronized void reactivate(Player player) {
+        activate(player);
+    }
+
+    /**
+     * 激活计分板——show 和 reactivate 的共用逻辑。
+     * <p>全量渲染 + 创建 Nukkit Scoreboard + 添加行 + addViewer + 注册渲染监听。
+     *
+     * @param player 目标玩家
+     */
+    private void activate(Player player) {
+        if (shown || disposed) {
             return;
         }
 
@@ -168,18 +208,28 @@ public class ScoreboardView {
     }
 
     /**
-     * 隐藏计分板，释放资源。
+     * 隐藏计分板（向后兼容，等价于 {@link #deactivate}——保留数据和渲染状态）。
+     *
+     * @param player 目标玩家
+     */
+    public synchronized void hide(Player player) {
+        deactivate(player);
+    }
+
+    /**
+     * 停用计分板——移除显示和渲染监听，但<b>保留</b>数据和渲染状态（KeepAlive）。
+     * <p>切换计分板或临时隐藏时调用，后续可通过 {@link #reactivate} 恢复显示。
      * <p>调用 {@code removeViewer} 移除玩家视图，Nukkit 内部自动发送
      * {@code RemoveObjectivePacket} 清除客户端计分板。
      *
      * @param player 目标玩家
      */
-    public synchronized void hide(Player player) {
-        if (!shown) {
+    public synchronized void deactivate(Player player) {
+        if (!shown || disposed) {
             return;
         }
 
-        // 1. 移除响应式监听
+        // 1. 移除响应式监听（停止响应数据变化）
         dataContext.removeListener(changeListener);
 
         // 2. 移除玩家视图（Nukkit 自动发送 RemoveObjectivePacket）
@@ -188,25 +238,80 @@ public class ScoreboardView {
             nukkitScoreboard = null;
         }
 
-        // 3. 清理状态
+        // 3. 清理显示层状态（保留 dataContext / incrementalRenderer / currentLines 用于 KeepAlive）
         scorers = new ArrayList<>();
         currentPlayer = null;
-        incrementalRenderer = null;
-        currentLines = new ArrayList<>();
         shown = false;
+    }
+
+    /**
+     * 彻底销毁计分板——释放全部资源，不可再使用。
+     * <p>玩家退出时调用。effectScope 自动执行 {@code dataContext.dispose()}，
+     * 断开与玩家全局的监听引用，防止内存泄漏。
+     *
+     * @param player 目标玩家（可能为 null，如玩家已离线时清理）
+     */
+    public synchronized void dispose(Player player) {
+        if (disposed) {
+            return;
+        }
+
+        // 1. 如果还在显示，先移除视图
+        if (shown && nukkitScoreboard != null && player != null) {
+            nukkitScoreboard.removeViewer(player, sbTemplate.getDisplaySlot());
+        }
+
+        // 2. 移除渲染监听
+        dataContext.removeListener(changeListener);
+
+        // 3. effectScope 清理（执行 dataContext.dispose，断开 parent 监听，防止内存泄漏）
+        effectScope.dispose();
+
+        // 4. 清理全部状态
+        nukkitScoreboard = null;
+        scorers = new ArrayList<>();
+        currentLines = new ArrayList<>();
+        incrementalRenderer = null;
+        currentPlayer = null;
+        shown = false;
+        disposed = true;
     }
 
     /**
      * 增量刷新——根据 {@link ChangeSet} 只重新渲染受影响的行，并自适应选择输出策略。
      * <p>由 {@code DataContext.onChange} 自动触发。
+     * <p><b>线程安全</b>：自动检测主线程，若从异步线程触发，调度到主线程执行
+     * （Nukkit Scoreboard 操作必须在主线程发包）。
      *
      * @param changeSet 本次变更集
      */
     public synchronized void refresh(ChangeSet changeSet) {
-        if (!shown || nukkitScoreboard == null || incrementalRenderer == null) {
+        if (!shown || nukkitScoreboard == null || incrementalRenderer == null || disposed) {
             return;
         }
 
+        // 发包线程安全：Nukkit Scoreboard 操作必须在主线程执行
+        try {
+            if (!Server.getInstance().isPrimaryThread()) {
+                Server.getInstance().getScheduler().scheduleTask(() -> doRefresh(changeSet));
+                return;
+            }
+        } catch (Exception e) {
+            // Server 尚未初始化（如单元测试环境），直接在当前线程执行
+        }
+
+        doRefresh(changeSet);
+    }
+
+    /**
+     * 实际执行增量刷新（确保在主线程调用）。
+     *
+     * @param changeSet 本次变更集
+     */
+    private synchronized void doRefresh(ChangeSet changeSet) {
+        if (!shown || nukkitScoreboard == null || incrementalRenderer == null || disposed) {
+            return;
+        }
         IncrementalRenderResult result = incrementalRenderer.renderIncremental(dataContext, changeSet);
         applyIncrementalOutput(result);
     }
@@ -216,7 +321,7 @@ public class ScoreboardView {
      * <p>用于手动触发或需要强制刷新的场景（如模板热重载后）。
      */
     public synchronized void refresh() {
-        if (!shown || nukkitScoreboard == null) {
+        if (!shown || nukkitScoreboard == null || disposed) {
             return;
         }
 
@@ -338,9 +443,14 @@ public class ScoreboardView {
         return sbTemplate;
     }
 
-    /** 是否正在显示 */
+    /** 是否正在显示（激活） */
     public boolean isShown() {
         return shown;
+    }
+
+    /** 是否已彻底销毁（dispose 后不可再用） */
+    public boolean isDisposed() {
+        return disposed;
     }
 
     // ===== 内部方法 =====
