@@ -39,7 +39,7 @@ Nukkit 插件持久化数据的传统做法是**手写 YAML/JSON 读写**：每�
 - **别名支持**：通过 `value` 指定键别名（如 `player_name`），解耦 Java 命名与存储格式
 - **必需校验**：`required = true` 标记关键字段，加载时缺失即报错，防止数据损坏静默失败
 - **自动递归**：`List` / `Set` / `Map` / 数组 / 嵌套对象自动递归处理，嵌套类有 `@SaveField` 则同样按注解规则序列化
-- **字段级适配器**：通过 `adapter` 指定 [`SaveFieldAdapter`](src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) 自定义单个字段的 JSON 格式（如坐标压缩为 `"x,y"` 字符串）
+- **字段级适配器**：通过 `adapter` 指定 [`SaveFieldAdapter`](src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) 自定义单个字段的存储格式（如坐标压缩为 `"x,y"` 字符串），操作框架自有的 [`SaveValue`](src/main/java/io/github/JiangHu/jframe/data/value/SaveValue.java) 中间数据模型，对 JSON / YAML 双格式通用
 - **子路径与路径导航**：[`sub()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 向下、[`parent()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 向上、[`root()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 一步回根，三者仅作用于临时子路径、不篡改根路径
 - **跨插件隔离**：[`forPlugin(plugin)`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 为业务插件创建独立根保存器，数据落入各自 `plugins/<插件名>/` 目录，互不干扰
 - **灵活命名**：显式指定文件名、绝对路径文件、或实现 [`SaveIdentifiable`](src/main/java/io/github/JiangHu/jframe/data/SaveIdentifiable.java) 自动命名
@@ -173,7 +173,7 @@ saver.fromYamlInto(existing, yaml);                      // YAML 字符串 → �
 - 若文件名已含已知扩展名（`.json` / `.yml` / `.yaml`），不会重复追加
 - [`sub()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 和 [`forPlugin()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 创建的保存器会**继承**父级的格式
 
-> **YAML 规范**：使用 SnakeYAML 2.x（YAML 1.2 规范），不会将 `yes`/`no`/`on`/`off` 误判为布尔值。
+> **YAML 规范**：使用 SnakeYAML 2.x，其默认 resolver 沿用 YAML 1.1 隐式类型规则（手写配置中的裸 `yes`/`no`/`on`/`off` 会解析为布尔值）。框架写出的字符串值会自动加引号（如 `flag: 'yes'`），因此 write → read 往返始终类型一致。
 
 ---
 
@@ -185,7 +185,7 @@ saver.fromYamlInto(existing, yaml);                      // YAML 字符串 → �
 |------|------|--------|------|
 | `value` | `String` | `""` | JSON 键别名。为空时使用 Java 字段名 |
 | `required` | `boolean` | `false` | 加载时是否必需。为 `true` 时 JSON 缺少该键或值为 `null` 将抛出 `DataException` |
-| `adapter` | `Class<? extends SaveFieldAdapter>` | `None.class` | 字段级自定义序列化适配器。指定后该字段不再走 Gson 默认序列化，而由适配器的 `toJson`/`fromJson` 控制 JSON 格式 |
+| `adapter` | `Class<? extends SaveFieldAdapter>` | `None.class` | 字段级自定义序列化适配器。指定后该字段不再走 Gson 默认序列化，而由适配器的 `toSave`/`fromSave`（操作 [`SaveValue`](src/main/java/io/github/JiangHu/jframe/data/value/SaveValue.java) 中间数据）控制存储格式，JSON / YAML 通用 |
 
 ### 别名示例
 
@@ -249,18 +249,20 @@ public class Location {
 
 ## 字段级自定义适配器（SaveFieldAdapter）
 
-当某个字段需要**非标准的 JSON 格式**时（如把坐标对象压缩成字符串、自定义枚举编码、第三方类型转换），可通过 `adapter` 属性指定一个 [`SaveFieldAdapter`](src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) 实现类，接管该字段的序列化/反序列化。
+当某个字段需要**非标准的存储格式**时（如把坐标对象压缩成字符串、自定义枚举编码、第三方类型转换），可通过 `adapter` 属性指定一个 [`SaveFieldAdapter`](src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) 实现类，接管该字段的序列化/反序列化。
+
+适配器操作框架自有的 [`SaveValue`](src/main/java/io/github/JiangHu/jframe/data/value/SaveValue.java) 通用数据模型（而非 Gson/SnakeYAML 类型），因此**同一个适配器在 JSON 与 YAML 两种格式下通用**——适配器只负责"内存对象 ↔ 通用数据"的字段级转换，"树模型 ↔ 文件文本"由格式层（codec）完成。未绑定适配器的属性不经过 SaveValue，直接往返于格式存取器。
 
 ### 适配器接口
 
 ```java
 public interface SaveFieldAdapter<T> {
 
-    /** 将字段值转换为 JsonElement（Gson 树模型） */
-    JsonElement toJson(T value);
+    /** 将字段值转换为中间数据（SaveValue 树模型） */
+    SaveValue toSave(T value);
 
-    /** 从 JsonElement 还原字段值 */
-    T fromJson(JsonElement json);
+    /** 从中间数据还原字段值 */
+    T fromSave(SaveValue value);
 
     /** 标记类：@SaveField 默认值，表示不使用适配器 */
     final class None implements SaveFieldAdapter<Object> { ... }
@@ -276,19 +278,19 @@ public interface SaveFieldAdapter<T> {
 public class PosAdapter implements SaveFieldAdapter<Pos> {
 
     @Override
-    public JsonElement toJson(Pos pos) {
+    public SaveValue toSave(Pos pos) {
         if (pos == null) {
-            return JsonNull.INSTANCE;
+            return SaveValue.ofNull();
         }
-        return new JsonPrimitive(pos.x + "," + pos.y);
+        return SaveValue.of(pos.x + "," + pos.y);
     }
 
     @Override
-    public Pos fromJson(JsonElement json) {
-        if (json.isJsonNull()) {
+    public Pos fromSave(SaveValue value) {
+        if (value.isNull()) {
             return null;
         }
-        String[] parts = json.getAsString().split(",");
+        String[] parts = value.asString().split(",");
         return new Pos(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
     }
 }
@@ -313,12 +315,35 @@ public class PlayerData {
 }
 ```
 
+生成的 YAML（同一适配器，无需任何修改）：
+
+```yaml
+name: Steve
+location: 10,20
+```
+
+### SaveValue 常用 API
+
+[`SaveValue`](src/main/java/io/github/JiangHu/jframe/data/value/SaveValue.java) 是密封接口，6 种节点对应 6 类数据：
+
+| 数据 | 创建 | 读取 |
+|------|------|------|
+| null | `SaveValue.ofNull()` | `value.isNull()` |
+| 布尔 | `SaveValue.of(true)` | `value.asBoolean()` |
+| 数字 | `SaveValue.of(42)` / `SaveValue.of(1.5)` | `value.asInt()` / `value.asDouble()` / `value.asLong()` |
+| 字符串 | `SaveValue.of("abc")` | `value.asString()` |
+| 列表 | `SaveValue.list()` → `.add(...)` | `value.asList()` → `.get(i)` |
+| 映射 | `SaveValue.map()` → `.put(k, v)` | `value.asMap()` → `.get(k)` |
+
+- 判断节点类型：`isNull()` / `isBool()` / `isNum()` / `isStr()` / `isList()` / `isMap()`
+- 类型不匹配的取值（如对字符串调 `asInt()`）抛出 [`DataException`](src/main/java/io/github/JiangHu/jframe/data/exception/DataException.java)
+
 ### 使用要点
 
 - **逐字段独立**：`adapter` 作用于单个字段，同一类中不同字段可指定不同适配器；未指定的字段仍走 Gson 默认序列化
 - **无参构造器**：适配器类必须有无参构造器（支持 `private`），框架通过反射实例化一次并缓存
 - **无状态**：适配器实例被缓存复用，必须线程安全、无状态
-- **树模型 API**：适配器操作 `JsonElement`（Gson 树模型），可返回任意 JSON 结构（基本类型、对象、数组、null）
+- **中间数据 API**：适配器操作 `SaveValue`（框架自有树模型），可返回任意结构（标量、列表、映射、null），对 JSON 与 YAML 两种格式透明
 - **默认值**：不指定 `adapter` 时默认为 `SaveFieldAdapter.None.class`，表示走 Gson 默认序列化
 
 ---
@@ -563,7 +588,7 @@ saver.fromJsonInto(existing, json);                  // JSON 字符串 → 回�
 metadataCache → dataSaver
 ```
 
-- [`MetadataCache`](src/main/java/io/github/JiangHu/jframe/data/core/MetadataCache.java)：扫描 `@SaveField` 字段并缓存反射结果（无依赖）
+- [`MetadataCache`](src/main/java/io/github/JiangHu/jframe/data/core/meta/MetadataCache.java)：扫描 `@SaveField` 字段并缓存反射结果（无依赖）
 - [`DataSaver`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java)：构造器注入 `MetadataCache`，创建配置好的 Gson 实例
 
 ### 启用模块

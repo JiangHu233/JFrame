@@ -1,4 +1,4 @@
-package io.github.JiangHu.jframe.data.core;
+package io.github.JiangHu.jframe.data.core.engine;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
@@ -8,12 +8,14 @@ import com.google.gson.TypeAdapter;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
 import io.github.JiangHu.jframe.data.adapter.SaveFieldAdapter;
+import io.github.JiangHu.jframe.data.core.meta.ClassMetadata;
+import io.github.JiangHu.jframe.data.core.meta.FieldMetadata;
 import io.github.JiangHu.jframe.data.exception.DataException;
+import io.github.JiangHu.jframe.data.value.SaveValue;
 
 import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
-import java.lang.reflect.Type;
 
 /**
  * 注解驱动的 Gson 类型适配器。
@@ -28,7 +30,9 @@ import java.lang.reflect.Type;
  * 遍历 {@link ClassMetadata} 中的字段列表，对每个字段：
  * <ol>
  *   <li>反射读取字段值</li>
- *   <li>调用 {@code gson.toJson(value, fieldType, writer)} 委托 Gson 序列化该值</li>
+ *   <li>字段配置了适配器 → 调用 {@link SaveFieldAdapter#toSave} 得到
+ *       {@link SaveValue}（经 {@link SaveValueBridge} 回到 JsonElement）写入流</li>
+ *   <li>未配置适配器 → 调用 {@code gson.toJson(value, fieldType, writer)} 委托 Gson 序列化该值</li>
  * </ol>
  * <b>关键</b>：使用 {@link Field#getGenericType()} 而非 {@code getType()}，
  * 保留泛型签名（如 {@code List<String>}），Gson 据此正确选择元素适配器。
@@ -40,7 +44,10 @@ import java.lang.reflect.Type;
  *   <li>按别名从 JsonObject 取值</li>
  *   <li>{@code required} 字段缺失或为 null → 抛 {@link DataException}</li>
  *   <li>非必需字段缺失 → 跳过（保持对象初始值）</li>
- *   <li>调用 {@code gson.fromJson(element, fieldType)} 反序列化并反射 set 回对象</li>
+ *   <li>字段配置了适配器 → {@link SaveValueBridge} 转为 {@link SaveValue} 后调用
+ *       {@link SaveFieldAdapter#fromSave}</li>
+ *   <li>未配置适配器 → 调用 {@code gson.fromJson(element, fieldType)} 反序列化</li>
+ *   <li>反射 set 回对象</li>
  * </ol>
  *
  * <h3>容器与嵌套对象的递归</h3>
@@ -83,9 +90,9 @@ final class SaveFieldTypeAdapter<T> extends TypeAdapter<T> {
             Object fieldValue = getFieldValue(fm.field(), value);
             out.name(fm.alias());
             if (fm.hasAdapter()) {
-                // 字段级自定义适配器：先转换为 JsonElement，再写入流
-                JsonElement element = writeWithAdapter(fm.adapter(), fieldValue);
-                gson.toJson(element, out);
+                // 字段级自定义适配器：内存值 → SaveValue 中间数据 → JsonElement，再写入流
+                SaveValue saved = writeWithAdapter(fm.adapter(), fieldValue);
+                gson.toJson(SaveValueBridge.toGson(saved), out);
             } else {
                 // 委托 Gson 序列化字段值（使用泛型类型，保留 List<T> 等签名）
                 gson.toJson(fieldValue, fm.field().getGenericType(), out);
@@ -119,8 +126,8 @@ final class SaveFieldTypeAdapter<T> extends TypeAdapter<T> {
 
             Object fieldValue;
             if (fm.hasAdapter()) {
-                // 字段级自定义适配器：从 JsonElement 转换
-                fieldValue = readWithAdapter(fm.adapter(), element);
+                // 字段级自定义适配器：JsonElement → SaveValue 中间数据 → 内存值
+                fieldValue = readWithAdapter(fm.adapter(), SaveValueBridge.fromGson(element));
             } else {
                 // 委托 Gson 反序列化字段值（使用泛型类型）
                 fieldValue = gson.fromJson(element, fm.field().getGenericType());
@@ -134,13 +141,13 @@ final class SaveFieldTypeAdapter<T> extends TypeAdapter<T> {
     /**
      * 使用字段级适配器序列化字段值。
      * <p>
-     * 适配器返回 {@link JsonElement}（树模型），再由 Gson 写入流。
-     * 异常统一包装为 {@link DataException}。
+     * 适配器返回 {@link SaveValue}（中间数据），调用方经 {@link SaveValueBridge}
+     * 转回 JsonElement 后由 Gson 写入流。异常统一包装为 {@link DataException}。
      */
     @SuppressWarnings("unchecked")
-    private JsonElement writeWithAdapter(SaveFieldAdapter<?> adapter, Object fieldValue) {
+    private SaveValue writeWithAdapter(SaveFieldAdapter<?> adapter, Object fieldValue) {
         try {
-            return ((SaveFieldAdapter<Object>) adapter).toJson(fieldValue);
+            return ((SaveFieldAdapter<Object>) adapter).toSave(fieldValue);
         } catch (Exception e) {
             throw new DataException("字段适配器 " + adapter.getClass().getName() +
                     " 序列化失败: " + e.getMessage(), e);
@@ -150,12 +157,12 @@ final class SaveFieldTypeAdapter<T> extends TypeAdapter<T> {
     /**
      * 使用字段级适配器反序列化字段值。
      * <p>
-     * 从 {@link JsonElement}（树模型）转换为目标值。异常统一包装为 {@link DataException}。
+     * 从 {@link SaveValue}（中间数据）转换为目标值。异常统一包装为 {@link DataException}。
      */
     @SuppressWarnings("unchecked")
-    private Object readWithAdapter(SaveFieldAdapter<?> adapter, JsonElement element) {
+    private Object readWithAdapter(SaveFieldAdapter<?> adapter, SaveValue saved) {
         try {
-            return ((SaveFieldAdapter<Object>) adapter).fromJson(element);
+            return ((SaveFieldAdapter<Object>) adapter).fromSave(saved);
         } catch (Exception e) {
             throw new DataException("字段适配器 " + adapter.getClass().getName() +
                     " 反序列化失败: " + e.getMessage(), e);

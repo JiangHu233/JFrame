@@ -87,7 +87,7 @@ import java.util.Map;
  * @see ItemCodec#encodeJson(Item)
  * @see ItemCodec#decodeJson(String)
  */
-final class NbtJsonConverter {
+public final class NbtJsonConverter {
 
     /**
      * 类型标记键名。当某个 NBT 值无法用 JSON 原生类型无歧义表达时，
@@ -115,7 +115,7 @@ final class NbtJsonConverter {
      * @param tag NBT 标签，{@code null} 返回 {@link JsonNull}
      * @return 可读 JSON 元素
      */
-    static JsonElement tagToJson(Tag tag) {
+    public static JsonElement tagToJson(Tag tag) {
         if (tag == null) {
             return JsonNull.INSTANCE;
         }
@@ -176,7 +176,7 @@ final class NbtJsonConverter {
      * @return NBT 标签
      * @throws InventoryCodecException 若 JSON 结构无法识别
      */
-    static Tag jsonToTag(JsonElement el) {
+    public static Tag jsonToTag(JsonElement el) {
         if (el == null || el.isJsonNull()) {
             return new EndTag();
         }

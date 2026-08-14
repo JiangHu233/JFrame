@@ -1,4 +1,4 @@
-package io.github.JiangHu.jframe.data.core;
+package io.github.JiangHu.jframe.data.core.meta;
 
 import java.util.List;
 

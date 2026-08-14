@@ -4,11 +4,9 @@ import cn.nukkit.plugin.Plugin;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
 import io.github.JiangHu.jframe.core.module.PluginAware;
-import io.github.JiangHu.jframe.data.core.MetadataCache;
-import io.github.JiangHu.jframe.data.core.SaveFieldTypeAdapterFactory;
-import io.github.JiangHu.jframe.data.core.YamlConverter;
+import io.github.JiangHu.jframe.data.core.engine.SaveFieldTypeAdapterFactory;
+import io.github.JiangHu.jframe.data.core.meta.MetadataCache;
 import io.github.JiangHu.jframe.data.exception.DataException;
 
 import java.io.File;
@@ -26,10 +24,17 @@ import java.util.function.Supplier;
  * 通过 {@link #setFormat(SaveFormat)} 或 {@link #withFormat(SaveFormat)} 切换存储格式，
  * 两种格式共用同一套 {@code @SaveField} 注解驱动机制，对用户完全透明。
  * <p>
- * 内部持有配置好的 {@link Gson} 实例（注册了
- * {@link SaveFieldTypeAdapterFactory}），所有序列化/反序列化均通过 Gson 完成，
- * 自动递归处理容器（List/Set/Map/数组）和嵌套对象。Gson 产出的 {@code JsonElement}
- * 树模型由 {@link YamlConverter} 转换为 YAML 文本（当格式为 YAML 时）。
+ * 序列化宏观路线（用户可见层面）：
+ * <pre>
+ *   对象属性 ←→ [SaveValue 通用数据，仅当字段绑定 SaveFieldAdapter] ←→ 格式存取器 ←→ 文本
+ * </pre>
+ * 未绑定适配器的属性<b>直接往返</b>于格式存取器，不经过任何中间数据；
+ * {@link io.github.JiangHu.jframe.data.value.SaveValue} 仅出现在绑定适配器
+ * 字段的边界处。内部以 Gson 树模型
+ * （{@link JsonElement}，框架内部实现细节，用户与适配器均不接触）作为
+ * 主干承载注解语义，由当前格式关联的
+ * {@link io.github.JiangHu.jframe.data.core.format.SaveFormatCodec 格式存取器}
+ * 输出/解析文本（JSON 与 YAML 为同级实现，见 {@link SaveFormat#getCodec()}）。
  *
  * <h3>根路径（rootDir）</h3>
  * <p>
@@ -413,8 +418,7 @@ public class DataSaver implements PluginAware {
             return null;
         }
         String content = readStringFromFile(file);
-        JsonElement tree = parseToTree(content);
-        return fromTree(tree, clazz);
+        return fromTree(parseToTree(content), clazz);
     }
 
     // ========== 回填已有实例 ==========
@@ -442,8 +446,7 @@ public class DataSaver implements PluginAware {
      */
     public void loadInto(Object target, File file) {
         String content = readStringFromFile(file);
-        JsonElement tree = parseToTree(content);
-        fromTreeInto(target, tree);
+        fromTreeInto(target, parseToTree(content));
     }
 
     // ========== 文件存在性判断 ==========
@@ -661,8 +664,7 @@ public class DataSaver implements PluginAware {
      * @param json   JSON 字符串
      */
     public void fromJsonInto(Object target, String json) {
-        JsonElement tree = JsonParser.parseString(json);
-        fromTreeInto(target, tree);
+        fromTreeInto(target, SaveFormat.JSON.getCodec().read(json));
     }
 
     /**
@@ -673,8 +675,7 @@ public class DataSaver implements PluginAware {
      */
     public String toYaml(Object obj) {
         try {
-            JsonElement tree = gson.toJsonTree(obj);
-            return YamlConverter.toYaml(tree);
+            return SaveFormat.YAML.getCodec().write(gson.toJsonTree(obj));
         } catch (Exception e) {
             if (e instanceof DataException) {
                 throw e;
@@ -694,8 +695,7 @@ public class DataSaver implements PluginAware {
      */
     public <T> T fromYaml(String yaml, Class<T> clazz) {
         try {
-            JsonElement tree = YamlConverter.fromYaml(yaml);
-            return gson.fromJson(tree, clazz);
+            return fromTree(SaveFormat.YAML.getCodec().read(yaml), clazz);
         } catch (Exception e) {
             if (e instanceof DataException) {
                 throw e;
@@ -711,8 +711,7 @@ public class DataSaver implements PluginAware {
      * @param yaml   YAML 字符串
      */
     public void fromYamlInto(Object target, String yaml) {
-        JsonElement tree = YamlConverter.fromYaml(yaml);
-        fromTreeInto(target, tree);
+        fromTreeInto(target, SaveFormat.YAML.getCodec().read(yaml));
     }
 
     // ========== PluginAware ==========
@@ -766,16 +765,13 @@ public class DataSaver implements PluginAware {
     /**
      * 格式感知序列化：将对象按当前 {@link #format} 序列化为文本。
      * <p>
-     * 先用 Gson 将对象转为 {@link JsonElement} 树（经过注解适配器），
-     * 再按格式将树转为 JSON 或 YAML 文本。
+     * 先用 Gson 注解管线将对象转为树模型（{@link JsonElement}，字段适配器
+     * 在边界处与通用数据互转，框架内部细节），再由当前格式的存取器
+     * （{@link SaveFormat#getCodec()}）直接输出文本。
      */
     private String serialize(Object obj) {
         try {
-            JsonElement tree = gson.toJsonTree(obj);
-            return switch (format) {
-                case JSON -> gson.toJson(tree);
-                case YAML -> YamlConverter.toYaml(tree);
-            };
+            return format.getCodec().write(gson.toJsonTree(obj));
         } catch (Exception e) {
             if (e instanceof DataException) {
                 throw e;
@@ -786,14 +782,11 @@ public class DataSaver implements PluginAware {
     }
 
     /**
-     * 格式感知解析：将文本按当前 {@link #format} 解析为 {@link JsonElement} 树。
+     * 格式感知解析：将文本按当前 {@link #format} 提取为树模型。
      */
     private JsonElement parseToTree(String content) {
         try {
-            return switch (format) {
-                case JSON -> JsonParser.parseString(content);
-                case YAML -> YamlConverter.fromYaml(content);
-            };
+            return format.getCodec().read(content);
         } catch (Exception e) {
             if (e instanceof DataException) {
                 throw e;
@@ -803,7 +796,7 @@ public class DataSaver implements PluginAware {
     }
 
     /**
-     * 从 {@link JsonElement} 树反序列化为目标类型的对象。
+     * 从树模型反序列化为目标类型的对象。
      */
     private <T> T fromTree(JsonElement tree, Class<T> clazz) {
         try {
@@ -817,7 +810,7 @@ public class DataSaver implements PluginAware {
     }
 
     /**
-     * 从 {@link JsonElement} 树反序列化并回填到已有实例（共用核心）。
+     * 从树模型反序列化并回填到已有实例（共用核心）。
      * <p>
      * {@link #fromJsonInto}、{@link #fromYamlInto}、{@link #loadInto(Object, File)}
      * 均委托本方法完成回填。
@@ -831,8 +824,8 @@ public class DataSaver implements PluginAware {
             cache.get(target.getClass()).ifPresent(metadata -> {
                 for (var fm : metadata.fields()) {
                     try {
-                        Object value = fm.field().get(parsed);
-                        fm.field().set(target, value);
+                        Object fieldValue = fm.field().get(parsed);
+                        fm.field().set(target, fieldValue);
                     } catch (IllegalAccessException ex) {
                         throw new DataException("回填字段失败: " + fm.field().getName() +
                                 "（类: " + target.getClass().getName() + "）", ex);

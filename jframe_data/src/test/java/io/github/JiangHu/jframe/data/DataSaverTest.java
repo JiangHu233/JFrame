@@ -1,13 +1,11 @@
 package io.github.JiangHu.jframe.data;
 
 import cn.nukkit.plugin.Plugin;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonNull;
-import com.google.gson.JsonPrimitive;
 import io.github.JiangHu.jframe.data.adapter.SaveFieldAdapter;
 import io.github.JiangHu.jframe.data.annotation.SaveField;
-import io.github.JiangHu.jframe.data.core.MetadataCache;
+import io.github.JiangHu.jframe.data.core.meta.MetadataCache;
 import io.github.JiangHu.jframe.data.exception.DataException;
+import io.github.JiangHu.jframe.data.value.SaveValue;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -667,22 +665,27 @@ class DataSaverTest {
         }
     }
 
-    /** 将 Pos 序列化为 "x,y" 字符串，而非默认的嵌套对象 */
+    /**
+     * 将 Pos 序列化为 "x,y" 字符串，而非默认的嵌套对象。
+     * <p>
+     * 基于 {@link SaveValue} 中间数据实现，不依赖任何第三方库，
+     * JSON 与 YAML 两种格式下行为一致。
+     */
     static class PosAdapter implements SaveFieldAdapter<Pos> {
         @Override
-        public JsonElement toJson(Pos pos) {
+        public SaveValue toSave(Pos pos) {
             if (pos == null) {
-                return JsonNull.INSTANCE;
+                return SaveValue.ofNull();
             }
-            return new JsonPrimitive(pos.x + "," + pos.y);
+            return SaveValue.of(pos.x + "," + pos.y);
         }
 
         @Override
-        public Pos fromJson(JsonElement json) {
-            if (json == null || json.isJsonNull()) {
+        public Pos fromSave(SaveValue value) {
+            if (value == null || value.isNull()) {
                 return null;
             }
-            String[] parts = json.getAsString().split(",");
+            String[] parts = value.asString().split(",");
             return new Pos(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
         }
     }
@@ -784,6 +787,35 @@ class DataSaverTest {
 
             saver.save(original, "pos_player.json");
             PlayerWithPos restored = saver.load(PlayerWithPos.class, "pos_player.json");
+
+            assertEquals(original.name, restored.name);
+            assertEquals(original.location, restored.location);
+            assertEquals(original.score, restored.score);
+        }
+
+        @Test
+        @DisplayName("YAML 格式下适配器同样生效（同一份适配器双格式一致）")
+        void adapterWorksInYamlFormat() {
+            PlayerWithPos original = new PlayerWithPos();
+            original.name = "YamlTest";
+            original.location = new Pos(11, 22);
+            original.score = 66;
+
+            // YAML 文本输出：location 应为 '11,22' 字符串
+            String yaml = saver.toYaml(original);
+            assertTrue(yaml.contains("location: '11,22'") || yaml.contains("location: 11,22"),
+                    "YAML 中 location 应为 'x,y' 字符串，实际:\n" + yaml);
+
+            // YAML 文本还原
+            PlayerWithPos fromYaml = saver.fromYaml(yaml, PlayerWithPos.class);
+            assertEquals(original.location, fromYaml.location);
+            assertEquals(original.name, fromYaml.name);
+            assertEquals(original.score, fromYaml.score);
+
+            // YAML 文件往返（setFormat 切换格式）
+            saver.setFormat(SaveFormat.YAML);
+            saver.save(original, "pos_player");
+            PlayerWithPos restored = saver.load(PlayerWithPos.class, "pos_player");
 
             assertEquals(original.name, restored.name);
             assertEquals(original.location, restored.location);

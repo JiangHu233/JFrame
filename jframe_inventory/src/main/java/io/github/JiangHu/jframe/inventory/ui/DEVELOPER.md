@@ -228,6 +228,8 @@ if (data.appearance() != null) {
 
 物品的加载与导出由 [`StorageBox`](component/StorageBox.java) 的 `loadItems` / `exportItems` 通过 [`InventoryView.slotItem`](view/InventoryView.java) / `setSlotItem` 完成。
 
+物品退还由 [`StorageBox.returnItems()`](component/StorageBox.java) 实现：导出物品 → 添加到玩家背包（满则 `level.dropItem` 掉落）→ 清空存储格。`returnOnClose(true)` 开关利用 `onUnmount()` 生命周期回调，在视图关闭时自动退还（此时 `view`/`viewer`/`inventory` 尚未置空，时序安全）。
+
 ### 4.2 InventoryComponent — 组件基类
 
 [`InventoryComponent`](component/InventoryComponent.java) 实现了组件树的核心机制。

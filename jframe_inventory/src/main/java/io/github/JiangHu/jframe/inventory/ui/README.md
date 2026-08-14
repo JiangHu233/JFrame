@@ -209,6 +209,26 @@ Item[] snapshot = box.exportItems();
 
 > **时序要求**：`loadItems` / `exportItems` 必须在视图已打开（`onOpen` 之后）时调用。视图未打开时 `exportItems` 返回全空气数组，`loadItems` 不执行任何操作。
 
+#### ⭐ 物品退还
+
+`returnItems()` 将存储格内所有物品退还到玩家背包，背包满时剩余物品掉落到玩家脚下，随后清空存储格。`returnOnClose(true)` 开关开启后，视图关闭时自动执行退还。
+
+```java
+// 方式一：关闭界面时自动退还（推荐用于临时存储场景）
+StorageBox box = new StorageBox(3, 1);
+box.returnOnClose(true);  // 玩家关闭界面时，物品自动退还到背包
+
+// 方式二：手动退还（如点击"提取全部"按钮）
+Button extract = new Button(...);
+extract.onClick(click -> {
+    StorageBox box = findComponent("depositBox", StorageBox.class);
+    Item[] returned = box.returnItems();  // 退还物品到玩家背包并清空存储格
+    click.player().sendMessage("已退还物品");
+});
+```
+
+> **自动退还时序**：`onUnmount()` 在视图关闭流程中、`view`/`viewer`/`inventory` 置空之前调用，此时读取物品和操作玩家背包均安全有效。
+
 ### Filler — 填充
 
 用指定外观填充整个区域，格子类型为 `DISPLAY`（不可交互）。典型用途：装饰边框、分隔线。

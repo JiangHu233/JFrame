@@ -140,11 +140,14 @@ public class ScoreboardManager {
      * 给指定玩家显示计分板（直接传入模板对象）。
      * <p>切换流程：
      * <ol>
-     *   <li>获取玩家全局 DataContext（Session 作用域）</li>
-     *   <li>检查目标模板是否已缓存：是 → reactivate；否 → 新建（parent 为玩家全局）</li>
-     *   <li>deactivate 旧的激活 view（如果有且不同）</li>
+     *   <li>deactivate 旧的激活 view（KeepAlive 保留）—— <b>必须先于 activate 执行</b>，
+     *       因为所有 view 共享同一个 objectiveName，先移除旧的再显示新的，
+     *       避免旧 view 的 RemoveObjectivePacket 把新计分板也移除</li>
+     *   <li>获取或创建目标模板的 view：已缓存 → reactivate；未缓存 → 新建（parent 为玩家全局）</li>
      *   <li>更新激活模板标记</li>
      * </ol>
+     * <p><b>同一模板重复 show</b>：不做幂等性跳过，而是 deactivate 自身后 reactivate，
+     * 强制重建 Scoreboard 对象并全量发包，确保客户端状态与服务端同步。
      *
      * @param player     目标玩家
      * @param sbTemplate 模板配置
@@ -154,18 +157,28 @@ public class ScoreboardManager {
         UUID uuid = player.getUniqueId();
         String templateName = sbTemplate.getName();
 
-        // 如果切换的是当前已激活的模板，直接返回（无需操作）
-        String currentActive = activeTemplate.get(uuid);
-        if (templateName.equals(currentActive)) {
-            ConcurrentHashMap<String, ScoreboardView> playerCache = cachedViews.get(uuid);
-            return playerCache != null ? playerCache.get(templateName) : null;
-        }
-
         // 获取或创建该玩家的缓存映射
         ConcurrentHashMap<String, ScoreboardView> playerCache =
                 cachedViews.computeIfAbsent(uuid, k -> new ConcurrentHashMap<>());
 
-        // 获取或创建目标模板的 view
+        String currentActive = activeTemplate.get(uuid);
+
+        // 1. 先 deactivate 旧的激活 view（KeepAlive 保留，不销毁）
+        //    必须在 activate 新 view 之前执行：所有 view 共享同一个 objectiveName
+        //    （OBJECTIVE_NAME_PREFIX + playerId），若先 activate 新的再 deactivate 旧的，
+        //    旧 view 的 removeViewer 发送的 RemoveObjectivePacket 会把新 view 刚显示的
+        //    计分板也移除（客户端按 objectiveName 标识，同名互相覆盖）。
+        if (currentActive != null) {
+            ScoreboardView oldView = playerCache.get(currentActive);
+            if (oldView != null && oldView.isShown()) {
+                oldView.deactivate(player);
+            }
+        }
+
+        // 2. 再获取或创建目标模板的 view 并 activate
+        //    同一模板重复 show 时也会走到这里（currentActive == templateName 时上方已
+        //    deactivate 自身），reactivate 强制重建 Scoreboard 对象并全量发包，
+        //    确保客户端状态与服务端同步，避免死锁状态（shown=true 但客户端无显示）。
         ScoreboardView targetView = playerCache.get(templateName);
         if (targetView != null && !targetView.isDisposed()) {
             // 已缓存 → reactivate（KeepAlive 恢复，数据和渲染状态保留）
@@ -177,14 +190,6 @@ public class ScoreboardManager {
             targetView = new ScoreboardView(uuid, sbTemplate, data, engine);
             targetView.show(player);
             playerCache.put(templateName, targetView);
-        }
-
-        // deactivate 旧的激活 view（KeepAlive 保留，不销毁）
-        if (currentActive != null) {
-            ScoreboardView oldView = playerCache.get(currentActive);
-            if (oldView != null && oldView.isShown()) {
-                oldView.deactivate(player);
-            }
         }
 
         activeTemplate.put(uuid, templateName);
