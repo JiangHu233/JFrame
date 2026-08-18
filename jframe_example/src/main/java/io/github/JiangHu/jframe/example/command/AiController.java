@@ -5,9 +5,8 @@ import cn.nukkit.entity.Entity;
 import cn.nukkit.level.Position;
 import cn.nukkit.math.Vector3;
 import io.github.JiangHu.jframe.ai.AiAPI;
-import io.github.JiangHu.jframe.ai.navigation.Navigator;
-import io.github.JiangHu.jframe.ai.tactical.FormationType;
-import io.github.JiangHu.jframe.ai.tactical.TacticalPosition;
+import io.github.JiangHu.jframe.ai.core.tactical.FormationType;
+import io.github.JiangHu.jframe.ai.core.tactical.TacticalPosition;
 import io.github.JiangHu.jframe.command.annotation.CommandController;
 import io.github.JiangHu.jframe.command.annotation.CommandMapping;
 import io.github.JiangHu.jframe.command.annotation.RawArgs;
@@ -23,7 +22,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * AI 模块<b>运行时测试控制器</b>（根命令 {@code /ai}）。
  * <p>
  * 本类是 {@code jframe_ai} 在真实服务器环境下的「冒烟测试」入口：通过一组子命令，
- * 逐项驱动 AI 模块的寻路、导航、追逐、游荡、单实体战术、团队战术与战斗能力，
+ * 逐项驱动 AI 模块的七工厂 API（{@code walk/chase/wander/attack/see}）、寻路双策略
+ * （A* 默认 / 贪心低开销）、单实体战术、团队战术与战斗能力，
  * 让开发者能在游戏内直观观察实体行为，快速定位运行时 bug。
  *
  * <h3>注册方式</h3>
@@ -39,8 +39,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * <h3>命令一览</h3>
  * <pre>
  *   /ai                    显示帮助
- *   /ai spawn [类型]       生成测试实体（默认 Zombie，可选 Skeleton/Creeper/Cow 等）
+ *   /ai spawn [类型]       生成测试实体（默认 TestNpc，可选 Zombie/Skeleton/Creeper/Cow 等）
  *   /ai goto               主实体贪心寻路到玩家（粒子显示路径轨迹）
+ *   /ai goto2              主实体续算导航到玩家（走完自动续算，长距离）
  *   /ai chase              主实体贪心追逐玩家（粒子显示路径轨迹）
  *   /ai wander [半径]      主实体在半径内随机游荡（默认 10）
  *   /ai cover              主实体寻找掩体并前往（相对玩家为威胁）
@@ -62,7 +63,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>带可选参数的子命令用 {@link RawArgs @RawArgs} 透传剩余参数，自行解析（保持 {@code /ai spawn Zombie} 自然格式）</li>
  *   <li>实体生成位置取玩家前方 3 格，避免实体卡在玩家身上</li>
  *   <li>战术位置（{@link TacticalPosition}）通过 {@link TacticalPosition#toLevelPosition}
- *       转换为世界坐标后交给导航器</li>
+ *       转换为世界坐标后交给导航执行器</li>
+ *   <li>示例导航统一采用贪心策略（{@code strategy(ai.getGreedyPathFinder())}，低开销局部步进）；
+ *       去掉 {@code strategy(...)} 即用默认 A* 策略</li>
  * </ul>
  *
  * @see AiAPI
@@ -139,20 +142,18 @@ public class AiController {
         if (entity == null) {
             return;
         }
-        Navigator nav = greedyNavAndShow(entity, new Vector3(player.x, player.y, player.z));
-        if (nav == null) {
-            player.sendMessage("§e贪心寻路失败：附近无可行走方向");
-        } else {
-            player.sendMessage("§a测试实体正在以贪心策略寻路前往你（单段，粒子显示路径轨迹）");
-        }
+        boolean ok = greedyWalkAndShow(entity, playerPos(player));
+        player.sendMessage(ok
+                ? "§a测试实体正在以贪心策略寻路前往你（单段，粒子显示路径轨迹）"
+                : "§e贪心寻路失败：附近无可行走方向");
     }
 
     /**
      * {@code /ai goto2}：主实体续算导航到玩家（走完自动续算，长距离）。
      * <p>
-     * 与 {@code /ai goto}（单段贪心，走完即停）不同，本命令通过 {@link AiAPI#navigateGreedyContinuous}
-     * 启动连续导航：实体走完当前段后，立即从新位置重新寻路计算下一段，串联多段完成长距离导航。
-     * 适用于目标较远、需要持续行进的场景。
+     * 与 {@code /ai goto}（单段贪心，走完即停）不同，本命令在导航执行器上开启
+     * {@code continuous()} 连续模式：实体走完当前段后，立即从新位置重新寻路计算下一段，
+     * 串联多段完成长距离导航。适用于目标较远、需要持续行进的场景。
      */
     @CommandMapping("goto2")
     public void gotoContinuous(@Sender Player player) {
@@ -160,27 +161,28 @@ public class AiController {
         if (entity == null) {
             return;
         }
-        ai.navigateGreedyContinuous(entity, new Vector3(player.x, player.y, player.z));
+        ai.walk(entity)
+                .strategy(ai.getGreedyPathFinder())
+                .to(playerPos(player))
+                .continuous()
+                .start();
         ai.showPath(entity, 10);
         player.sendMessage("§a测试实体开始续算导航前往你（走完自动续算，长距离，粒子显示路径轨迹）");
     }
 
-    /** {@code /ai chase}：主实体追逐玩家（边走边搜）。 */
+    /** {@code /ai chase}：主实体追逐玩家（每轮从玩家最新位置重算）。 */
     @CommandMapping("chase")
     public void chase(@Sender Player player) {
         Entity entity = requirePrimary(player);
         if (entity == null) {
             return;
         }
-        ai.chaseGreedy(entity, () -> {
-            // 目标供应器：玩家在线则返回其当前位置，离线则返回 null 终止追逐
-            if (!player.isOnline()) {
-                return null;
-            }
-            return new Vector3(player.x, player.y, player.z);
-        });
+        // chase 接受活实体引用：玩家离线/死亡时目标失效，行为自动以 TARGET_LOST 结束
+        ai.chase(entity, player)
+                .strategy(ai.getGreedyPathFinder())
+                .start();
         ai.showPath(entity, 10);
-        player.sendMessage("§a测试实体开始贪心追逐你（短视步进+周期重搜，粒子显示路径轨迹）");
+        player.sendMessage("§a测试实体开始贪心追逐你（周期重算，粒子显示路径轨迹）");
     }
 
     /** {@code /ai greedy}：主实体贪心寻路到玩家（局部步进，低开销）。 */
@@ -190,29 +192,24 @@ public class AiController {
         if (entity == null) {
             return;
         }
-        Navigator nav = greedyNavAndShow(entity, new Vector3(player.x, player.y, player.z));
-        if (nav == null) {
-            player.sendMessage("§e贪心寻路失败：附近无可行走方向");
-        } else {
-            player.sendMessage("§a测试实体正在以贪心策略寻路前往你（粒子显示路径轨迹）");
-        }
+        boolean ok = greedyWalkAndShow(entity, playerPos(player));
+        player.sendMessage(ok
+                ? "§a测试实体正在以贪心策略寻路前往你（粒子显示路径轨迹）"
+                : "§e贪心寻路失败：附近无可行走方向");
     }
 
-    /** {@code /ai chasegreedy}：主实体贪心追逐玩家（短视+多次重搜组合）。 */
+    /** {@code /ai chasegreedy}：主实体贪心追逐玩家（同 chase，保留旧命令别名）。 */
     @CommandMapping("chasegreedy")
     public void chaseGreedy(@Sender Player player) {
         Entity entity = requirePrimary(player);
         if (entity == null) {
             return;
         }
-        ai.chaseGreedy(entity, () -> {
-            if (!player.isOnline()) {
-                return null;
-            }
-            return new Vector3(player.x, player.y, player.z);
-        });
+        ai.chase(entity, player)
+                .strategy(ai.getGreedyPathFinder())
+                .start();
         ai.showPath(entity, 10);
-        player.sendMessage("§a测试实体开始贪心追逐你（短视步进+周期重搜，粒子显示路径轨迹）");
+        player.sendMessage("§a测试实体开始贪心追逐你（周期重算，粒子显示路径轨迹）");
     }
 
     /** {@code /ai wander [半径]}：主实体游荡。 */
@@ -223,7 +220,7 @@ public class AiController {
             return;
         }
         double radius = parseDouble(args.length > 0 ? args[0] : null, 10);
-        ai.wander(entity, radius);
+        ai.wander(entity, radius).start();
         player.sendMessage("§a测试实体开始在半径 §e" + radius + " §a内随机游荡");
     }
 
@@ -239,7 +236,7 @@ public class AiController {
             player.sendMessage("§e附近 8 格内未找到合适的掩体");
             return;
         }
-        greedyNavAndShow(entity, pos.toLevelPosition(entity.getLevel()));
+        greedyWalkAndShow(entity, pos.toLevelPosition(entity.getLevel()));
         player.sendMessage("§a测试实体正在贪心前往掩体（遮挡评分 §e" + format(pos.score()) + "§a，粒子显示路径）");
     }
 
@@ -255,7 +252,7 @@ public class AiController {
             player.sendMessage("§e附近 12 格内未找到远离路径");
             return;
         }
-        greedyNavAndShow(entity, pos.toLevelPosition(entity.getLevel()));
+        greedyWalkAndShow(entity, pos.toLevelPosition(entity.getLevel()));
         player.sendMessage("§a测试实体正在贪心逃离（距你 §e" + format(pos.distanceToThreat()) + " §a格，粒子显示路径）");
     }
 
@@ -271,14 +268,14 @@ public class AiController {
             player.sendMessage("§e附近 8 格内未找到侧翼位置");
             return;
         }
-        greedyNavAndShow(entity, pos.toLevelPosition(entity.getLevel()));
+        greedyWalkAndShow(entity, pos.toLevelPosition(entity.getLevel()));
         player.sendMessage("§a测试实体正在贪心包抄你的侧翼（侧偏评分 §e" + format(pos.score()) + "§a，粒子显示路径）");
     }
 
     /**
      * {@code /ai flankteam [数量]}：生成多个实体并对玩家发起<b>协同钳形包抄</b>（团队战术）。
      * <p>
-     * 演示改进后的 {@link AiAPI#flankTarget(List, Entity, double)}：成员以小队来袭方向为统一参考，
+     * 演示 {@link AiAPI#flankTarget(List, Entity, double)}：成员以小队来袭方向为统一参考，
      * 在玩家远侧半圆（180°）上均匀展开——两端落在左右两翼、中间位于后方，
      * 形成协调的钳形合围，而非各自为政地聚堆。
      */
@@ -315,7 +312,7 @@ public class AiController {
             player.sendMessage("§e附近 12 格内未找到更高位置（需高出至少 2 格）");
             return;
         }
-        greedyNavAndShow(entity, pos.toLevelPosition(entity.getLevel()));
+        greedyWalkAndShow(entity, pos.toLevelPosition(entity.getLevel()));
         player.sendMessage("§a测试实体正在贪心前往高地（高度优势 §e" + format(pos.score()) + " §a格，粒子显示路径）");
     }
 
@@ -334,14 +331,14 @@ public class AiController {
         if (entity == null) {
             return;
         }
-        boolean canSeeFov = ai.canSee(entity, player, 16, 90);
-        boolean canSeeTurn = ai.canSee360(entity, player, 16);
-        // 坐标版"转头可见"演示：以玩家坐标为目标点
-        boolean canSeeCoord = ai.canSee(entity, new Vector3(player.x, player.y + 1.5, player.z), 16);
+        boolean canSeeFov = ai.see(entity).range(16).fov(90).canSee(player);
+        boolean canSeeTurn = ai.see(entity).range(16).canSee360(player);
+        // 坐标版"转头可见"演示：以玩家眼部坐标为目标点
+        boolean canSeeCoord = ai.see(entity).range(16).canSee(new Vector3(player.x, player.y + 1.5, player.z));
         double dx = entity.x - player.x;
         double dz = entity.z - player.z;
         double dist = Math.sqrt(dx * dx + dz * dz);
-        double angle = ai.angleTo(entity, player);
+        double angle = ai.see(entity).angleTo(player);
         player.sendMessage("§a===== §f视野判断结果 §a=====");
         player.sendMessage("§7水平距离: §e" + format(dist) + " §7格（阈值 16）");
         player.sendMessage("§7相对朝向夹角: §e" + format(angle) + "° §7（§8正前=0° / 正侧=90° / 正后=180°§7）");
@@ -362,7 +359,7 @@ public class AiController {
             player.sendMessage("§e附近 12 格内未找到能看到你的合适位置");
             return;
         }
-        greedyNavAndShow(entity, pos.toLevelPosition(entity.getLevel()));
+        greedyWalkAndShow(entity, pos.toLevelPosition(entity.getLevel()));
         player.sendMessage("§a测试实体正在贪心移动到能看到你的位置（理想距离 10 格，粒子显示路径）");
     }
 
@@ -375,13 +372,13 @@ public class AiController {
         }
         int radius = parseInt(args.length > 0 ? args[0] : null, 5);
         radius = Math.max(1, Math.min(radius, 30));
-        TacticalPosition pos = ai.findApproximatePosition(entity, player, radius);
+        TacticalPosition pos = ai.findApproximatePosition(entity, playerPos(player), radius);
         if (!pos.isPresent()) {
             player.sendMessage("§e玩家附近 " + radius + " 格内未找到可站立的搜索点");
             return;
         }
-        boolean reached = ai.hasReachedApproximate(entity, player, radius);
-        greedyNavAndShow(entity, pos.toLevelPosition(entity.getLevel()));
+        boolean reached = ai.hasReachedApproximate(entity, playerPos(player), radius);
+        greedyWalkAndShow(entity, pos.toLevelPosition(entity.getLevel()));
         player.sendMessage("§a测试实体正在贪心模糊搜索玩家（不确定半径 §e" + radius + " §a格，粒子显示路径）");
         player.sendMessage("§7搜索点: §e" + format(pos.position().x) + ", " + format(pos.position().y) + ", " + format(pos.position().z));
         player.sendMessage("§7是否已到达模糊区域: " + boolText(reached));
@@ -418,7 +415,7 @@ public class AiController {
             return;
         }
         FormationType formation = parseFormation(args.length > 0 ? args[0] : "wedge");
-        List<TacticalPosition> positions = ai.rally(members, player, formation, 2);
+        List<TacticalPosition> positions = ai.rally(members, playerPos(player), formation, 2);
         navigateTeam(player, members, positions);
         player.sendMessage("§a团队正在以 §e" + formation + " §a阵型集结到你身边（间距 2 格）");
     }
@@ -430,7 +427,7 @@ public class AiController {
         if (entity == null) {
             return;
         }
-        boolean ok = ai.meleeAttack(entity, player, 4.0f);
+        boolean ok = ai.attack(entity).melee(player, 4.0f).fire();
         player.sendMessage(ok ? "§c测试实体对你发动近战攻击，造成 4 点伤害！" : "§e攻击未生效（可能被事件取消）");
     }
 
@@ -441,22 +438,18 @@ public class AiController {
         if (entity == null) {
             return;
         }
-        Entity arrow = ai.shootArrow(entity, player);
-        player.sendMessage(arrow != null ? "§a测试实体向你射出一支箭！" : "§e射箭失败");
+        boolean ok = ai.attack(entity).arrow(player).fire();
+        player.sendMessage(ok ? "§a测试实体向你射出一支箭！" : "§e射箭失败");
     }
 
-    /** {@code /ai stop}：停止主实体的全部 AI 行为。 */
+    /** {@code /ai stop}：停止主实体的全部 AI 行为（循环行为 + 导航）。 */
     @CommandMapping("stop")
     public void stop(@Sender Player player) {
         Entity entity = getPrimary(player);
         if (entity != null) {
             ai.stop(entity);
-            ai.stopChase(entity);
-            ai.stopChaseGreedy(entity);
-            ai.stopWander(entity);
-            ai.stopContinuous(entity);
         }
-        player.sendMessage("§a已停止测试实体的所有 AI 行为（导航/追逐/游荡/续算）");
+        player.sendMessage("§a已停止测试实体的所有 AI 行为（循环行为/导航）");
     }
 
     /** {@code /ai status}：查看 AI 运行状态。 */
@@ -469,10 +462,7 @@ public class AiController {
                 : "§c无（请先 §f/ai spawn§c）"));
         if (entity != null) {
             player.sendMessage("§7  导航中: " + boolText(ai.isNavigating(entity)));
-            player.sendMessage("§7  续算导航中: " + boolText(ai.isNavigatingContinuous(entity)));
-            player.sendMessage("§7  追逐中: " + boolText(ai.isChasing(entity)));
-            player.sendMessage("§7  贪心追逐中: " + boolText(ai.isChasingGreedy(entity)));
-            player.sendMessage("§7  游荡中: " + boolText(ai.isWandering(entity)));
+            player.sendMessage("§7  循环行为中(chase/wander/loop): " + boolText(ai.isLooping(entity)));
             player.sendMessage("§7  坐标: §f" + (int) entity.x + ", " + (int) entity.y + ", " + (int) entity.z);
         }
         List<Entity> t = team.get(player.getName());
@@ -532,7 +522,7 @@ public class AiController {
             double x = Double.parseDouble(args[0]);
             double y = Double.parseDouble(args[1]);
             double z = Double.parseDouble(args[2]);
-            greedyNavAndShow(entity, new Vector3(x, y, z));
+            greedyWalkAndShow(entity, new Vector3(x, y, z));
             player.sendMessage("§a主实体正在贪心寻路到 §e(" + x + ", " + y + ", " + z + ")§a（粒子显示路径）");
         } catch (NumberFormatException e) {
             player.sendMessage("§c坐标必须是数字");
@@ -563,6 +553,11 @@ public class AiController {
 
     // ============================ 辅助方法 ============================
 
+    /** 玩家脚部坐标。 */
+    private static Vector3 playerPos(Player player) {
+        return new Vector3(player.x, player.y, player.z);
+    }
+
     /**
      * 在玩家前方 3 格生成指定类型的实体。
      *
@@ -578,7 +573,7 @@ public class AiController {
                 player.z + dir.z * 3,
                 player.getLevel());
         // 默认使用 TestNpcEntity（EntityHuman 子类，无怪物 AI），
-        // 使 Navigator「设置 motion + 主动 move()」能稳定驱动其沿路径行走。
+        // 使导航器「设置 motion + 主动 move()」能稳定驱动其沿路径行走。
         // 若显式指定原版怪物（Zombie/Skeleton 等）仍可生成，但其自带 AI 会干扰寻路效果。
         if (type == null || type.isEmpty()
                 || type.equalsIgnoreCase("TestNpc")
@@ -631,27 +626,30 @@ public class AiController {
         for (int i = 0; i < members.size() && i < positions.size(); i++) {
             TacticalPosition pos = positions.get(i);
             if (pos.isPresent()) {
-                greedyNavAndShow(members.get(i), pos.toLevelPosition(player.getLevel()));
+                greedyWalkAndShow(members.get(i), pos.toLevelPosition(player.getLevel()));
             }
         }
     }
 
     /**
-     * 贪心寻路到目标并自动显示路径（粒子轨迹）。
+     * 贪心导航到目标并自动显示路径（粒子轨迹）。
      * <p>
      * 示例默认采用贪心策略（低开销局部步进），并在寻路成功后用粒子持续显示路径轨迹，
-     * 便于在游戏内直观观察实体的行进路线。
+     * 便于在游戏内直观观察实体的行进路线。去掉 {@code strategy(...)} 即用默认 A* 策略。
      *
      * @param entity 实体
      * @param target 目标坐标（Position / Vector3）
-     * @return 导航器；null 表示寻路失败
+     * @return true 表示寻路成功并已启动导航
      */
-    private static Navigator greedyNavAndShow(Entity entity, Vector3 target) {
-        Navigator nav = ai.navigateGreedy(entity, target);
-        if (nav != null) {
+    private static boolean greedyWalkAndShow(Entity entity, Vector3 target) {
+        boolean ok = ai.walk(entity)
+                .strategy(ai.getGreedyPathFinder())
+                .to(target)
+                .start() != null;
+        if (ok) {
             ai.showPath(entity, 10);
         }
-        return nav;
+        return ok;
     }
 
     /** 解析阵型名称，无法识别时默认楔形（WEDGE）。 */

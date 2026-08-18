@@ -9,57 +9,67 @@
 
 - [一、架构总览](#一架构总览)
 - [二、包结构](#二包结构)
-- [三、寻路引擎详解（A\*）](#三寻路引擎详解a)
-- [四、导航调度详解](#四导航调度详解)
-- [五、战术评分算法](#五战术评分算法)
-- [六、战斗瞄准算法](#六战斗瞄准算法)
-- [七、工具类](#七工具类)
-- [八、Spring 装配机制](#八spring-装配机制)
-- [九、扩展指南](#九扩展指南)
-- [十、性能考量](#十性能考量)
-- [十一、测试](#十一测试)
+- [三、寻路引擎详解](#三寻路引擎详解)
+- [四、行为引擎详解（LoopBehavior）](#四行为引擎详解loopbehavior)
+- [五、导航执行详解（NavigationExecutor）](#五导航执行详解navigationexecutor)
+- [六、导航调度详解](#六导航调度详解)
+- [七、战术子系统详解](#七战术子系统详解)
+- [八、战斗瞄准算法](#八战斗瞄准算法)
+- [九、工具类](#九工具类)
+- [十、Spring 装配机制](#十spring-装配机制)
+- [十一、扩展指南](#十一扩展指南)
+- [十二、性能考量](#十二性能考量)
+- [十三、测试](#十三测试)
 
 ---
 
 ## 一、架构总览
 
-模块采用**分层 + 单向 DAG**设计，自底向上分为五层：
+模块采用**两区 + 分层单向 DAG**设计。
+
+### 两区划分
+
+| 区 | 包 | 职责 | 约束 |
+|----|----|------|------|
+| **算法区** | `pathfinding/` | 策略变体（A* / 贪心），插槽架构可插拔 | 只做纯计算，不含业务策略 |
+| **库区** | `core/` | 无状态能力件（行为 / 执行 / 调度 / 战术 / 感知 / 战斗 / 工具） | 不感知具体算法变体，经 `PathfindingStrategy` 插槽引用 |
+
+### 分层结构
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  门面层    AiAPI（聚合转发，不含逻辑）                       │
-├─────────────────────────────────────────────────────────────┤
-│  中层      AnytimePathFinder(追逐) WanderBehavior(游荡)      │
-│            TeamTactics(团队战术)                             │
-├─────────────────────────────────────────────────────────────┤
-│  行为层    TacticalScanner（单实体战术）  CombatActions（战斗）│
-├─────────────────────────────────────────────────────────────┤
-│  调度层    NavigatorManager → Navigator（实体移动驱动）      │
-├─────────────────────────────────────────────────────────────┤
-│  核心层    PathFinder（A* 寻路，支持 StepCostFunction 评分器）│
-├─────────────────────────────────────────────────────────────┤
-│  工具层    BlockChecks（可通行性）  LineOfSight（视线）  VisionSensor（视野） │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│ 门面层   AiAPI（七工厂：path/walk/chase/wander/loop/attack/see）   │
+├──────────────────────────────────────────────────────────────────┤
+│ 行为层   LoopBehavior（计算→执行→判断 循环，chase/wander 预配置）   │
+│ 执行层   NavigationExecutor / PlannedPath（两段式 + 续算）          │
+│         AttackExecutor（战斗链式配置）  SeeQuery（视野链式查询）     │
+├──────────────────────────────────────────────────────────────────┤
+│ 调度层   NavigatorManager → Navigator（实体移动驱动，单调度器）      │
+├──────────────────────────────────────────────────────────────────┤
+│ 战术层   TacticalScanner + 六个战术 Target + TeamTactics           │
+├──────────────────────────────────────────────────────────────────┤
+│ 算法区   AStarPathFinder（A*）  GreedyPathFinder（贪心）            │
+│ 工具层   BlockChecks / LineOfSight / BlockSnapshotCache / VisionSensor │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-**依赖方向**：上层依赖下层。中层三个组件（追逐/游荡/团队）依赖核心层与调度层，再被门面聚合。具体到 Bean 的 DAG：
+**依赖方向**：上层依赖下层；库区经 [`PathfindingStrategy`](pathfinding/PathfindingStrategy.java) 插槽引用算法区，不感知具体变体。Bean DAG：
 
 ```
-PathFinder ──┬─────────────────────────────┐
-NavigatorManager ──┼──→ AnytimePathFinder ──┤
-                   ├──→ WanderBehavior ─────┼──→ AiAPI
-TacticalScanner ──┼─────────────────────────┤
-CombatActions ────┼─────────────────────────┤
-TeamTactics ──────┘                         │
+AStarPathFinder ──┐
+GreedyPathFinder ─┤
+NavigatorManager ─┼──→ AiAPI（六参构造注入）
+TacticalScanner ──┤
+CombatActions ────┤
+TeamTactics ──────┘
 ```
-
-七个组件均可单独使用；[`AiAPI`](AiAPI.java) 仅做构造注入与委托转发。Spring 按「核心 → 调度 → 行为/中层 → 门面」的顺序创建 Bean（XML 中按此顺序声明）。
 
 ### 设计原则
 
-1. **无状态优先**：`PathFinder`、`TacticalScanner`、`CombatActions` 均为无状态纯计算，可作 Spring 单例被多线程并发调用。有状态部分（`Navigator`）被封装在 `NavigatorManager` 的并发容器内。
-2. **宽容失败**：寻路、战术扫描永不抛异常，统一返回带状态码的结果对象（[`PathResult`](pathfinding/PathResult.java) / [`TacticalPosition`](tactical/TacticalPosition.java)），调用方自行决策回退。
-3. **熔断保护**：A* 搜索有节点上限（`maxSearchNodes`），避免在无解地形上耗尽 CPU。
+1. **无状态优先**：算法区全部组件与 `TacticalScanner` / `CombatActions` 均为无状态纯计算，可作 Spring 单例被多线程并发调用。有状态部分（`Navigator` / `LoopBehavior` 运行态）分别封装在 `NavigatorManager` 的并发容器与静态 ACTIVE 表内。
+2. **宽容失败**：寻路、战术扫描永不抛异常，统一返回带状态码的结果对象（[`PathResult`](pathfinding/PathResult.java) / [`TacticalPosition`](core/tactical/TacticalPosition.java)），调用方自行决策回退。
+3. **熔断保护**：A* 搜索有节点上限（`maxSearchNodes`），贪心有步数上限（`maxSteps`），避免在无解地形上耗尽 CPU。
+4. **主线程纪律**：所有驱动实体的操作（导航启动 / 战斗 fire / 循环执行段）必须主线程；纯计算（寻路 / 视野查询）任意线程。`LoopBehavior` 的计算段可经 `ComputeCarrier` 移交线程池，完成后自动回主线程。
 
 ---
 
@@ -67,762 +77,421 @@ TeamTactics ──────┘                         │
 
 ```
 io.github.JiangHu.jframe.ai
-├── AiAPI.java                  门面入口（公开 API）
+├── AiAPI.java                     门面（七工厂 + 查询/停止 + 战术 + 可视化）
 ├── config/
-│   └── AiSpringConfig.java     Spring 配置（@ImportResource）
-├── pathfinding/                寻路核心
-│   ├── BlockNode.java          A* 节点
-│   ├── HeuristicType.java      启发式枚举
-│   ├── PathfinderOptions.java  寻路参数（fluent setter）
-│   ├── PathResult.java         寻路结果（不可变，含 PARTIAL 模糊解）
-│   ├── StepCostFunction.java   外接评分器（函数式接口）
-│   └── PathFinder.java         A* 算法实现
-├── navigation/                 导航调度
-│   ├── Navigator.java          单实体路径跟随
-│   ├── NavigatorManager.java   多实体调度（PluginAware）
-│   ├── AnytimePathFinder.java  追逐导航（边走边搜，移动目标）
-│   ├── ContinuousNavigator.java 走完续算（静态目标长距离导航）
-│   └── WanderBehavior.java     游荡行为（随机巡游状态机）
-├── tactical/                   战术行为
-│   ├── TacticalPosition.java   战术位置结果（record）
-│   ├── TacticalScanner.java    单实体战术（找掩体/远离/包抄/高地/视野点/模糊位置）
-│   ├── FormationType.java      团队阵型枚举（横/纵/楔/环/方）
-│   └── TeamTactics.java        团队战术（协同包抄/包围/集结）
-├── combat/                     战斗行为
-│   └── CombatActions.java      攻击/射箭/投掷/使用物品
-└── util/                       工具
-    ├── BlockChecks.java        方块可通行性/可站立判定
-    ├── LineOfSight.java        射线投射视线检测
-    └── VisionSensor.java       视野感知（距离+FOV+视线遮挡）
+│   └── AiSpringConfig.java        Spring 配置（@ImportResource）
+│
+├── core/                          【库区】无状态能力件
+│   ├── behavior/                  行为引擎
+│   │   ├── LoopBehavior.java      循环行为（计算→执行→判断）
+│   │   ├── LoopContext.java       轮上下文（rounds / lastPlan）
+│   │   ├── BehaviorOutcome.java   终态枚举（COMPLETED/TARGET_LOST/STOPPED/ENTITY_INVALID）
+│   │   ├── BehaviorHandle.java    运行句柄（stop / isRunning）
+│   │   ├── ComputeCarrier.java    计算载体抽象
+│   │   ├── ComputeCarriers.java   载体工厂（sync / of(executor)）
+│   │   └── ComputeTask.java       计算任务（context/run/complete/fail）
+│   ├── executor/                  执行器
+│   │   ├── NavigationExecutor.java 导航链式配置（compute/start/continuous）
+│   │   ├── PlannedPath.java       计算结果 + 执行参数（两段式载体）
+│   │   └── AttackExecutor.java    战斗链式配置（fire）
+│   ├── navigation/                导航调度
+│   │   ├── Navigator.java         单实体路径跟随（tick 驱动）
+│   │   └── NavigatorManager.java  多实体调度（PluginAware，单调度器）
+│   ├── target/                    目标抽象
+│   │   ├── Target.java            接口（get() 每轮动态读取）
+│   │   ├── PointTarget.java       固定点
+│   │   └── EntityTarget.java      活实体（死亡/移除自动失效）
+│   ├── tactical/                  战术
+│   │   ├── TacticalScanner.java   单实体战术扫描（评分制）
+│   │   ├── TacticalPosition.java  战术位置结果（record）
+│   │   ├── CoverTarget / FleeTarget / FlankTarget /
+│   │   │   HighGroundTarget / SightTarget / ApproximateTarget.java  六个战术 Target
+│   │   ├── FormationType.java     团队阵型枚举（横/纵/楔/环/方）
+│   │   └── TeamTactics.java       团队战术（包抄/包围/集结）
+│   ├── vision/
+│   │   ├── VisionSensor.java      视野感知（距离+FOV+视线）
+│   │   └── SeeQuery.java          链式查询门面
+│   ├── combat/
+│   │   └── CombatActions.java     攻击/射箭/投掷/使用物品
+│   └── util/
+│       ├── BlockChecks.java       方块可通行性/可站立判定
+│       ├── LineOfSight.java       DDA 射线投射视线检测
+│       ├── BlockSnapshotCache.java 方块快照缓存（单次搜索内）
+│       └── PathVisualizer.java    路径粒子可视化
+│
+└── pathfinding/                   【算法区】策略变体
+    ├── PathfindingStrategy.java   策略接口（插槽）
+    ├── PathfindingConfig.java     参数标记接口
+    ├── PathResult.java            寻路结果（不可变，含 PARTIAL）
+    ├── StepCostFunction.java      外接评分器（函数式接口）
+    ├── astar/                     A* 变体
+    │   ├── AStarPathFinder.java   A* 实现（默认策略）
+    │   ├── AStarNode.java         A* 节点
+    │   ├── AStarOptions.java      A* 参数（fluent setter）
+    │   └── HeuristicType.java     启发式枚举（OCTILE 默认）
+    └── greedy/                    贪心变体
+        ├── GreedyPathFinder.java  贪心实现（自适应三阶段）
+        └── GreedyOptions.java     贪心参数
 ```
 
 ---
 
-## 三、寻路引擎详解（A*）
+## 三、寻路引擎详解
 
-寻路由 [`PathFinder`](pathfinding/PathFinder.java) 实现，采用经典 **A\*** 算法。核心逻辑封装在私有内部类 `Search` 中，保证外层 `PathFinder` 无状态。
+### 1. 策略插槽
 
-### 1. 数据结构
+[`PathfindingStrategy`](pathfinding/PathfindingStrategy.java) 是算法区对外的唯一插槽：
+
+```java
+public interface PathfindingStrategy {
+    PathResult findPath(Level level, Vector3 start, Vector3 target, PathfindingConfig config);
+}
+```
+
+库区所有组件（`LoopBehavior` / `NavigationExecutor`）只持有 `PathfindingStrategy` 引用，默认注入 `AStarPathFinder`，运行时可换任意实现。
+
+### 2. A*（astar 子包）
+
+[`AStarPathFinder`](pathfinding/astar/AStarPathFinder.java) 核心逻辑封装在私有内部类 `Search` 中，保证外层无状态。
+
+**数据结构**：
 
 | 结构 | 类型 | 作用 |
 |------|------|------|
-| `open` | `PriorityQueue<BlockNode>` | 待探索节点，按 `fCost = g + h` 升序 |
-| `closed` | `HashSet<BlockNode>` | 已确定最优的节点（闭合表） |
-| `dirs` | `int[][]` | 邻居方向偏移（`DIRS_4` 或 `DIRS_8`） |
+| `open` | `PriorityQueue<AStarNode>` | 待探索节点，按 `fCost = g + h` 升序 |
+| `closed` | `HashSet<Long>` | 已确定最优的坐标（**Long 编码**，避免对象开销） |
+| `snapshot` | `BlockSnapshotCache` | 单次搜索内的方块查询缓存 |
 | `expanded` | `int` | 已展开节点计数（用于熔断） |
 
-### 2. 主循环（`Search.run`）
+**关键优化**：
+
+- **OCTILE 启发式**（默认）：`max(dx,dz) + (√2−1)·min(dx,dz)`，8 方向网格的最优可采纳启发。另有 MANHATTAN / EUCLIDEAN / CHEBYSHEV 可选（[`HeuristicType`](pathfinding/astar/HeuristicType.java)）。
+- **closed 坐标 Long 编码**：`(x & 0x3FFFFFFL) << 38 | (z & 0x3FFFFFFL) << 12 | (y & 0xFFFL)`，`HashSet<Long>` 替代节点对象集合。
+- **检查顺序反转**：先验 open 表弹出节点有效性（closed 查询）再展开邻居，减少无效邻居枚举。
+- **方块快照缓存**（[`BlockSnapshotCache`](core/util/BlockSnapshotCache.java)）：同一列的可站立性 / 实体高度检查在单次搜索内只做一次，重复访问命中缓存。
+
+**主循环**（`Search.run`）：
 
 ```
-1. 初始化：start.gCost = 0; start.hCost = heuristic(start, goal); open.add(start)
-2. reachSq = goalReachRadius²   // 到达判定的平方半径
-3. while open 非空:
+1. 初始化：start.g = 0; start.h = heuristic(start, goal); open.add(start)
+2. while open 非空:
      a. current = open.poll()
-     b. 惰性删除：if (!closed.add(current)) continue   // 已闭合的过时条目跳过
-     c. 到达判定：if (current == goal || 水平距离² ≤ reachSq) → 回溯重建路径，返回 SUCCESS
-     d. 熔断：if (++expanded > maxSearchNodes) → 返回 NODE_LIMIT_EXCEEDED
-     e. 扩展邻居：for each dir in dirs:
-          - neighbor = findLanding(current, dir)
-          - if neighbor == null || closed.contains(neighbor) → 跳过
-          - 切角检测（仅对角线）：if isCornerBlocked → 跳过
-          - 计算 stepCost（对角线 = diagonalCost；攀爬 dy>0 额外 +dy×0.5）
-          - neighbor.gCost = current.gCost + stepCost
-          - neighbor.hCost = heuristic(neighbor, goal)
-          - neighbor.cameFrom = current
-          - open.add(neighbor)
-4. open 耗尽未到达 → 返回 NO_PATH
+     b. 若 current 已在 closed → 跳过（惰性去重）
+     c. current 加入 closed（Long 编码）
+     d. 距 goal² ≤ reachRadius² → 回溯路径，SUCCESS
+     e. expanded++ 超过 maxSearchNodes → 熔断，PARTIAL/失败
+     f. 枚举邻居（DIRS_4 / DIRS_8）:
+          - 可通行性检查（BlockChecks + 快照缓存）
+          - 代价 = 基础(对角 1.414 / 直行 1.0 / 攀爬额外) + stepCost 评分器
+          - 评分器返回 POSITIVE_INFINITY → 剪枝该步
+          - 邻居未在 closed 且 g 更优 → 更新并入 open
+3. open 耗尽 → NO_PATH（partialOnFailure 时回退离 goal 最近的节点回溯 → PARTIAL）
 ```
 
-### 3. 惰性删除（Lazy Deletion）
+**模糊解（PARTIAL）**：搜索失败时记录搜索过程中离目标最近的节点，从它回溯出部分路径。调用方拿到「至少朝目标前进了一段」的路径，配合上层循环逐步逼近。
 
-本实现**不**在发现更优 g 值时去 `open` 中删除旧条目（PriorityQueue 不支持高效删除）。而是允许同一坐标多次入队，在 `poll` 时通过 `closed.add(current)` 判定：
+### 3. 贪心（greedy 子包）
 
-- `closed.add()` 返回 `false` 表示该坐标已在闭合表中（已有更优解被处理），直接 `continue` 跳过。
-- 由于启发式可采纳（不高估），**首次从 open 弹出的节点必然是最优的**，后续重复条目可安全丢弃。
+[`GreedyPathFinder`](pathfinding/greedy/GreedyPathFinder.java) 不做全局搜索，**自适应三阶段**局部步进：
 
-这避免了维护「坐标→open 节点」索引的开销，实现简洁。
+| 阶段 | 触发 | 行为 | 开销 |
+|------|------|------|------|
+| ① 快速贪心 | 默认 | 枚举 8 邻居，评分 = 距目标距离 + 转向惩罚 + 随机扰动 | O(8) |
+| ② 范围感知 | 连续无进展 | 以当前为中心扩大 `windowRadius` 观察窗，舍伍德随机采样 `samplesPerTick` 个候选 | 中 |
+| ③ 恢复 | 找到出路 | 回到阶段① | O(8) |
 
-### 4. 邻居生成（`findLanding`）
+**设计哲学**：贪心是**短视**的——单次调用最多 `maxSteps` 步（默认 12），大范围绕行由上层循环（`LoopBehavior`）多次调用组合完成。**刻意不退化为 A\***：步数上限 / 目标远离 → `PARTIAL`；区域穷尽 → `NO_PATH`；外部取消 → `CANCELLED`。
 
-对当前节点沿 `(dx, dz)` 方向寻找落脚点，按优先级尝试三种移动方式：
+### 4. 外接评分器
 
-```
-1. 同高度平移：if isWalkable(nx, cur.y, nz) → 落脚 (nx, cur.y, nz)
-2. 向上跳跃（allowJump 且前方脚部为固体）：
-     jy = cur.y + 1
-     if 起跳点头部可穿过(cur.x, jy, cur.z) && 落点可站立(nx, jy, nz) → 落脚 (nx, jy, nz)
-3. 安全下落（逐层下探，最多 maxDropHeight 格）：
-     for drop = 1..maxDropHeight:
-         ly = cur.y - drop
-         if 该层被固体阻挡 → break（无法继续下落）
-         if 该层可站立(nx, ly, nz) → 落脚 (nx, ly, nz)
-```
-
-### 5. 切角检测（`isCornerBlocked`）
-
-对角线移动 `(dx, dz)` 时，若两个正交相邻格均为固体，实体无法穿过它们的夹角：
-
-```
-isCornerBlocked(cur, dx, dz):
-    return isSolid(cur.x+dx, cur.y, cur.z) && isSolid(cur.x, cur.y, cur.z+dz)
-```
-
-这防止实体「穿墙角」——例如从 `(0,0)` 对角走到 `(1,1)`，若 `(1,0)` 和 `(0,1)` 都是墙，则禁止该对角移动。
-
-### 6. 可通行性判定（`isWalkable` / `isPassable` / `isSolid`）
-
-```
-isWalkable(x, y, z):           // 该格是否为有效落脚点（脚部位置）
-    边界检查 (MIN_Y=-64 .. MAX_Y=320)
-    脚部可穿过: isPassable(x, y, z)
-    头部空间: for h = 1..entityHeight-1: isPassable(x, y+h, z)
-    脚下支撑: isSolid(x, y-1, z)
-
-isPassable(x, y, z):  return block.canPassThrough()   // 空气、水、草等
-isSolid(x, y, z):     return !block.canPassThrough()  // 石头、木头等
-```
-
-> 判定基于 Nukkit `Block.canPassThrough()`，与原版物理一致。
-
-### 7. 启发式函数
-
-[`HeuristicType`](pathfinding/HeuristicType.java) 提供三种：
-
-| 类型 | 公式 | 说明 |
-|------|------|------|
-| `MANHATTAN` | `|dx|+|dy|+|dz|` | 默认；网格移动可采纳 |
-| `EUCLIDEAN` | `√(dx²+dy²+dz²)` | 直线距离 |
-| `CHEBYSHEV` | `max(|dx|,|dy|,|dz|)` | 8 方向等代价 |
-
-> **可采纳性**：曼哈顿距离在 4/8 方向网格移动中不高估实际代价（对角线代价 ≥ 1），保证 A* 找到最优解。若使用对角线移动却选 `EUCLIDEAN`，理论上仍可采纳（直线 ≤ 实际网格路径），但搜索效率略低。
-
-### 8. 路径重建（`reconstruct`）
-
-到达终点后，从终点沿 `cameFrom` 指针回溯至起点，再 `Collections.reverse()` 反转为行进顺序。结果存入 [`PathResult`](pathfinding/PathResult.java)，**索引 0 为起点、末尾为终点**。
-
-### 9. 外接评分器（`StepCostFunction`）
-
-[`StepCostFunction`](pathfinding/StepCostFunction.java) 是一个函数式接口，允许调用方在 A\* 的**基础移动代价**之上叠加自定义代价：
-
-```
-stepCost = baseCost + max(0.01, stepCostFunction.extraCost(level, from, to, diagonal, options))
-```
-
-- `baseCost`：对角线 1.414、直行 1.0、攀爬额外 `+dy×0.5`（与未接入评分器时一致）。
-- `extraCost` 返回 `POSITIVE_INFINITY` → 该步被禁止通行（等效于不可通行）。
-- 返回负值会被截断为 `0.01` 下限——**避免负代价破坏 A\* 的最优性**（A\* 要求每步代价 ≥ ε > 0，否则可能出现零代价环导致无法终止或非最优解）。
-
-通过 [`PathfinderOptions.stepCostFunction(...)`](pathfinding/PathfinderOptions.java) 注入。典型用途：远离岩浆/仙人掌、偏好贴墙、为已知危险区域加价。
-
-### 10. 模糊解（`PARTIAL` / `partialOrFailed`）
-
-当目标不可达（被围住/悬空/超出搜索上限）时，标准 `findPath` 返回 `NO_PATH`。但许多场景下「向目标方向尽量推进」比「原地不动」更有价值（如追逐移动目标）。为此提供模糊解回退：
-
-- [`PathFinder.partialOrFailed`](pathfinding/PathFinder.java)：在 A\* 主循环中追踪**离目标 h 值最小**的已闭合节点（`bestNode`）。若最终未到达目标，则从 `bestNode` 回溯一条部分路径，返回状态为 `PARTIAL` 的 [`PathResult`](pathfinding/PathResult.java)。
-- [`PathfinderOptions.partialOnFailure(true)`](pathfinding/PathfinderOptions.java)：开启后，`findPath` 内部改用 `partialOrFailed` 语义。
-- [`NavigatorManager.navigateOrPartial`](navigation/NavigatorManager.java)：接受 `SUCCESS` 与 `PARTIAL` 两种结果提交导航（`NO_PATH` 仍不导航）。
-
-> **注意**：模糊解不保证到达目标，仅保证「沿最优方向推进」。调用方可通过 `result.isPartial()` 判断，决定是否继续重试或放弃。
-
-### 11. 策略插槽架构（`PathfindingStrategy`）
-
-寻路算法采用**策略模式**，所有算法实现统一的 [`PathfindingStrategy`](pathfinding/PathfindingStrategy.java) 接口：
-
-```
-PathfindingStrategy（接口/插槽）
-├── PathFinder          — A* 全局最优（getName="astar"）
-└── GreedyPathFinder    — 贪心局部步进（getName="greedy"）
-```
-
-配置体系同样有继承层次：
-
-```
-PathfindingConfig（抽象基类：entityHeight/entityWidth）
-├── PathfinderOptions   — A* 专属（maxSearchNodes/allowDiagonal/...）
-└── GreedyOptions       — 贪心专属（windowRadius/samplesPerTick/...）
-```
-
-- `findPath(Level, Vector3, Vector3, PathfindingConfig)`：接口方法，接受基类配置类型。实现内部做 `instanceof` 检查，类型不匹配时降级为默认配置（不抛异常）。
-- `getDefaultConfig()`：返回该策略的默认配置新实例。
-- **向后兼容**：`PathfinderOptions extends PathfindingConfig`、`PathFinder implements PathfindingStrategy`，现有代码无需修改。
-
----
-
-## 三-B、贪心寻路引擎详解
-
-[`GreedyPathFinder`](pathfinding/GreedyPathFinder.java) 是 A\* 的轻量替代。核心思想：**不全局搜索，而是递推选择下一步**。单次 `findPath` 调用最多走 `maxSteps` 步，返回 PARTIAL 路径交给 Navigator 走完后由上层重新调用。
-
-### 1. 自适应三阶段架构
-
-```
-while (step < maxSteps):
-    if stallCount1 < stallThreshold1:
-        阶段①：fastGreedyStep（8邻居，距离+转向评分）
-        if 有进展: stallCount1 = 0
-        elif 无邻居: stallCount1++
-    else:
-        阶段②：rangeAwareStep（窗口采样，全因子评分+随机扰动）
-        if 找到出路: stallCount1 = 0; 回到阶段①
-```
-
-| 阶段 | 方法 | 评分因子 | 开销 |
-|------|------|----------|------|
-| ① 快速贪心 | `fastGreedyStep` | 距离 + 转向 | O(8) |
-| ② 范围感知 | `rangeAwareStep` | 距离 + 转向 + 访问惩罚 - 边界接近度 | 中等 |
-| ③ 恢复 | 回到① | — | O(8) |
-
-### 2. 舍伍德随机采样（`SamplingState`）
-
-阶段②在窗口内**随机采样**候选位置，直到收集到 `samplesPerTick` 个**可站立**候选（不可站立的不计入 k）。三重终止条件：
-
-1. **最优值稳定**：连续 `noImproveLimit` 次未发现更优候选
-2. **方差收敛**：最近 `varianceWindow` 次采样的分数方差 < `varianceFloor`
-3. **预算上限**：窗口内所有列已采样完
-
-采样完成后，对每个候选施加**随机扰动**（舍伍德随机化）：`finalScore = rawScore × (1 + ε)`，ε ∈ [-scoreJitter, +scoreJitter]，打破确定性，避免被特定地形卡住。
-
-### 3. 短期目标机制（`SubGoal`）
-
-当评分最高的候选经迷你 A\* 验证**不可达**、但次优候选可达时：
-- 将最优候选设为**短期目标**（跳板），吸引力权重 `subGoalWeight = 1.0`
-- 有效目标 = `lerp(最终目标, 短期目标, subGoalWeight)`（线性插值）
-- 每步 `subGoalWeight *= subGoalDecay`（默认 0.9），衰减到 `subGoalThreshold`（默认 0.1）以下时**自然淘汰**
-
-### 4. 时间衰减访问惩罚（`VisitHistory`）
-
-滑动窗口记录最近 `visitHistorySize`（默认 20）步的位置。惩罚函数：
-
-```
-penalty = Σ weight_i × decay_i
-weight_i = 1 / (1 + dist_i)      // 距离越近权重越大
-decay_i  = e^(-λ × age_i)        // 年龄越大衰减越快（λ = visitDecayLambda，默认 0.2）
-```
-
-近期位置惩罚大（防振荡），远期遗忘（允许回退）。
-
-### 5. 熔断条件（不退化为 A\*）
-
-| 条件 | 返回状态 | 说明 |
-|------|----------|------|
-| 步数上限 `step ≥ maxSteps` | `PARTIAL` | 短视路径，交给上层重新调用 |
-| 目标远离 `currentDist - startDist > maxDrift` | `PARTIAL` | 偏离太远，交给上层重新决策 |
-| 区域穷尽（阶段②采样完仍无出路） | `NO_PATH` | 窗口内确实无路 |
-| 外部取消 `cancel()` | `CANCELLED` | volatile 标志，返回已走的部分路径 |
-
-> **关键设计**：熔断**不退化为 A\***。贪心永远不调用全局 A\* 作为后备——大范围绕行由上层多次 PARTIAL 调用组合完成。
-
-### 6. 步数刷新机制
-
-当离目标的距离比上次记录近 `refreshThreshold`（默认 2）方块时，步数计数回退 `refreshAmount`（默认 3），延长寻路预算。这允许在持续进展时走更远，在停滞时及时熔断。
-
-### 7. 外部取消
-
-`GreedyPathFinder.cancel()` 设置 `volatile boolean cancelled` 标志。正在执行的 `findPath` 在下一步循环检查时返回 `CANCELLED`（附带已走的部分路径）。`volatile` 保证跨线程可见性，支持从其他线程终止寻路。
-
-### 8. 无状态设计
-
-`GreedyPathFinder` 外层无实例状态（`cancelled` 为 volatile 可安全重置），可作单例。单次寻路的可变状态封装在 `GreedySearch` 内部类中，每次 `findPath` 创建新实例。
-
----
-
-## 四、导航调度详解
-
-### 1. Navigator 单实体跟随
-
-[`Navigator`](navigation/Navigator.java) 是**有状态、单次使用**的控制器，绑定一个实体与一条路径。关键常量：
-
-| 常量 | 值 | 含义 |
-|------|----|------|
-| `ARRIVAL_RADIUS` | 0.6 | 到达单路径点的判定半径 |
-| `DEFAULT_SPEED` | 0.25 | 默认速度（方块/tick） |
-| `DEFAULT_JUMP_FORCE` | 0.42 | 跳跃冲量（motionY） |
-| `STUCK_THRESHOLD` | 12 | 卡住判定 tick 数 |
-| `STUCK_MOVE_DELTA` | 0.02 | 卡住判定位移阈值 |
-
-#### `tick()` 流程
-
-```
-1. 终止检查：finished / entity 失效(closed/!alive) / index >= path.size() → finish()
-2. target = path[index]   // 当前目标路径点
-3. dx = (target.x + 0.5) - entity.x;  dz = (target.z + 0.5) - entity.z   // 指向方块中心
-4. 到达判定：if 水平距离 < ARRIVAL_RADIUS → index++; stuckTicks=0; return
-5. 设置水平速度：归一化 (dx,dz) × speed → entity.motionX / motionZ
-6. 朝向：entity.yaw = atan2(-dx, dz)   // Nukkit yaw：0 朝 +Z，顺时针为正
-7. 跳跃：if target.y > entity.floorY && entity.motionY <= 0.05 → entity.motionY = jumpForce
-8. 卡住检测：if 本 tick 位移 < STUCK_MOVE_DELTA → stuckTicks++；若 > STUCK_THRESHOLD → index++（跳过卡住的点）
-```
-
-#### 移动模型说明
-
-采用「**直接设置速度向量**」的方式，而非寻路到目标点后传送。每 tick 写入 `motionX/motionZ`，由实体自身的物理更新（`onUpdate`）处理重力、摩擦、碰撞。这种方式：
-
-- 兼容大多数 Nukkit 生物实体与自定义实体。
-- 对由客户端控制的 `cn.nukkit.Player` **无效**（玩家位置由客户端决定）。
-
-#### 路径暴露（`getPath` / `getRemainingPath`）
-
-`Navigator` 持有当前路径与游标索引（`index`），通过两个方法对外暴露，供调试与可视化使用：
-
-- [`getPath()`](navigation/Navigator.java)：返回**完整路径的只读视图**（`Collections.unmodifiableList`），调用方不可修改内部状态。
-- [`getRemainingPath()`](navigation/Navigator.java)：返回**尚未走完的剩余路径副本**（`path.subList(index, size)` 的 `ArrayList` 拷贝），调用方可自由修改。
-
-> 两者均不抛异常：导航结束或索引越界时返回空列表。`AiAPI.getCurrentPath` / `getRemainingPath` 是对它们的门面封装（实体无活跃导航器时返回空列表）。
-
-### 2. NavigatorManager 多实体调度
-
-[`NavigatorManager`](navigation/NavigatorManager.java) 管理所有活跃 `Navigator`：
-
-- 内部用 `ConcurrentHashMap<Long, Navigator>`（key 为实体 `getId()`）。
-- 实现 [`PluginAware`](../core/module/PluginAware.java)，插件启动时由框架自动调用 `bindPlugin(plugin)`。
-- `bindPlugin` 通过 `Server.getScheduler().scheduleRepeatingTask(plugin, this::tickAll, 1)` 注册**每 tick 一次**的调度任务。
-- `tickAll()` 遍历所有 Navigator 调用 `tick()`，返回 `false`（已结束）的从 Map 移除。
-
-#### 并发安全
-
-- Map 使用 `ConcurrentHashMap`，`navigate` / `stop` / `tickAll` 可在不同线程调用。
-- `tickAll` 使用迭代器安全移除（`Iterator.remove` 或先收集再删）。
-
-### 3. AnytimePathFinder 追逐（边走边搜）
-
-[`AnytimePathFinder`](navigation/AnytimePathFinder.java) 是面向**移动目标**的持续追逐导航器，核心方法 `chase(entity, targetSupplier, options, speed, periodTicks)`：
-
-```
-1. 注册一个周期任务（periodTicks，默认 20 tick）到 Nukkit 调度器
-2. 每次 tick：
-   a. target = targetSupplier.get()      // 动态读取最新目标位置
-   b. if entity 与 target 距离 ≤ GIVE_UP_RADIUS(1.5) → 视为追上，停止追逐
-   c. result = pathFinder.partialOrFailed(entity, target, options)  // 强制 partialOnFailure
-   d. navigatorManager.navigateOrPartial(entity, result, speed)     // 接受 SUCCESS/PARTIAL
-3. stopChase(entity) 取消任务并停止导航
-```
-
-**关键设计**：
-
-- **目标供应器**（`Supplier<Vector3>`）：目标位置延迟求值，每次重搜时读取最新值，天然支持移动目标。
-- **强制模糊解**：`chase` 内部强制 `options.partialOnFailure = true`，即使某次寻路 `NO_PATH`，也会回退到部分路径，保证实体持续向目标推进。
-- **周期重搜**：固定周期重新寻路，修正目标移动产生的路径偏差（无需等当前路径走完）。
-
-### 4. ContinuousNavigator 走完续算（静态目标）
-
-[`ContinuousNavigator`](navigation/ContinuousNavigator.java) 将贪心寻路的短段串联成长距离导航，面向**静态目标**。与 `AnytimePathFinder`（定时重搜追逐移动目标）互补，核心方法 `navigateTo(entity, target, options, speed, maxSegments)`：
-
-```
-1. navigateTo(entity, target) 触发首次寻路
-2. navigateNextSegment()：
-   a. result = strategy.findPath(level, entity, target, options)   // 从实体当前位置寻路
-   b. if !result.hasPath() → cleanup()，停止续算
-   c. nav = navigatorManager.navigateOrPartial(entity, result, speed)
-   d. nav.onComplete(n -> {                                          // 走完回调
-        if 距离 ≤ reachRadius → cleanup()，已到达
-        else → navigateNextSegment()                                 // 递归续算下一段
-      })
-3. stop(entity) → task.cancel() + navigatorManager.stop(entity)
-```
-
-**关键设计**：
-
-- **事件驱动续算**：通过 `Navigator.onComplete` 回调驱动——实体走完当前段后立即从最新位置重新寻路，无需定时器，段间衔接无缝（贪心计算微秒级，间隙不可感知）。
-- **基于最新位置**：每次续算从实体当前实际位置出发，修正 Navigator 行进中的微小偏差，比预计算整条路径更准确。
-- **段数上限**：`DEFAULT_MAX_SEGMENTS`（100 段 ≈ 1200 步）防止无限循环；到达目标（距离 ≤ `reachRadius`）/ 寻路失败 / 实体失效时自动停止。
-- **线程安全**：任务表使用 `ConcurrentHashMap`，`cancelled` 标志使用 `volatile`，续算回调由 `NavigatorManager` 主线程调度执行。
-
-> **与 AnytimePathFinder 的区别**：`AnytimePathFinder` 面向**移动目标**，基于固定周期重搜（目标可能在走的过程中移动）；`ContinuousNavigator` 面向**静态目标**，基于「走完才续算」事件驱动（目标不动，无需周期重搜，开销更低）。
-
-### 5. WanderBehavior 游荡
-
-[`WanderBehavior`](navigation/WanderBehavior.java) 让实体在范围内随机巡游，核心方法 `wander(entity, radius, speed, pauseTicks)`。内部状态机：
-
-```
-状态 MOVING（导航中）：
-  - if navigatorManager.isNavigating(entity) == false → 进入 PAUSING，设 pauseCounter = pauseTicks
-状态 PAUSING（停留）：
-  - pauseCounter--
-  - if pauseCounter ≤ 0 → 选取新随机点，navigateTo，进入 MOVING
-```
-
-**随机点选取**（极坐标采样）：
-
-```
-angle = random × 2π                      // 角度 ∈ [0, 2π)
-dist   = radius×0.3 + random×radius×0.7  // 距离 ∈ [radius×0.3, radius]
-target = (entity.x + cos(angle)×dist, entity.y, entity.z + sin(angle)×dist)
-```
-
-距离下限 `radius×0.3` 避免新点总落在脚下（导致无意义的原地寻路）。
-
----
-
-## 五、战术评分算法
-
-[`TacticalScanner`](tactical/TacticalScanner.java) 的四个方法共享相同的扫描骨架：**以实体为中心的立方体邻域遍历**（`-r..r` 的 dx/dz 双重循环），对每个候选列调用 `findStandableY` 确定可站立 Y，再按各自评分函数打分，保留最高分。
-
-> **坐标版重载**：`findCover` / `findFleePosition` / `findFlankPosition` / `findSightPosition` 的 `Entity` 威胁版本均为单行委托，转发到对应的 `Vector3` 坐标版本（`(Vector3) threat` 向下转型——Nukkit `Entity` 继承自 `Vector3`）。坐标版本是核心实现，威胁眼部位置由 `eyeOf(Vector3)` 计算（`pos + (0.5, EYE_HEIGHT, 0.5)`）。这使战术方法可用于非实体威胁（爆炸点、岩浆源、固定坐标）。
-
-### 公共常量
-
-| 常量 | 值 | 含义 |
-|------|----|------|
-| `DEFAULT_RADIUS` | 8.0 | 默认搜索半径 |
-| `DEFAULT_ENTITY_HEIGHT` | 2 | 实体高度 |
-| `EYE_HEIGHT` | 1.5 | 眼部相对脚部高度 |
-
-### `findStandableY`
-
-在 `(bx, bz)` 列上，以 `centerY` 为基准寻找可站立 Y：同高 → 向上 4 格 → 向下 4 格。返回 `Integer.MIN_VALUE` 表示该列无可站立位置。
-
-### 1. 找掩体（`findCover`）
-
-**目标**：寻找威胁看不到的位置。
-
-```
-候选条件：LineOfSight.hasLineOfSight(threatEye, candidateEye) == false  // 视线被阻挡（必须）
-评分：score = distToThreat - distToSelf × 0.5
-      （离威胁越远越好，离自身越近越好——便于快速到达）
-```
-
-### 2. 远离（`findFleePosition`）
-
-**目标**：寻找离威胁最远的位置。
-
-```
-评分：score = distToThreat   （越远越好，直接以距离为分）
-```
-
-### 3. 包抄（`findFlankPosition`）
-
-**目标**：寻找位于目标侧方的位置。
-
-```
-前向单位向量 f = normalize(target - self)       // 自身→目标方向
-idealDist = max(2.0, |target-self| × 0.5)        // 理想包抄距离（约当前距离一半）
-
-对每个候选：
-  c = normalize(candidate - self)                // 候选相对自身的方向
-  dot = c · f                                    // 1=正前, 0=正侧, -1=正后
-  perpendicularity = 1 - |dot|                   // 侧方程度（0=前后, 1=正侧）
-  distFit = 1 - min(1, |distToTarget - idealDist| / idealDist)   // 距离适配度
-  score = perpendicularity × 0.7 + distFit × 0.3  // 侧方为主，距离为辅
-```
-
-### 4. 寻找高地（`findHighGround`）
-
-**目标**：寻找比当前位置更高的可站立位置。
-
-```
-候选条件：advantage = candidateY - selfY ≥ minAdvantage   （高度优势达标）
-评分：score = advantage - distToSelf × 0.2
-       （高度优势越大越好，离自身越近越好）
-```
-
-### 5. 占据视野点（`findSightPosition`）
-
-**目标**：寻找一个能看到目标且距离合适的可站立位置——`findCover` 的反向操作（前者要"看不到威胁"，本方法要"能看到目标"）。
-
-```
-候选条件：LineOfSight.hasLineOfSight(candidateEye, targetEye)   （候选点能看到目标）
-评分：distFit = 1 - |distToTarget - idealDistance| / idealDistance
-       score = distFit × 10.0 - distToSelf × 0.3
-       （距目标越接近理想距离越好，离自身越近越好）
-```
-
-默认理想距离 10 格（`DEFAULT_IDEAL_SIGHT_DISTANCE`）。常用于弓箭手/哨兵"抢占射击位"。
-
-### 6. 模糊位置选取（`findApproximatePosition`）
-
-**目标**：当目标位置**不精确**（玩家未完全暴露——仅知最后已知位置 / 听到声响）时，在不确定区域内选取一个可站立的搜索点，使 AI 到达目标大致所在区域即可开始搜查。
-
-```
-候选条件：圆形邻域（offX² + offZ² ≤ radius²）内可站立位置
-评分：score = -distToSelf   （负距离，越大 = 越近 = 越好）
-```
-
-与其它战术不同，本方法以**外部传入的 center** 为扫描圆心（而非实体自身位置），扫描范围是"目标可能所在的不确定区域"。默认半径 5 格（`DEFAULT_UNCERTAINTY_RADIUS`）。
-
-配套方法 [`hasReachedApproximate`](tactical/TacticalScanner.java) 判断实体是否已进入模糊目标区域（水平距离 ≤ 半径），可用于停止导航、切换到搜查状态。其纯坐标重载（包级可见）便于单元测试，不依赖 Level/Entity。
-
-### 7. 团队战术（`TeamTactics`）
-
-[`TeamTactics`](tactical/TeamTactics.java) 面向**一组实体**的协同行为，与单实体 `TacticalScanner` 互补。核心思路：先以单实体战术（如 `findFlankPosition`）确定基准方向，再为每个成员叠加**协同偏移**，使团队分散而非聚堆。
-
-#### 协同包抄（`flankTarget`）
-
-```
-对第 i 个成员（i 从 0 起）：
-  side = (i 偶数) ? +1 : -1                 // 交替左右翼
-  magnitude = 90° + (i/2) × 30°             // 偏移量递增：90°, 90°, 120°, 120°, 150°, 150°...
-  angle = baseAngle + side × magnitude      // baseAngle = atan2(target - self)
-  候选点 = target + (cos(angle), sin(angle)) × radius
-```
-
-成员越多，偏移角度越大，使后续成员站到更靠后的侧翼，避免前排遮挡后排。
-
-#### 包围（`surroundTarget`）
-
-```
-对第 i 个成员（共 n 个）：
-  angle = i × (360° / n)                     // 均匀分布
-  候选点 = target + (cos(angle), sin(angle)) × radius
-```
-
-#### 集结（`rally`）
-
-```
-offsets = formationOffsets(formation, n, spacing)   // 纯几何阵型偏移
-对第 i 个成员：
-  候选点 = rallyPoint + offsets[i]
-```
-
-#### 阵型几何（`formationOffsets`）
-
-[`FormationType`](tactical/FormationType.java) 五种阵型的偏移计算（纯几何，无 Level 依赖，可单元测试）：
-
-| 阵型 | 偏移规则 |
-|------|----------|
-| `LINE`（横队） | `(i - (n-1)/2) × spacing, 0`，沿 X 轴居中排列 |
-| `COLUMN`（纵队） | `0, (i - (n-1)/2) × spacing`，沿 Z 轴居中排列 |
-| `WEDGE`（楔形） | `((i%2==0?+1:-1) × ((i+1)/2) × spacing, -((i+1)/2) × spacing)`，前窄后宽 |
-| `CIRCLE`（圆环） | `(cos(2πi/n) × r, sin(2πi/n) × r)`，`r = spacing × n / (2π)` |
-| `SQUARE`（方阵） | 螺旋填充方阵边长 `side = ceil(√n)`，逐格排列 |
-
----
-
-## 六、战斗瞄准算法
-
-[`CombatActions`](combat/CombatActions.java) 的射箭/投掷共享瞄准逻辑 [`computeAimMotion`](combat/CombatActions.java)：
-
-### 常量
-
-| 常量 | 值 | 含义 |
-|------|----|------|
-| `EYE_HEIGHT` | 1.5 | 发射点眼部高度 |
-| `DEFAULT_ARROW_SPEED` | 1.5 | 默认箭初速度 |
-| `DEFAULT_INACCURACY` | 0.2 | 默认散布 |
-| `GRAVITY_COMPENSATION` | 0.03 | 每方块距离的向上补偿量 |
-
-### `computeAimMotion` 流程
-
-```
-1. 发射点 = shooter 眼部 (x, y+1.5, z)
-2. 方向向量 d = target眼部 - shooter眼部
-3. dist = |d|（3D 距离）
-4. 归一化：n = d / dist
-5. 重力补偿：n.y += dist × 0.03   // 距离越远，向上分量越大，抵消抛射物下坠
-6. 重新归一化并缩放：motion = normalize(n) × speed
-7. 散布（inaccuracy > 0 时）：motion 各分量 += (random-0.5) × inaccuracy
-```
-
-> **说明**：这是**经验性**补偿，非精确弹道解算。它使远距离射击大致命中，配合 `inaccuracy` 模拟 AI 的不精确瞄准。若需精确命中，可将 `inaccuracy` 设为 0 并自行实现弹道解算。
-
-### 抛射物创建
+[`StepCostFunction`](pathfinding/StepCostFunction.java)：
 
 ```java
-Position launchPos = new Position(shooter.x, shooter.y + EYE_HEIGHT, shooter.z, shooter.getLevel());
-Entity projectile = Entity.createEntity(projectileType, launchPos, shooter);  // shooter 作为归属
-projectile.setMotion(motion);
-projectile.spawnToAll();
+double stepCost(Level level, Vector3 from, Vector3 to, boolean diagonal, PathfinderOptions options);
 ```
 
-`shooter` 作为 `createEntity` 的额外参数传入，用于击杀归属（谁射出的箭）。
+- 叠加在基础移动代价之上；返回 `POSITIVE_INFINITY` 禁止该步；负值截断为 `0.01` 下限。
+- 典型用法：远离岩浆、贴墙走、避开领地等业务代价。
 
 ---
 
-## 七、工具类
+## 四、行为引擎详解（LoopBehavior）
 
-### BlockChecks
+[`LoopBehavior`](core/behavior/LoopBehavior.java) 是所有持续行为的**同构主形态**：chase / wander 都是它的预配置，不再有独立的行为类。
 
-[`BlockChecks`](util/BlockChecks.java) 提供方块可通行性判定，被寻路与战术层共用，保证两者判定一致：
-
-| 方法 | 判定 |
-|------|------|
-| `isSolid(level, x, y, z)` | `!block.canPassThrough()` |
-| `isPassable(level, x, y, z)` | `block.canPassThrough()` |
-| `isStandable(level, x, y, z, height)` | 脚部+头部可穿过 && 脚下为固体 |
-
-边界保护：`MIN_Y = -64`，`MAX_Y = 320`。
-
-### LineOfSight
-
-[`LineOfSight`](util/LineOfSight.java) 采用**等距采样射线投射**判定两点间视线：
+### 1. 一轮生命周期
 
 ```
-step = 0.5（默认采样步长，方块）
-从 from 到 to，每隔 step 取一个点：
-  if 该点所在方块 isSolid → 视线被阻挡，返回 false
-全部采样点都通透 → 返回 true（可见）
+每 interval tick（错峰启动：首个 tick = entityId % interval）：
+  ① 读目标   target.get() → null 则 finish(TARGET_LOST)
+  ② 计算     computeFn(ctx) → PlannedPath
+             经 ComputeCarrier.dispatch(ComputeTask) 分发
+  ③ 执行     complete(plan) 回调 → postToMain → executeFn(ctx, plan)
+             默认 executeFn：plan.hasPath() → plan.start()
+  ④ 判断     until(ctx) == true → finish(COMPLETED)
 ```
 
-简单可靠，适合战术层的视线遮挡判定。精度取决于 `step`（越小越精确，开销越大）。
+**实体有效性**：每轮开头检查 `self.closed` / `self.getLevel()`，失效即 `finish(ENTITY_INVALID)` 并从 ACTIVE 表移除——实体死亡/卸载不泄漏。
 
-### VisionSensor
+### 2. 线程模型
 
-[`VisionSensor`](util/VisionSensor.java) 在 `LineOfSight` 的几何视线上叠加**距离**与**视野角度（FOV）**约束，构成完整的"生物视野"模型：
+| 段 | 线程 | 说明 |
+|----|------|------|
+| 读目标 / 判断 / 执行 | 主线程 | 驱动实体必须主线程 |
+| 计算 | 取决于载体 | `ComputeCarriers.sync()`（默认，主线程同步算）或 `ComputeCarriers.of(executor)`（线程池） |
 
-```
-canSee(observer, target, maxDistance, fovDegrees):
-  1. 距离检测：horizontalDistance(observer, target) ≤ maxDistance
-  2. 视野角度：angleTo(observer, target) ≤ fovDegrees / 2
-  3. 视线遮挡：LineOfSight.hasLineOfSight(observerEye, targetEye)
-  三者全部满足 → true
-```
+[`ComputeCarrier`](core/behavior/ComputeCarrier.java) 只有一个方法 `dispatch(ComputeTask task)`；[`ComputeTask`](core/behavior/ComputeTask.java) 四方法：`context()` / `run()`（载体线程执行）/ `complete(plan)` / `fail(error)`。`complete` / `fail` 的默认实现由 `LoopBehavior` 提供，内部 `postToMain` 保证执行段回到主线程。
 
-**FOV 计算原理**：Nukkit yaw 约定（0° 朝 +Z，顺时针为正），朝向单位向量 `forward = (-sin(yaw), cos(yaw))`。目标方向单位向量 `dir = (target - observer) / |target - observer|`。点积 `dot = forward · dir = cos(夹角)`，夹角 ≤ halfFov 即在视野锥内。
+### 3. ACTIVE 表与句柄
 
-- `canSee360(observer, target, maxDistance)`：全向视野（FOV=360°，跳过角度判断），适合哨塔 / 感知型实体。
-- `angleTo(observer, target)`：返回夹角度数 [0, 180]，可用于调试或决策（如"侧后方的敌人优先转身"）。
+- 静态 `ACTIVE: Map<Long, LoopBehavior>`（实体 ID → 运行中行为），**同实体同时至多一个循环行为**，新 `start()` 顶掉旧的（旧的自然结束，`STOPPED`）。
+- [`BehaviorHandle`](core/behavior/BehaviorHandle.java)：`stop()`（postToMain 异步停止）/ `isRunning()` / `lastPlan()`。
+- 静态查询：`LoopBehavior.isRunning(entity)` / `activeBehavior(entity)`。
 
-### PathVisualizer
+### 4. 预配置工厂（AiAPI 内）
 
-[`PathVisualizer`](util/PathVisualizer.java) 用 Nukkit 粒子（`FlameParticle`）沿寻路路径节点生成可视化标记，用于调试与演示：
-
-- `showPathOnce(entity)`：一次性在当前路径每个节点生成一个火焰粒子（`node + (0.5, 1.0, 0.5)`，方块顶部）。不依赖调度器，直接调用 `level.addParticle`。
-- `showPath(entity, durationSeconds)`：**持续显示**——注册每 10 tick 刷新一次粒子的循环任务，并在 `duration` 秒后自动停止。依赖 `NavigatorManager.getPlugin()` 获取调度器，因此须在 `bindPlugin` 之后调用。
-- `stopShowPath(entity)` / `stopAll()`：手动停止；`isShowingPath(entity)`：查询状态。
-
-> 内部用 `ConcurrentHashMap<Long, TaskHandler>` 按实体 ID 管理刷新任务，重复调用 `showPath` 会先停止旧任务再启动新任务。
+| 工厂 | 预配置 |
+|------|--------|
+| `chase(self, target)` | `EntityTarget` + `interval(10)`。目标死亡/移除 → `TARGET_LOST` 自动结束 |
+| `wander(self, radius)` | 内部 `WanderTarget`（极坐标随机采样）+ `interval(40)`。当前段未走完跳过本轮（不打断），走完停至多 40 tick 选下一段 |
 
 ---
 
-## 八、Spring 装配机制
+## 五、导航执行详解（NavigationExecutor）
 
-模块遵循 JFrame 的统一装配模式：**`@Configuration` + `@ImportResource` + 纯 XML 声明 Bean**。
+[`NavigationExecutor`](core/executor/NavigationExecutor.java) 承担「配置 → 计算 → 执行」链，`path()` / `walk()` 返回同一执行器。
 
-### 1. 配置类
+### 1. 两段式
 
-[`AiSpringConfig`](config/AiSpringConfig.java)：
+- `compute()`：纯计算，任意线程。产出 [`PlannedPath`](core/executor/PlannedPath.java)（携带 `PathResult` + 执行参数）。
+- `PlannedPath.start()`：主线程提交导航（内部经 `NavigatorManager`）。
+- `start()`（执行器上）：`compute + start` 一步到位，主线程。
+
+两段式的价值：**大地图防卡顿**——异步线程 `compute()`，完成后传回主线程 `start()`；`PlannedPath` 不可变，跨线程传递安全。
+
+### 2. continuous 模式（走完续算）
+
+`continuous()` 开启后，`PlannedPath.start()` 提交的不是单段导航，而是「走完当前段 → 从最新位置续算下一段」的循环，直到：
+
+- 到达（距目标 ≤ `reachRadius`）
+- 某段寻路失败（`NO_PATH` 且非 `PARTIAL`）
+- 实体失效
+- 段数达 `maxSegments` 上限（默认 100）
+- 外部 `stop(entity)`
+
+适合**静态目标长距离导航**；移动目标用 `chase()`（每轮从目标最新位置重算）。
+
+### 3. 与 LoopBehavior 的关系
+
+`LoopBehavior` 默认 `executeFn` 即 `plan.start()`；`chase` 循环 = 「每 10 tick `compute()` + `plan.start()`」的组合。`NavigationExecutor` 是单次/续算导航，`LoopBehavior` 是通用循环——两者共享 `PlannedPath` 与 `NavigatorManager`。
+
+---
+
+## 六、导航调度详解
+
+### NavigatorManager（core/navigation）
+
+- **单调度器**：`bindPlugin(plugin)` 时注册**一个** Nukkit 定时任务，每 tick 调 `tickAll()` 遍历所有 `Navigator.tick()`——多实体导航只有一个调度任务，不随实体数增长。
+- **并发容器**：`navigators: Map<Long, Navigator>`（实体 ID → 导航器），同实体重复导航自动顶掉旧的。
+- `stop(entity)` / `stopAll()` / `isNavigating(entity)` / `activeNavigatorCount()`。
+- `shutdown()`：插件卸载时停全部导航与调度任务。
+
+### Navigator（单实体路径跟随）
+
+`tick()` 每 tick 推进实体：沿路径节点序列移动（`speed` 方块/tick），处理跳跃（Y 差 + 跳跃标志）、节点切换、到达判定（末节点距离 ≤ 阈值 → `finished`）。`finished` 后从管理器移除。
+
+---
+
+## 七、战术子系统详解
+
+### 1. Target 体系（core/targeting + core/tactical）
+
+[`Target`](core/targeting/Target.java) 接口：
 
 ```java
-@Configuration
-@ImportResource("classpath:ai-spring.xml")
-public class AiSpringConfig { }
+public interface Target {
+    Vector3 get();   // 每轮动态读取；null 表示目标失效
+}
 ```
 
-### 2. Bean 声明（`ai-spring.xml`）
+- [`PointTarget`](core/targeting/PointTarget.java)：固定坐标。
+- [`EntityTarget`](core/targeting/EntityTarget.java)：活实体，`closed` / `getLevel() == null` 返回 null。
+- 六个战术 Target（`get()` 时**现场扫描**）：`CoverTarget` / `FleeTarget` / `FlankTarget` / `HighGroundTarget` / `SightTarget` / `ApproximateTarget`——战术能力由此获得**循环性**（每轮重新评估最佳位置），可直接接入 `loop()` / `chase()`。
+
+### 2. TacticalScanner 评分算法
+
+[`TacticalScanner`](core/tactical/TacticalScanner.java)（无状态单例）：
+
+- **采样**：以自身为中心极坐标网格采样候选位置（半径内、角度分档），经 `BlockChecks.isStandable` 过滤。
+- **评分**（各能力不同）：
+  - 掩体：候选点与威胁连线被方块遮挡（`LineOfSight` DDA）→ 得分高；离自身近加分。
+  - 远离：离威胁距离越远得分越高。
+  - 包抄：候选点在目标侧/后方（与「自身→目标」向量夹角大）得分高。
+  - 高地：候选 Y − 自身 Y ≥ `minAdvantage` 才入围，越高越好。
+  - 视野点：候选点能看到目标（DDA 视线通）+ 距离接近 `idealDistance` 加分。
+- **快照共享**：单次扫描内所有候选共享一份方块快照，避免重复查世界。
+
+### 3. TeamTactics（团队战术）
+
+- `flankTarget(members, target, radius[, arcSpan])`：成员在目标**远侧半圆**均匀展开（钳形合围），角度偏移按成员索引分配。
+- `surroundTarget(members, target, radius)`：360° 均匀环绕。
+- `rally(members, point, formation, spacing)`：横 / 纵 / 楔 / 环 / 方五种阵型偏移（`formationOffsets` 纯几何计算）。
+
+---
+
+## 八、战斗瞄准算法
+
+[`CombatActions`](core/combat/CombatActions.java) 的抛射物瞄准（预补偿直线模型）：
+
+```
+发射方向 = normalize(targetPos + velocity × t − selfPos)
+t = distance / projectileSpeed     // 预估飞行时间，补偿目标线性移动
+散布   = 基础散布 × 距离衰减        // arrow(target, speed, spread)
+```
+
+- 近战：`EntityAttackEvent` 走事件总线，被取消返回 false。
+- 射箭 / 投掷：构造 `EntityArrow` / `EntityProjectile` 子类，设置速度向量后 spawn。
+- 全部动作 null / 非法参数防御返回 false / null，不抛异常。
+- [`AttackExecutor`](core/executor/AttackExecutor.java) 是其链式门面：配置态对象可复用，`fire()` 校验主线程后按 `Kind` 分派。
+
+---
+
+## 九、工具类
+
+| 类 | 要点 |
+|----|------|
+| [`BlockChecks`](core/util/BlockChecks.java) | `isSolid` / `isPassable` / `isStandable`（脚部实心 + 头部空间 + 下方支撑），寻路与战术共用的可通行性标准 |
+| [`LineOfSight`](core/util/LineOfSight.java) | **DDA 格点遍历**射线投射：沿射线逐格检查实心方块，遇到即遮挡。比逐点采样（可能穿墙缝）更精确且开销稳定 |
+| [`BlockSnapshotCache`](core/util/BlockSnapshotCache.java) | 单次搜索内的方块查询缓存（列级），A* 与 TacticalScanner 共用 |
+| [`VisionSensor`](core/vision/VisionSensor.java) | 距离（range）+ FOV（朝向夹角 ≤ fov/2）+ 视线（LineOfSight）三重判断；`canSee360` 跳过 FOV；`angleTo` 返回 [0,180] 夹角 |
+| [`PathVisualizer`](core/util/PathVisualizer.java) | 火焰粒子标记路径节点；`showPath` 持续模式经 NavigatorManager 的 plugin 注册重复任务 |
+
+---
+
+## 十、Spring 装配机制
+
+[`ai-spring.xml`](../../../resources/ai-spring.xml) 按「算法区变体 → 调度 → 扫描/战斗/团队 → 门面」顺序声明 Bean：
 
 ```xml
-<!-- 核心层 -->
-<bean id="pathFinder" class="io.github.JiangHu.jframe.ai.pathfinding.PathFinder"/>
-<bean id="navigatorManager" class="io.github.JiangHu.jframe.ai.navigation.NavigatorManager"/>
-<!-- 行为层 -->
-<bean id="tacticalScanner" class="io.github.JiangHu.jframe.ai.tactical.TacticalScanner"/>
-<bean id="combatActions" class="io.github.JiangHu.jframe.ai.combat.CombatActions"/>
-<!-- 中层（依赖核心层 + 调度层） -->
-<bean id="anytimePathFinder" class="io.github.JiangHu.jframe.ai.navigation.AnytimePathFinder">
-    <constructor-arg ref="pathFinder"/>
-    <constructor-arg ref="navigatorManager"/>
-</bean>
-<bean id="wanderBehavior" class="io.github.JiangHu.jframe.ai.navigation.WanderBehavior">
-    <constructor-arg ref="pathFinder"/>
-    <constructor-arg ref="navigatorManager"/>
-</bean>
-<bean id="teamTactics" class="io.github.JiangHu.jframe.ai.tactical.TeamTactics"/>
-<!-- 门面层（聚合全部） -->
+<!-- 算法区：两个策略变体 -->
+<bean id="aStarPathFinder" class="io.github.JiangHu.jframe.ai.pathfinding.astar.AStarPathFinder"/>
+<bean id="greedyPathFinder" class="io.github.JiangHu.jframe.ai.pathfinding.greedy.GreedyPathFinder"/>
+
+<!-- 库区：调度器 -->
+<bean id="navigatorManager" class="io.github.JiangHu.jframe.ai.core.navigation.NavigatorManager"/>
+
+<!-- 库区：能力件 -->
+<bean id="tacticalScanner" class="io.github.JiangHu.jframe.ai.core.tactical.TacticalScanner"/>
+<bean id="combatActions" class="io.github.JiangHu.jframe.ai.core.combat.CombatActions"/>
+<bean id="teamTactics" class="io.github.JiangHu.jframe.ai.core.tactical.TeamTactics"/>
+
+<!-- 门面：六参构造注入 -->
 <bean id="aiAPI" class="io.github.JiangHu.jframe.ai.AiAPI">
-    <constructor-arg ref="pathFinder"/>
+    <constructor-arg ref="aStarPathFinder"/>
+    <constructor-arg ref="greedyPathFinder"/>
     <constructor-arg ref="navigatorManager"/>
     <constructor-arg ref="tacticalScanner"/>
     <constructor-arg ref="combatActions"/>
-    <constructor-arg ref="anytimePathFinder"/>
-    <constructor-arg ref="wanderBehavior"/>
     <constructor-arg ref="teamTactics"/>
 </bean>
 ```
 
-> **注意**：组件类**不加** `@Component`，统一由 XML 声明。这是 JFrame 的约定（参见 `jframe_command` 等模块）。
-
-### 3. 集成到 jframe_main
-
-- [`ConfigEnum`](../main/utils/ConfigEnum.java)：添加 `AI(AiSpringConfig.class)` 枚举值。
-- [`MainSpringConfig`](../main/config/MainSpringConfig.java)：`@Import` 列表添加 `AiSpringConfig.class`。
-- [`JFrameMain`](../main/JFrameMain.java)：添加 `getAiAPI()` 门面方法，并在 `registerServices()` 中注册到 Nukkit `ServiceManager`。
-- `NavigatorManager` 实现 `PluginAware`，框架启动时自动扫描并调用 `bindPlugin`，启动调度任务。
+- [`AiSpringConfig`](config/AiSpringConfig.java)（`@ImportResource`）由 JFrame 插件加载机制触发。
+- 行为 / 执行器（`LoopBehavior` / `NavigationExecutor` / `AttackExecutor` / `SeeQuery`）**不装配**——它们是每次工厂调用现场创建的短生命周期对象。
+- `bindPlugin(plugin)`：`NavigatorManager` 与 `PathVisualizer` 需要插件引用注册调度任务，由宿主插件启动时调用。
 
 ---
 
-## 九、扩展指南
+## 十一、扩展指南
 
-### 1. 添加新的战术行为
+### 1. 自定义寻路策略
 
-在 [`TacticalScanner`](tactical/TacticalScanner.java) 中添加新方法，遵循现有模式：
+实现 `PathfindingStrategy` + 自带 `PathfindingConfig`：
 
 ```java
-public TacticalPosition findXxx(Entity self, Entity target, double radius) {
-    // 1. 空值/世界校验
-    // 2. 立方体邻域遍历（复制现有 for 循环结构）
-    // 3. findStandableY 确定候选 Y
-    // 4. 按你的战术意图计算 score
-    // 5. 保留最高分
+public class JpsPathFinder implements PathfindingStrategy {
+    @Override
+    public PathResult findPath(Level level, Vector3 start, Vector3 target, PathfindingConfig config) {
+        // ... 返回 PathResult（成功 / PARTIAL / NO_PATH）
+    }
 }
+
+// 使用
+ai.walk(zombie).to(pos).strategy(new JpsPathFinder()).start();
 ```
 
-然后在 [`AiAPI`](AiAPI.java) 添加对应的委托方法即可。
+约定：纯计算、无状态、永不抛异常、失败返回带状态码的 `PathResult`。
 
-### 2. 添加新的战斗动作
+### 2. 自定义 Target
 
-在 [`CombatActions`](combat/CombatActions.java) 中添加方法，参考 `meleeAttack` / `shootArrow` 的模式：先 `faceTo` 转向，再执行动作。
+```java
+public class PatrolTarget implements Target {
+    private final List<Vector3> waypoints;
+    private int index;
+    @Override
+    public Vector3 get() {
+        Vector3 next = waypoints.get(index);
+        // 到达当前路点后切下一个；循环巡逻
+        return next;
+    }
+}
 
-### 3. 自定义寻路行为
+ai.loop(guard).to(new PatrolTarget(...)).interval(40).start();
+```
 
-通过 [`PathfinderOptions`](pathfinding/PathfinderOptions.java) 调整参数即可覆盖大多数场景。若需更深定制（如支持游泳、飞行），可继承或包装 [`PathFinder`](pathfinding/PathFinder.java)，重写 `Search` 内部的 `isWalkable` / `findLanding`。
+约定：`get()` 每轮调用一次，轻量；目标失效返回 null。
 
-### 4. 接入行为树 / 状态机
+### 3. 自定义 ComputeCarrier
 
-本模块提供的是**原子行为**，不含决策框架。推荐做法：
+```java
+ExecutorService pool = Executors.newFixedThreadPool(2);
+ComputeCarrier carrier = ComputeCarriers.of(pool);
+ai.chase(zombie, player).carrier(carrier).start();   // 每轮计算进线程池
+```
 
-- 用 FSM（有限状态机）或 BT（行为树）组织决策。
-- 在决策节点调用 `AiAPI` 的原子方法（`navigateTo` / `findCover` / `meleeAttack` 等）。
-- 参考 [`README.md`](README.md) 第九节的 `MonsterBrain` 示例（简化 FSM）。
+约定：`dispatch` 内部调用 `task.run()`（任意线程），结果经 `task.complete` / `task.fail` 回传——`LoopBehavior` 的默认实现已保证回主线程。
+
+### 4. 自定义行为（compute / execute 全接管）
+
+```java
+ai.loop(bot)
+  .compute(ctx -> myCustomPlan(ctx))                    // 计算段
+  .execute((ctx, plan) -> myCustomAct(ctx, plan))       // 执行段（主线程）
+  .interval(5).start();
+```
 
 ---
 
-## 十、性能考量
+## 十二、性能考量
 
-| 操作 | 复杂度 | 建议 |
-|------|--------|------|
-| A* 寻路 | O(maxSearchNodes × log) | 单次寻路通常 < 1ms；长距离调大 `maxSearchNodes` |
-| 战术扫描 | O(radius²) | radius=8 → 289 次方块查询；在决策节点（非每 tick）调用 |
-| 视线检测 | O(distance / step) | step=0.5；距离 20 → 40 次查询 |
-| 导航 tick | O(1) per entity | 单实体开销极小，可支持数十并发导航 |
-
-### 优化建议
-
-1. **寻路缓存**：若多个实体走向同一目标，可缓存 `PathResult` 复用（注意起点不同需重算）。
-2. **战术节流**：战术扫描不必每 tick 执行，可每 10~20 tick 或状态变化时执行一次。
-3. **导航上限**：监控 `activeNavigatorCount()`，避免同时导航过多实体导致 tick 超时。
-4. **异步寻路**：长距离寻路可考虑放到异步线程计算，完成后再提交导航（注意 Nukkit 实体操作须在主线程）。
+| 项 | 措施 |
+|----|------|
+| A* 单次开销 | OCTILE 最优启发（展开更少）+ closed Long 编码（去重 O(1)）+ 快照缓存（重复列查询 O(1)）+ 节点上限熔断 |
+| 贪心单次开销 | O(8) 邻居枚举，无全局搜索；杂兵群 / 游荡场景首选 |
+| 大地图长距离 | `continuous()` 分段续算（单段开销恒定）或 `LoopBehavior` + 异步载体 |
+| 多实体调度 | 单调度器 `tickAll()`，不随实体数增加调度任务 |
+| 多实体错峰 | 循环首 tick = `entityId % interval`，避免同 tick 集中计算 |
+| 视线检测 | DDA 格点遍历，开销与距离线性且无采样漏洞 |
+| 战术扫描 | 单次扫描共享方块快照；候选经可站立性预过滤 |
+| GC 压力 | `PathResult` / `PlannedPath` / `TacticalPosition` 不可变，无隐藏可变状态；closed 表用 Long 原生类型 |
 
 ---
 
-## 十一、测试
+## 十三、测试
 
-测试位于 [`PathFinderLogicTest`](../../../test/java/io/github/JiangHu/jframe/ai/pathfinding/PathFinderLogicTest.java)，采用 JUnit 5（Jupiter），聚焦**纯逻辑**（不依赖运行中的 Nukkit 服务端）。
+测试位于 `src/test/java/io/github/JiangHu/jframe/ai/`，**只测纯逻辑**——不依赖运行中的服务器（Entity / Level / 调度相关标注「需真实服务器环境集成验证，此处不覆盖」）：
 
-### 测试覆盖
+| 测试 | 覆盖 |
+|------|------|
+| `pathfinding/PathFinderLogicTest` | A* 主流程：直线路径、绕障、对角线、模糊解、评分器、参数边界 |
+| `pathfinding/ExtendedPathfindingLogicTest` | 启发式对比、熔断、取消 |
+| `pathfinding/greedy/GreedyPathFinderLogicTest` | 贪心三阶段、PARTIAL 语义、参数边界 |
+| `core/targeting/TargetLogicTest` | PointTarget / EntityTarget / 战术 Target 的失效与读取约定 |
+| `core/behavior/LoopBehaviorLogicTest` | 链式配置、载体分发、complete/fail 回调、ACTIVE 表 |
+| `core/executor/AttackExecutorLogicTest` | 链式配置、fire 防御分支 |
+| `core/vision/SeeQueryLogicTest` | 链式配置、默认常量、null 防御 |
+| `AiAPILogicTest` | 六参构造注入、七工厂 null 防御 |
+| `combat/CombatActionsBallisticTest` | 抛射物瞄准预补偿的纯数学部分 |
+| `tactical/*` | 阵型偏移几何、模糊位置 |
 
-| 测试类 | 覆盖内容 |
-|--------|----------|
-| `BlockNodeTest` | 节点坐标、fCost 计算、equals/hashCode、距离计算 |
-| `HeuristicTest` | 三种启发式的估值正确性 |
-| `OptionsTest` | 参数默认值、fluent setter、下限保护 |
-| `PathResultTest` | 成功/失败/PARTIAL 工厂、isSuccess/isPartial/hasPath 语义、状态枚举 |
-| `TacticalPositionTest` | record 字段、empty/isPresent、转换方法 |
-| `ExtendedPathfindingLogicTest` | PARTIAL 状态判定、`PathfinderOptions` 新字段（stepCostFunction/partialOnFailure）链式配置、`StepCostFunction` 函数式行为 |
-| `TeamTacticsLogicTest` | 五种阵型（LINE/COLUMN/WEDGE/CIRCLE/SQUARE）偏移几何正确性、边界情况（空列表/单成员） |
-
-共 **52 个测试方法**（25 原有 + 27 新增），全部通过：
-
-```bash
-mvn -pl jframe_ai test
-# Tests run: 25, Failures: 0, Errors: 0, Skipped: 0
-```
-
-### 运行测试
-
-```bash
-# 仅 AI 模块
-mvn -pl jframe_ai test
-
-# 全量（含依赖模块）
-mvn -pl jframe_ai -am test
-```
-
-> 涉及 Nukkit 实体/世界的集成测试（如真实寻路、导航驱动）需要运行中的服务端，当前以纯逻辑测试为主。可在测试服务器中手动验证端到端行为。
+运行：`mvn -pl jframe_ai test`。

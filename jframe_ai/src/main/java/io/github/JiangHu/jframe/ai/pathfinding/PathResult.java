@@ -2,6 +2,8 @@ package io.github.JiangHu.jframe.ai.pathfinding;
 
 import cn.nukkit.level.Level;
 import cn.nukkit.level.Position;
+import io.github.JiangHu.jframe.ai.pathfinding.astar.AStarNode;
+import io.github.JiangHu.jframe.ai.pathfinding.astar.AStarPathFinder;
 
 import java.util.Collections;
 import java.util.List;
@@ -16,7 +18,7 @@ import java.util.List;
  * {@link #nodes} 中<b>索引 0 为起点、末尾为终点</b>（已按行进顺序排列），
  * 可直接交给 {@code Navigator} 逐点行进。
  *
- * @see PathFinder
+ * @see AStarPathFinder
  */
 public final class PathResult {
 
@@ -41,12 +43,12 @@ public final class PathResult {
     }
 
     private final Status status;
-    private final List<BlockNode> nodes;
+    private final List<AStarNode> nodes;
     private final double totalCost;
     private final int expandedNodes;
     private final Level level;
 
-    private PathResult(Status status, List<BlockNode> nodes, double totalCost, int expandedNodes, Level level) {
+    private PathResult(Status status, List<AStarNode> nodes, double totalCost, int expandedNodes, Level level) {
         this.status = status;
         this.nodes = nodes;
         this.totalCost = totalCost;
@@ -56,29 +58,31 @@ public final class PathResult {
 
     /**
      * 构造失败结果。
+     * <p>
+     * 供各算法实现（astar/greedy 子包）构造结果使用。
      */
-    static PathResult failed(Status status, int expandedNodes, Level level) {
+    public static PathResult failed(Status status, int expandedNodes, Level level) {
         return new PathResult(status, Collections.emptyList(), Double.POSITIVE_INFINITY, expandedNodes, level);
     }
 
     /**
      * 构造成功结果。
      */
-    static PathResult success(List<BlockNode> nodes, double totalCost, int expandedNodes, Level level) {
+    public static PathResult success(List<AStarNode> nodes, double totalCost, int expandedNodes, Level level) {
         return new PathResult(Status.SUCCESS, nodes, totalCost, expandedNodes, level);
     }
 
     /**
      * 构造部分路径结果（边走边搜：预算耗尽或无解时，返回到离目标最近的已探索节点的路径）。
      */
-    static PathResult partial(List<BlockNode> nodes, double totalCost, int expandedNodes, Level level) {
+    public static PathResult partial(List<AStarNode> nodes, double totalCost, int expandedNodes, Level level) {
         return new PathResult(Status.PARTIAL, nodes, totalCost, expandedNodes, level);
     }
 
     /**
      * 构造取消结果（外部主动终止时，返回已走的部分路径）。
      */
-    static PathResult cancelled(List<BlockNode> nodes, int expandedNodes, Level level) {
+    public static PathResult cancelled(List<AStarNode> nodes, int expandedNodes, Level level) {
         double cost = nodes.isEmpty() ? Double.POSITIVE_INFINITY : nodes.size();
         return new PathResult(Status.CANCELLED, nodes, cost, expandedNodes, level);
     }
@@ -131,7 +135,7 @@ public final class PathResult {
      *
      * @return 不可变节点列表
      */
-    public List<BlockNode> getNodes() {
+    public List<AStarNode> getNodes() {
         return nodes;
     }
 

@@ -32,7 +32,7 @@ JFrame 是一套面向 Nukkit 插件开发的**模块化框架**。它把服务�
 - **栈式表单导航**：基于 [`FormView`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/FormView.java) 的视图栈，原生支持「进入子菜单 / 返回上一级」。
 - **组件化箱子 GUI**：[`jframe_inventory`](jframe_inventory) 提供声明式组件（Button / StorageBox / Filler / Panel）+ 自动布局 + 假方块延迟打开，并内置物品栏编解码（[`InventoryCodec`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/codec/InventoryCodec.java)）。
 - **注解驱动持久化**：[`@SaveField`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/annotation/SaveField.java) 标记字段，[`DataSaver`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 一行完成对象 ↔ JSON 文件的序列化，支持别名、必需校验、字段级适配器、跨插件隔离。
-- **实体 AI 能力**：[`jframe_ai`](jframe_ai) 提供 A\* / 贪心寻路、实体导航（追逐 / 续算 / 游荡）、视野感知、单实体与团队战术、战斗行为，可驱动任意 `cn.nukkit.entity.Entity`。
+- **实体 AI 能力**：[`jframe_ai`](jframe_ai) 提供 A\* / 贪心双策略寻路与七工厂行为 API（`path` / `walk` / `chase` / `wander` / `loop` / `attack` / `see`），覆盖导航、追逐、游荡、通用循环、战斗与视野感知，另有单实体与团队战术，可驱动任意 `cn.nukkit.entity.Entity`。
 - **响应式纠缠值**：[`EntangledValue`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledValue.java) 让多个值「纠缠」在一起，一处变化多处感知（如同一份血量同时驱动 HUD、Boss 血条、计分板）。
 - **Spring IoC 装配**：各模块提供 `*SpringConfig`，由 [`MainSpringConfig`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/config/MainSpringConfig.java) 统一 `@Import` 全量装配；各 API 自动注册到 Nukkit `ServiceManager`，供其他插件发现。
 
@@ -91,7 +91,7 @@ JFrame (父 POM，聚合 11 个模块)
 | [`jframe_inventory`](jframe_inventory) | 箱子界面与物品编解码 | [`InventoryAPI`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/InventoryAPI.java)、[`InventoryView`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/view/InventoryView.java)、[`InventoryCodec`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/codec/InventoryCodec.java) |
 | [`jframe_data`](jframe_data) | 注解驱动 JSON 持久化 | [`DataSaver`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/DataSaver.java)、[`@SaveField`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/annotation/SaveField.java)、[`SaveFieldAdapter`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) |
 | [`jframe_thread`](jframe_thread) | 异步任务队列 | [`ThreadAPI`](jframe_thread/src/main/java/io/github/JiangHu/jframe/thread/ThreadAPI.java) |
-| [`jframe_ai`](jframe_ai) | 实体 AI 能力 | [`AiAPI`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/AiAPI.java)、[`PathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/PathFinder.java)、[`NavigatorManager`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/navigation/NavigatorManager.java) |
+| [`jframe_ai`](jframe_ai) | 实体 AI 能力 | [`AiAPI`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/AiAPI.java)（七工厂门面）、[`AStarPathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/astar/AStarPathFinder.java)、[`GreedyPathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/greedy/GreedyPathFinder.java)、[`LoopBehavior`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/behavior/LoopBehavior.java)、[`NavigatorManager`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/navigation/NavigatorManager.java) |
 | [`jframe_example`](jframe_example) | 端到端示例 | [`ExamplePlugin`](jframe_example/src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java) |
 | [`jframe_title`](jframe_title) | 标题模块（规划中） | — |
 
@@ -307,20 +307,29 @@ PlayerData loaded = saver.load(PlayerData.class, "players/steve");
 
 ### jframe_ai · 实体 AI
 
-为 Nukkit MOT 服务端上的实体提供开箱即用的 AI 能力，自行实现面向方块世界的寻路与行为层（不依赖内置实体 AI），可驱动任意 `Entity`：
+为 Nukkit MOT 服务端上的实体提供开箱即用的 AI 能力，自行实现面向方块世界的寻路与行为层（不依赖内置实体 AI），可驱动任意 `Entity`。对外是一个**七工厂门面**（[`AiAPI`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/AiAPI.java)），全部能力链式配置：
 
-- **寻路**：A\*（[`PathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/PathFinder.java)，全局最优）与贪心（[`GreedyPathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/GreedyPathFinder.java)，低开销）双策略，支持外接评分器（[`StepCostFunction`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/StepCostFunction.java)）。
-- **导航**：实体路径跟随、多实体调度（[`NavigatorManager`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/navigation/NavigatorManager.java)）、追逐移动目标（[`AnytimePathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/navigation/AnytimePathFinder.java)）、走完续算（[`ContinuousNavigator`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/navigation/ContinuousNavigator.java)）、游荡（[`WanderBehavior`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/navigation/WanderBehavior.java)）。
-- **战术**：找掩体 / 远离 / 包抄 / 寻找高地 / 占据视野点，以及团队协同（包抄 / 包围 / 集结阵型）。
+- **寻路（算法区）**：A\*（[`AStarPathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/astar/AStarPathFinder.java)，全局最优）与贪心（[`GreedyPathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/greedy/GreedyPathFinder.java)，低开销局部步进）双策略插槽（[`PathfindingStrategy`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/PathfindingStrategy.java)），支持外接评分器（[`StepCostFunction`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/astar/StepCostFunction.java)）。
+- **行为（七工厂）**：`path` / `walk` → [`NavigationExecutor`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/executor/NavigationExecutor.java)（两段式 `compute()` / `start()`，`continuous()` 走完自动续算）；`chase` / `wander` / `loop` → [`LoopBehavior`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/behavior/LoopBehavior.java)（周期「计算 → 执行 → 判断」循环，计算载体可换线程池）；`attack` → [`AttackExecutor`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/executor/AttackExecutor.java)；`see` → [`SeeQuery`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/vision/SeeQuery.java)。
+- **目标引用**：[`Target`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/targeting/Target.java) 活目标接口（静态点 / 实体 / 战术位置），每轮解析最新位置，目标失效自动结束行为。
+- **调度**：[`NavigatorManager`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/navigation/NavigatorManager.java) 多实体导航调度，同实体新导航自动替换旧的。
+- **战术**：找掩体 / 远离 / 包抄 / 寻找高地 / 占据视野点 / 模糊搜索，以及团队协同（钳形包抄 / 环形包围 / 集结阵型）。
 - **战斗**：近战攻击 / 射箭 / 投掷抛射物 / 使用物品。
-- **感知**：[`VisionSensor`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/util/VisionSensor.java) 综合距离 + FOV 视野角度 + 视线遮挡判断。
+- **感知**：[`VisionSensor`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/vision/VisionSensor.java) 综合距离 + FOV 视野角度 + 视线遮挡判断。
 
 ```java
 AiAPI ai = jframeMain.getAiAPI();
-ai.navigateTo(zombie, player);   // 三行代码让实体走向目标
+
+ai.walk(zombie).to(player).speed(0.3).start();        // 单次导航
+ai.chase(zombie, player).start();                      // 追逐（目标丢失自动停）
+ai.wander(zombie, 12).start();                         // 半径内游荡
+ai.attack(skeleton).arrow(player, 1.5, 0.3).fire();    // 射箭（主线程）
+if (ai.see(zombie).range(24).fov(120).canSee(player)) {// 视野感知（任意线程）
+    ai.chase(zombie, player).start();
+}
 ```
 
-> 📖 详细文档见 [`ai/README.md`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/README.md)。
+> 📖 详细文档见 [`ai/README.md`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/README.md)，维护者文档见 [`DEVELOPER.md`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/DEVELOPER.md)。
 
 ### jframe_example · 示例插件
 
@@ -387,7 +396,8 @@ JFrame/
 | [箱子界面 README](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/README.md) | 声明式组件、布局、SlotType |
 | [物品编解码 README](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/codec/README.md) | 物品栏 / 物品 NBT ↔ JSON 互转 |
 | [数据持久化 README](jframe_data/src/main/java/io/github/JiangHu/jframe/data/README.md) | `@SaveField` 注解、DataSaver 全 API |
-| [AI README](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/README.md) | 寻路 / 导航 / 战术 / 战斗 / 感知 |
+| [AI README](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/README.md) | 七工厂 API、双策略寻路、行为循环、战术 / 战斗 / 感知 |
+| [AI DEVELOPER](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/DEVELOPER.md) | AI 模块内部实现与维护者文档 |
 | [core 数据类型 README](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/README.md) | 响应式纠缠值、功能 Map |
 | [CODE_REVIEW.md](CODE_REVIEW.md) | 全模块代码审查报告（问题分级与修复记录） |
 
