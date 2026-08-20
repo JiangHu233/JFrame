@@ -243,7 +243,7 @@ public class CombatActions {
     }
 
     /**
-     * 令 {@code entity} 面向 {@code target}（仅水平 yaw）。
+     * 令 {@code entity} 面向 {@code target}（头身同向，仅水平 yaw）。
      *
      * @param entity 旋转实体
      * @param target 面向目标
@@ -251,7 +251,13 @@ public class CombatActions {
     private void faceTo(Entity entity, Entity target) {
         double dx = target.x - entity.x;
         double dz = target.z - entity.z;
-        // Nukkit yaw：0=面向 +Z，顺时针为正；atan2(dx, dz) 给出面向 (dx,dz) 方向的角度
-        entity.yaw = Math.toDegrees(Math.atan2(dx, dz));
+        // Nukkit yaw：0=面向 +Z，顺时针为正；由 getDirectionVector 的
+        // x=-sin(yaw), z=cos(yaw) 反解为 atan2(-dx, dz)。
+        // 修复：旧版 atan2(dx, dz) 符号相反，朝向与目标呈东西镜像。
+        double yaw = Math.toDegrees(Math.atan2(-dx, dz));
+        entity.yaw = yaw;
+        // 同步写 headYaw：Nukkit 对非 Player 实体按 headYaw 字段广播朝向，
+        // 只写 yaw 会导致"身体转了、头保持旧朝向"的侧头表现
+        entity.headYaw = yaw;
     }
 }

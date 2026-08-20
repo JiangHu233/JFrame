@@ -19,10 +19,15 @@ public interface ComputeTask {
 
     /**
      * 本次计算所属的循环上下文(只读视图,读取当下值)。
+     * <p>
+     * 默认返回 {@code null}(无循环上下文,如连续导航的段重寻路任务);
+     * {@link LoopBehavior} 派发的任务总会提供上下文。
      *
-     * @return 上下文
+     * @return 上下文,或 null
      */
-    LoopContext context();
+    default LoopContext context() {
+        return null;
+    }
 
     /**
      * 纯计算逻辑:解析目标 + 寻路,产出已计算态。

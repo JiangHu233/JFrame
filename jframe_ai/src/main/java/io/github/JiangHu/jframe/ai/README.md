@@ -379,9 +379,13 @@ plan.start();  // 主线程驱动实体
 ```java
 // 走完一段自动续算，直到到达（适合长距离静态目标）
 ai.walk(npc).to(farPos).continuous().maxSegments(100).start();
+
+// 续算段放入线程池计算，完成后自动回主线程驱动（大地图防段间卡顿）
+ai.walk(npc).to(farPos).continuous().carrier(ComputeCarriers.of(pool)).start();
 ```
 
-- 实体走完当前段后立即从最新位置续算下一段，段间衔接无缝。
+- 实体走完当前段后从最新位置续算下一段：`NavigatorManager` 复用同一 `Navigator`（`retarget` 换路径不换实体状态），段间衔接无缝、不重起步。
+- 段重寻路经 `carrier` 指定的 [`ComputeCarrier`](core/behavior/ComputeCarrier.java) 执行（默认同步；配 `ComputeCarriers.of(executor)` 即异步，结果自动回主线程）。
 - 终止条件：到达（距离 ≤ `reachRadius`）/ 寻路失败 / 实体失效 / 段数上限（`maxSegments`，默认 100）/ 外部 `stop`。
 
 ### 3. 全部配置方法
@@ -395,6 +399,8 @@ ai.walk(npc).to(farPos).continuous().maxSegments(100).start();
 | `continuous()` | 开启走完续算模式 |
 | `reachRadius(double)` | 到达判定半径 |
 | `maxSegments(int)` | 续算最大段数 |
+| `gaze(Gaze)` | 视角修正器（头/身朝向，默认 [`MovementGaze`](core/gaze/MovementGaze.java) 头身同向朝移动方向） |
+| `carrier(ComputeCarrier)` | 计算载体（整段寻路与 continuous 续算共用，默认同步，配 [`ComputeCarriers.of(executor)`](core/behavior/ComputeCarriers.java) 即异步） |
 | `compute()` | 纯计算，返回 `PlannedPath` |
 | `start()` | 计算 + 执行一步到位 |
 
@@ -406,6 +412,38 @@ ai.walk(npc).to(farPos).continuous().maxSegments(100).start();
 | `0.25`（默认） | 正常行走 |
 | `0.35` | 小跑 |
 | `0.5` | 快速奔跑 |
+
+### 5. 视角修正器（Gaze）
+
+导航移动时实体的头/身朝向由 [`Gaze`](core/gaze/Gaze.java) 决定（每 tick 应用）。Nukkit 广播 `MovePlayerPacket` 时头读 `headYaw`、身读 `yaw`——框架保证两者都写，头身不再分家：
+
+```java
+// 默认：MovementGaze——头身同向，朝移动方向（不配置即此行为）
+ai.walk(zombie).to(pos).start();
+
+// 边走边看向目标（头看目标、身体朝移动方向，目标丢失自动回退移动朝向）
+ai.chase(wolf, playerTarget)
+  .gaze(new TargetGaze(playerTarget).bodyFollow(false))
+  .start();
+
+// 平滑转头：限制每 tick 转角 + 反应延迟，更像生物
+ai.chase(wolf, playerTarget)
+  .gaze(new SmoothGaze(new TargetGaze(playerTarget))
+      .maxHeadTurn(15).maxBodyTurn(8).reactionDelay(3))
+  .start();
+
+// 固定朝向（哨兵站岗、巡逻扭头看固定方向）
+ai.walk(guard).to(post).gaze(new FixedGaze(90)).start();
+```
+
+| 修正器 | 行为 |
+|--------|------|
+| [`MovementGaze`](core/gaze/MovementGaze.java) | 头身同向朝移动方向（默认） |
+| [`TargetGaze`](core/gaze/TargetGaze.java) | 头看向 `Target`/实体/坐标（每 tick 动态读取）；`bodyFollow(true)` 身体跟随、`aimHeight(1.5)` 瞄准高度 |
+| [`FixedGaze`](core/gaze/FixedGaze.java) | 头身固定朝某 yaw |
+| [`SmoothGaze`](core/gaze/SmoothGaze.java) | 装饰器：限制转头速度（`maxHeadTurn`/`maxBodyTurn` 度每 tick）+ `reactionDelay(ticks)` 反应延迟 |
+
+`Gaze` 是单方法函数式接口（`apply(GazeContext)`），可自定义任意朝向逻辑；连续导航/续段间修正器实例复用，`SmoothGaze` 的平滑状态跨段保持。
 
 ---
 
@@ -532,3 +570,9 @@ public class MonsterBrain {
 
 **Q：实体死亡/卸载后行为会泄漏吗？**
 不会。`LoopBehavior` 每轮检查实体有效性（`closed` / `getLevel()`），失效即以 `ENTITY_INVALID` 结束并回收；`EntityTarget` 对目标同样处理（`TARGET_LOST`）。
+
+**Q：为什么实体移动时头和身体朝向不一致（侧头）？**
+Nukkit 对非 Player 实体广播移动包时，头读 `headYaw`、身读 `yaw` 两个字段。框架导航与 `CombatActions.faceTo()` 均已同时写两者；若自定义代码直接改 `entity.yaw`，需同步 `entity.headYaw = yaw`，或改用 [`Gaze`](core/gaze/Gaze.java) 修正器交给框架统一管理。
+
+**Q：导航中的实体会被击退吗？**
+会。导航器复刻 Nukkit 原生生物的 `knockbackTicks` 保护期：检测到击退（被击飞 `motionY` 抬升，或腾空且水平速度远超导航速度）时进入约 15 tick 恢复期，期间不覆盖 motion、仅应用惯性位移，实体被正常击飞滑行；落地或惯性衰减后自动恢复寻路。自身跳跃不误判为击退。

@@ -3,6 +3,7 @@ package io.github.JiangHu.jframe.ai.core.executor;
 import cn.nukkit.Server;
 import cn.nukkit.entity.Entity;
 import cn.nukkit.item.Item;
+import io.github.JiangHu.jframe.ai.core.combat.CombatActions;
 
 /**
  * 战斗动作执行器:链式配置一次战斗动作,{@link #fire()} 在主线程执行。
@@ -34,12 +35,12 @@ import cn.nukkit.item.Item;
  * ai.attack(alchemist).useItemOnSelf(potion).fire();
  * }</pre>
  *
- * @see io.github.JiangHu.jframe.ai.core.combat.CombatActions
+ * @see CombatActions
  */
 public final class AttackExecutor {
 
     private final Entity self;
-    private final io.github.JiangHu.jframe.ai.core.combat.CombatActions combat;
+    private final CombatActions combat;
 
     /** 待执行动作类型 */
     private Kind kind = Kind.NONE;
@@ -60,7 +61,7 @@ public final class AttackExecutor {
      * @param self   动作执行者
      * @param combat 战斗动作实现(委托目标)
      */
-    public AttackExecutor(Entity self, io.github.JiangHu.jframe.ai.core.combat.CombatActions combat) {
+    public AttackExecutor(Entity self, CombatActions combat) {
         this.self = self;
         this.combat = combat;
     }
@@ -88,8 +89,8 @@ public final class AttackExecutor {
      */
     public AttackExecutor arrow(Entity target) {
         return arrow(target,
-                io.github.JiangHu.jframe.ai.core.combat.CombatActions.DEFAULT_ARROW_SPEED,
-                io.github.JiangHu.jframe.ai.core.combat.CombatActions.DEFAULT_INACCURACY);
+                CombatActions.DEFAULT_ARROW_SPEED,
+                CombatActions.DEFAULT_INACCURACY);
     }
 
     /**

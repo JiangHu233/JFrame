@@ -95,8 +95,15 @@ io.github.JiangHu.jframe.ai
 │   │   ├── PlannedPath.java       计算结果 + 执行参数（两段式载体）
 │   │   └── AttackExecutor.java    战斗链式配置（fire）
 │   ├── navigation/                导航调度
-│   │   ├── Navigator.java         单实体路径跟随（tick 驱动）
-│   │   └── NavigatorManager.java  多实体调度（PluginAware，单调度器）
+│   │   ├── Navigator.java         单实体路径跟随（tick 驱动，节点无缝跳过）
+│   │   └── NavigatorManager.java  多实体调度（PluginAware，单调度器，retarget 续段复用）
+│   ├── gaze/                      视角修正器（头/身朝向）
+│   │   ├── Gaze.java              函数式接口（apply(GazeContext)，每 tick 应用）
+│   │   ├── GazeContext.java       应用上下文 + 纯角度函数（yawTowards/pitchTowards/angleDiff）
+│   │   ├── MovementGaze.java      头身同向朝移动方向（默认）
+│   │   ├── TargetGaze.java        头看向 Target（动态读取，丢失回退移动朝向）
+│   │   ├── FixedGaze.java         头身固定 yaw
+│   │   └── SmoothGaze.java        装饰器：限速转头 + 反应延迟
 │   ├── target/                    目标抽象
 │   │   ├── Target.java            接口（get() 每轮动态读取）
 │   │   ├── PointTarget.java       固定点
@@ -279,6 +286,10 @@ double stepCost(Level level, Vector3 from, Vector3 to, boolean diagonal, Pathfin
 - 段数达 `maxSegments` 上限（默认 100）
 - 外部 `stop(entity)`
 
+**段间衔接**：段完成时 `NavigatorManager` 不销毁导航器，而是 `Navigator.retarget(next)` 原地换路径——运动状态与 `Gaze` 修正器实例（含 `SmoothGaze` 平滑状态）跨段保留，无停顿重启。
+
+**段重寻路线程**：续算寻路经 `carrier(ComputeCarrier)` 指定的载体执行（默认同步）。配 `ComputeCarriers.of(executor)` 后段重寻路在线程池计算，完成后经 `postToMain`（`Server.scheduleTask`）回主线程才写实体——异步期间导航器已结束/实体失效的"僵尸段"结果会被丢弃（`finished` 与实体有效性双重校验）。
+
 适合**静态目标长距离导航**；移动目标用 `chase()`（每轮从目标最新位置重算）。
 
 ### 3. 与 LoopBehavior 的关系
@@ -292,13 +303,17 @@ double stepCost(Level level, Vector3 from, Vector3 to, boolean diagonal, Pathfin
 ### NavigatorManager（core/navigation）
 
 - **单调度器**：`bindPlugin(plugin)` 时注册**一个** Nukkit 定时任务，每 tick 调 `tickAll()` 遍历所有 `Navigator.tick()`——多实体导航只有一个调度任务，不随实体数增长。
-- **并发容器**：`navigators: Map<Long, Navigator>`（实体 ID → 导航器），同实体重复导航自动顶掉旧的。
+- **并发容器**：`navigators: Map<Long, Navigator>`（实体 ID → 导航器）。
+- **续段复用**：`navigateOrPartial()` 对已 `finished` 的导航器调 `Navigator.retarget(next)` 原地换路径（运动与 gaze 状态保留），而非销毁重建——continuous 续段与 chase 每轮导航均走此路径，段间无停顿；进行中的导航器则被新导航**取代**。
+- **快照迭代**：`tickAll()` 遍历 `entrySet` 快照（`ArrayList` 拷贝），删除用两参 `remove(key, value)` 条件删除——tick 栈内 onComplete 回调注册的新导航器不会被误删，`retarget` 复活的导航器不会被旧引用清掉。
 - `stop(entity)` / `stopAll()` / `isNavigating(entity)` / `activeNavigatorCount()`。
 - `shutdown()`：插件卸载时停全部导航与调度任务。
 
 ### Navigator（单实体路径跟随）
 
-`tick()` 每 tick 推进实体：沿路径节点序列移动（`speed` 方块/tick），处理跳跃（Y 差 + 跳跃标志）、节点切换、到达判定（末节点距离 ≤ 阈值 → `finished`）。`finished` 后从管理器移除。
+`tick()` 每 tick 推进实体：沿路径节点序列移动（`speed` 方块/tick），处理跳跃（Y 差 + 跳跃标志）、**节点无缝切换**（单 tick 内 while 跳过所有已到达的节点，不在节点上停留）、到达判定（末节点距离 ≤ 阈值 → `finished`）。移动朝向经 [`Gaze`](core/gaze/Gaze.java) 修正器应用（默认 `MovementGaze` 头身同向，`yaw`/`headYaw` 同时写——Nukkit 广播移动包头身分读两字段，只写 `yaw` 会侧头）。`finished` 后从管理器移除。
+
+**击退兼容**：复刻 Nukkit 原生生物 `knockbackTicks` 保护期。`tick()` 检测到击退特征（被击飞抬升 `motionY > 0.2` 且非自身跳跃，或腾空且水平速度 > 1.6× 导航速度）时进入约 15 tick 恢复期——期间**不覆盖** motion、仅 `move()` 应用现有惯性位移，让击退惯性自然滑行；落地或惯性衰减到导航速度以下后自动恢复寻路。自身跳跃由 `jumpedLastTick` 标记排除，不误判为击退。
 
 ---
 
@@ -451,7 +466,25 @@ ai.chase(zombie, player).carrier(carrier).start();   // 每轮计算进线程池
 
 约定：`dispatch` 内部调用 `task.run()`（任意线程），结果经 `task.complete` / `task.fail` 回传——`LoopBehavior` 的默认实现已保证回主线程。
 
-### 4. 自定义行为（compute / execute 全接管）
+### 4. 自定义视角修正器（Gaze）
+
+```java
+// 例：移动时头看目标、身体朝移动方向，头俯仰跟随目标高度
+Gaze lookAtTarget = ctx -> {
+    Vector3 pos = ctx.entity().add(0, ctx.entity().getEyeHeight(), 0);
+    double dx = targetX - pos.x, dy = targetY - pos.y, dz = targetZ - pos.z;
+    if (dx * dx + dz * dz > 1e-6) {
+        ctx.entity().headYaw = (float) GazeContext.yawTowards(dx, dz);
+        ctx.entity().pitch = (float) GazeContext.pitchTowards(dx, dy, dz);
+    }
+};
+
+ai.chase(wolf, player).gaze(new SmoothGaze(lookAtTarget).maxHeadTurn(12)).start();
+```
+
+约定：`apply` 每 tick 在主线程调用一次；角度计算用 [`GazeContext`](core/gaze/GazeContext.java) 纯函数（`yawTowards` 符合 Nukkit yaw 约定：0 朝 +Z、顺时针正、`atan2(-dx, dz)`；`pitch` 上仰为负）；有状态修正器（如 `SmoothGaze`）实例在续段间复用，状态跨段保留。
+
+### 5. 自定义行为（compute / execute 全接管）
 
 ```java
 ai.loop(bot)

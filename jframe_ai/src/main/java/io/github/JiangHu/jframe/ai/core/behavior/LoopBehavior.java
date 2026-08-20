@@ -7,6 +7,7 @@ import cn.nukkit.plugin.Plugin;
 import cn.nukkit.scheduler.TaskHandler;
 import io.github.JiangHu.jframe.ai.core.executor.NavigationExecutor;
 import io.github.JiangHu.jframe.ai.core.executor.PlannedPath;
+import io.github.JiangHu.jframe.ai.core.gaze.Gaze;
 import io.github.JiangHu.jframe.ai.core.navigation.Navigator;
 import io.github.JiangHu.jframe.ai.core.navigation.NavigatorManager;
 import io.github.JiangHu.jframe.ai.core.targeting.EntityTarget;
@@ -76,6 +77,8 @@ public final class LoopBehavior {
     private volatile PathfindingStrategy strategy;
     private volatile PathfindingConfig config;
     private volatile Double speed;
+    /** 视角修正器(null=导航器默认 MovementGaze) */
+    private volatile Gaze gaze;
     private volatile int interval = DEFAULT_INTERVAL;
     private volatile Predicate<LoopContext> until;
     private volatile Consumer<BehaviorOutcome> onComplete;
@@ -175,6 +178,21 @@ public final class LoopBehavior {
      */
     public LoopBehavior speed(double speed) {
         this.speed = speed;
+        return this;
+    }
+
+    /**
+     * 视角修正器:决定行进中实体头/身的朝向表现(默认 MovementGaze:头身同向朝移动方向)。
+     * <p>
+     * 可选 {@code TargetGaze}(头看目标)、{@code FixedGaze}(固定朝向),
+     * 或 {@code SmoothGaze} 装饰任何修正器获得限速转身与反应延迟的拟人效果。
+     * 同一修正器实例跨轮/跨段复用,平滑状态延续。
+     *
+     * @param gaze 修正器
+     * @return this
+     */
+    public LoopBehavior gaze(Gaze gaze) {
+        this.gaze = Objects.requireNonNull(gaze, "gaze");
         return this;
     }
 
@@ -405,6 +423,11 @@ public final class LoopBehavior {
         if (speed != null) {
             executor.speed(speed);
         }
+        if (gaze != null) {
+            executor.gaze(gaze);
+        }
+        // 段重寻路与整轮计算共用同一载体:寻路计算统一挪出主线程(或统一同步)
+        executor.carrier(carrier);
         return executor.to(target).compute();
     }
 

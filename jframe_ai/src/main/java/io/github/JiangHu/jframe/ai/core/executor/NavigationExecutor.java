@@ -2,6 +2,9 @@ package io.github.JiangHu.jframe.ai.core.executor;
 
 import cn.nukkit.entity.Entity;
 import cn.nukkit.math.Vector3;
+import io.github.JiangHu.jframe.ai.core.behavior.ComputeCarrier;
+import io.github.JiangHu.jframe.ai.core.behavior.ComputeCarriers;
+import io.github.JiangHu.jframe.ai.core.gaze.Gaze;
 import io.github.JiangHu.jframe.ai.core.navigation.Navigator;
 import io.github.JiangHu.jframe.ai.core.navigation.NavigatorManager;
 import io.github.JiangHu.jframe.ai.core.targeting.EntityTarget;
@@ -59,6 +62,10 @@ public final class NavigationExecutor {
     private boolean continuous;
     private double reachRadius = DEFAULT_REACH_RADIUS;
     private int maxSegments = DEFAULT_MAX_SEGMENTS;
+    /** 视角修正器(null=导航器默认 MovementGaze) */
+    private Gaze gaze;
+    /** 连续模式段重寻路载体(默认主线程同步) */
+    private ComputeCarrier carrier = ComputeCarriers.sync();
 
     /**
      * 构造导航执行器(经 {@code ai.walk(entity)} 工厂创建)。
@@ -178,6 +185,39 @@ public final class NavigationExecutor {
     }
 
     /**
+     * 视角修正器:决定行进中实体头/身的朝向表现。
+     * <p>
+     * 默认不设置(导航器使用 {@code MovementGaze}:头身同向朝移动方向,
+     * 同步写 headYaw 修复侧头问题)。可选 {@code TargetGaze}(头看目标)、
+     * {@code FixedGaze}(固定朝向),或 {@code SmoothGaze} 装饰任何修正器
+     * 获得限速转身与反应延迟的拟人效果。
+     * <p>
+     * 同一修正器实例随导航器独享,连续模式跨段复用(平滑状态延续)。
+     *
+     * @param gaze 修正器
+     * @return this
+     */
+    public NavigationExecutor gaze(Gaze gaze) {
+        this.gaze = Objects.requireNonNull(gaze, "gaze");
+        return this;
+    }
+
+    /**
+     * 连续模式段重寻路载体:决定"走完一段后续算下一段"的寻路计算在哪个线程执行。
+     * <p>
+     * 默认 {@link ComputeCarriers#sync()}(主线程同步,与旧版一致);
+     * 传入 {@code ComputeCarriers.of(executor)} 可把段重寻路挪出主线程,
+     * 消除每段一次的主线程 A* 阻塞。框架不持有线程资源,载体由外部提供。
+     *
+     * @param carrier 计算载体
+     * @return this
+     */
+    public NavigationExecutor carrier(ComputeCarrier carrier) {
+        this.carrier = Objects.requireNonNull(carrier, "carrier");
+        return this;
+    }
+
+    /**
      * 计算路径(任意线程可调,纯计算:解析目标 + 寻路,不碰实体写/调度)。
      *
      * @return 已计算态路径;目标失效({@code Target.get()} 返回 null)时返回 null
@@ -196,7 +236,7 @@ public final class NavigationExecutor {
         PathResult result = actual.findPath(self.getLevel(), self, goal, actualConfig);
         return new PlannedPath(self, target, actual, actualConfig, result, navigators,
                 speed != null ? speed : Navigator.DEFAULT_SPEED,
-                continuous, reachRadius, maxSegments);
+                continuous, reachRadius, maxSegments, gaze, carrier);
     }
 
     /**

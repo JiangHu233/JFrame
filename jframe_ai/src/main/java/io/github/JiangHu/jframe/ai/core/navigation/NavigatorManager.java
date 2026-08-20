@@ -8,6 +8,7 @@ import cn.nukkit.scheduler.TaskHandler;
 import io.github.JiangHu.jframe.ai.pathfinding.PathResult;
 import io.github.JiangHu.jframe.core.module.PluginAware;
 
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -88,15 +89,21 @@ public class NavigatorManager implements PluginAware {
     }
 
     /**
-     * 提交导航任务（边走边搜版）：接受完整路径或部分路径。
+     * 提交导航任务（边走边搜版）：接受完整路径或部分路径，支持<b>无缝续段</b>。
      * <p>
-     * 与 {@link #navigate} 的区别：本方法只要 {@link PathResult#hasPath()} 为真即创建导航器，
+     * 与 {@link #navigate} 的区别：本方法只要 {@link PathResult#hasPath()} 为真即接受结果，
      * 因此即使寻路仅得到 {@link PathResult.Status#PARTIAL}（未到达目标的部分路径），
      * 实体也会沿该路径开始移动——这正是"边走边搜"所需的语义。
+     * <p>
+     * <b>无缝续段</b>：若该实体存在一个<b>已走完</b>（{@link Navigator#isFinished()}）的旧导航器，
+     * 不再"停止旧导航器 + 从路径头重建"，而是复用同一实例调用
+     * {@link Navigator#retarget(PathResult)}——保留速度向量与视角修正器状态
+     * （含 {@code SmoothGaze} 的平滑进度），段切换瞬间无停顿、无回头路。
+     * 旧导航器<b>进行中</b>时仍为取代语义（先停旧的再建新的）。
      *
      * @param entity 被导航的实体
      * @param result 寻路结果（成功或部分路径）
-     * @param speed  行进速度（方块/tick）
+     * @param speed  行进速度（方块/tick，仅新建导航器时生效；续段沿用旧速度）
      * @return 导航器，或 null（路径完全不可用）
      * @see io.github.JiangHu.jframe.ai.core.behavior.LoopBehavior
      */
@@ -104,7 +111,17 @@ public class NavigatorManager implements PluginAware {
         if (entity == null || result == null || !result.hasPath()) {
             return null;
         }
-        stop(entity);
+        Navigator existing = navigators.get(entity.getId());
+        if (existing != null && existing.isFinished()) {
+            // 无缝续段：复用已结束的导航器，保留速度与视角状态
+            existing.retarget(result);
+            ensureStarted();
+            return existing;
+        }
+        if (existing != null) {
+            // 取代语义：进行中的导航被新导航取代
+            existing.stop();
+        }
         Navigator navigator = new Navigator(entity, result, speed);
         navigators.put(entity.getId(), navigator);
         ensureStarted();
@@ -169,21 +186,39 @@ public class NavigatorManager implements PluginAware {
      * 单次 tick：推进所有导航器，移除已完成的。
      * <p>
      * 由调度器每 tick 调用。单个导航器的异常被捕获并记录，不影响其他导航器。
+     * <p>
+     * <b>移除语义（修复竞态）</b>：旧版 {@code entrySet().removeIf} 按 key 无条件删除，
+     * 会误删两类"不应删"的导航器：
+     * <ul>
+     *   <li>{@code onComplete} 回调在本 tick 调用栈内注册的<b>新导航器</b>（同 key 不同实例）</li>
+     *   <li>回调中经 {@link #navigateOrPartial} 对刚走完的导航器
+     *       {@link Navigator#retarget(PathResult) 复活续段}的同一实例（finished 已重置）</li>
+     * </ul>
+     * 现改为：快照迭代 + tick 返回 false 后<b>双重校验</b>——仅当该实例
+     * {@link Navigator#isFinished()} 仍为 true 且 map 中仍映射到同一实例时才移除
+     * （{@link ConcurrentHashMap#remove(Object, Object) 条件删除}）。
      */
     public void tickAll() {
         if (navigators.isEmpty()) {
             return;
         }
-        navigators.entrySet().removeIf(entry -> {
+        for (Map.Entry<Long, Navigator> entry : new ArrayList<>(navigators.entrySet())) {
             Navigator navigator = entry.getValue();
+            boolean alive;
             try {
-                return !navigator.tick();
+                alive = navigator.tick();
             } catch (Exception e) {
                 JFrameLog.error("NavigatorManager",
                         "AI 导航器 tick 异常: " + navigator.getEntity(), e);
-                return true;
+                navigators.remove(entry.getKey(), navigator);
+                continue;
             }
-        });
+            if (!alive && navigator.isFinished()) {
+                // 条件删除：仅当仍映射到同一实例时移除，
+                // 不触碰回调中注册的新导航器或已复活的实例
+                navigators.remove(entry.getKey(), navigator);
+            }
+        }
     }
 
     /**
