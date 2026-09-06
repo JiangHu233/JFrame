@@ -3,6 +3,8 @@ package io.github.JiangHu.jframe.command;
 import cn.nukkit.plugin.Plugin;
 import io.github.JiangHu.jframe.command.routing.CommandRegistry;
 import io.github.JiangHu.jframe.command.scan.CommandScanner;
+import io.github.JiangHu.jframe.core.classloader.PluginClassLoaderFactory;
+import io.github.JiangHu.jframe.core.module.ForPlugin;
 
 import java.util.List;
 
@@ -39,7 +41,7 @@ import java.util.List;
  * @see CommandEngine
  * @see CommandRegistry
  */
-public class CommandAPI {
+public class CommandAPI implements ForPlugin<CommandPluginScope> {
 
     /** 路由引擎：register/unregister 的实际执行者 */
     private final CommandRegistry registry;
@@ -132,5 +134,32 @@ public class CommandAPI {
      */
     public Plugin getPlugin() {
         return engine.getPlugin();
+    }
+
+    // ========== 插件绑定代理（ForPlugin） ==========
+
+    /**
+     * 绑定指定插件实例，返回一个绑定了该插件 ClassLoader 的扫描作用域。
+     * <p>
+     * 作用域对象（{@link CommandPluginScope}）只暴露 {@code scan} 方法，
+     * 扫描时使用绑定插件的类路径。扫描结果统一注册到共享的 {@link CommandRegistry}。
+     *
+     * @param plugin 插件实例
+     * @return 绑定了该插件上下文的扫描作用域
+     */
+    @Override
+    public CommandPluginScope forPlugin(Plugin plugin) {
+        return new CommandPluginScope(this, PluginClassLoaderFactory.getClassLoader(plugin));
+    }
+
+    /**
+     * 按插件名绑定，返回一个绑定了该插件 ClassLoader 的扫描作用域。
+     *
+     * @param pluginName 插件名称（需与 plugin.yml 中一致）
+     * @return 绑定了该插件上下文的扫描作用域
+     */
+    @Override
+    public CommandPluginScope forPlugin(String pluginName) {
+        return new CommandPluginScope(this, PluginClassLoaderFactory.getClassLoader(pluginName));
     }
 }

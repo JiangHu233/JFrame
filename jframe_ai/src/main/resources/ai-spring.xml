@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AI 模块 Spring 装配。
+
+  装配原则(架构文档第 8 节):
+  - 容器只装"算法变体 bean + 调度器 + 门面"
+  - 行为骨架(LoopBehavior)与执行器(NavigationExecutor/AttackExecutor/SeeQuery)
+    是无状态库件,由 AiAPI 工厂按需创建,不进容器
+  - 默认策略 = A*(构造器注入顺序决定,见 AiAPI 构造器)
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+                           http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!-- ═══ 算法变体 ═══ -->
+
+    <!-- A* 寻路(默认策略:最优路径,支持启发式/预算/部分路径) -->
+    <bean id="aStarPathFinder"
+          class="io.github.JiangHu.jframe.ai.pathfinding.astar.AStarPathFinder"/>
+
+    <!-- 贪心寻路(低开销局部步进,适合大量实体) -->
+    <bean id="greedyPathFinder"
+          class="io.github.JiangHu.jframe.ai.pathfinding.greedy.GreedyPathFinder"/>
+
+    <!-- ═══ 调度器与扫描器 ═══ -->
+
+    <!-- 导航管理器(PluginAware:框架自动绑定插件并启动调度) -->
+    <bean id="navigatorManager"
+          class="io.github.JiangHu.jframe.ai.core.navigation.NavigatorManager"/>
+
+    <!-- 单实体战术扫描器 -->
+    <bean id="tacticalScanner"
+          class="io.github.JiangHu.jframe.ai.core.tactical.TacticalScanner"/>
+
+    <!-- 战斗动作实现 -->
+    <bean id="combatActions"
+          class="io.github.JiangHu.jframe.ai.core.combat.CombatActions"/>
+
+    <!-- 团队战术 -->
+    <bean id="teamTactics"
+          class="io.github.JiangHu.jframe.ai.core.tactical.TeamTactics"/>
+
+    <!-- ═══ 门面 ═══ -->
+
+    <!-- AI 统一入口:七工厂 path/walk/chase/wander/loop/attack/see -->
+    <bean id="aiAPI" class="io.github.JiangHu.jframe.ai.AiAPI">
+        <constructor-arg ref="aStarPathFinder"/>
+        <constructor-arg ref="greedyPathFinder"/>
+        <constructor-arg ref="navigatorManager"/>
+        <constructor-arg ref="tacticalScanner"/>
+        <constructor-arg ref="combatActions"/>
+        <constructor-arg ref="teamTactics"/>
+    </bean>
+
+</beans>

@@ -1,5 +1,7 @@
 package io.github.JiangHu.jframe.command.resolve;
 
+import io.github.JiangHu.jframe.core.JFrameException;
+
 /**
  * 参数类型转换异常。
  * <p>
@@ -11,7 +13,7 @@ package io.github.JiangHu.jframe.command.resolve;
  *
  * @see ArgumentResolver
  */
-public class ArgumentConversionException extends RuntimeException {
+public class ArgumentConversionException extends JFrameException {
 
     /** 无法转换的原始值 */
     private final String rawValue;

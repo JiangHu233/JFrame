@@ -3,9 +3,10 @@ package io.github.JiangHu.jframe.data;
 import cn.nukkit.plugin.Plugin;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
 import io.github.JiangHu.jframe.core.module.PluginAware;
-import io.github.JiangHu.jframe.data.core.MetadataCache;
-import io.github.JiangHu.jframe.data.core.SaveFieldTypeAdapterFactory;
+import io.github.JiangHu.jframe.data.core.engine.SaveFieldTypeAdapterFactory;
+import io.github.JiangHu.jframe.data.core.meta.MetadataCache;
 import io.github.JiangHu.jframe.data.exception.DataException;
 
 import java.io.File;
@@ -19,11 +20,21 @@ import java.util.function.Supplier;
  * 数据保存器 — <b>面向用户的统一入口</b>。
  * <p>
  * 将标注了 {@link io.github.JiangHu.jframe.data.annotation.SaveField @SaveField}
- * 的类对象序列化为 JSON 文件，或从 JSON 文件反序列化回对象。
+ * 的类对象序列化为 <b>JSON 或 YAML</b> 文件，或从文件反序列化回对象。
+ * 通过 {@link #setFormat(SaveFormat)} 或 {@link #withFormat(SaveFormat)} 切换存储格式，
+ * 两种格式共用同一套 {@code @SaveField} 注解驱动机制，对用户完全透明。
  * <p>
- * 内部持有配置好的 {@link Gson} 实例（注册了
- * {@link SaveFieldTypeAdapterFactory}），所有序列化/反序列化均通过 Gson 完成，
- * 自动递归处理容器（List/Set/Map/数组）和嵌套对象。
+ * 序列化宏观路线（用户可见层面）：
+ * <pre>
+ *   对象属性 ←→ [SaveValue 通用数据，仅当字段绑定 SaveFieldAdapter] ←→ 格式存取器 ←→ 文本
+ * </pre>
+ * 未绑定适配器的属性<b>直接往返</b>于格式存取器，不经过任何中间数据；
+ * {@link io.github.JiangHu.jframe.data.value.SaveValue} 仅出现在绑定适配器
+ * 字段的边界处。内部以 Gson 树模型
+ * （{@link JsonElement}，框架内部实现细节，用户与适配器均不接触）作为
+ * 主干承载注解语义，由当前格式关联的
+ * {@link io.github.JiangHu.jframe.data.core.format.SaveFormatCodec 格式存取器}
+ * 输出/解析文本（JSON 与 YAML 为同级实现，见 {@link SaveFormat#getCodec()}）。
  *
  * <h3>根路径（rootDir）</h3>
  * <p>
@@ -50,7 +61,7 @@ import java.util.function.Supplier;
  * saver.save(playerData, "players/steve");   // → rootDir/players/steve.json
  * saver.save(playerData);                     // → rootDir/<uuid>.json（需实现 SaveIdentifiable）
  *
- * // 加载
+ * // 加载（文件不存在时返回 null，可用 null 区分"缺失"与"读取失败"）
  * PlayerData loaded = saver.load(PlayerData.class, "players/steve");
  *
  * // 判断文件是否存在
@@ -73,8 +84,8 @@ import java.util.function.Supplier;
  */
 public class DataSaver implements PluginAware {
 
-    /** JSON 文件扩展名 */
-    private static final String JSON_EXTENSION = ".json";
+    /** 已知的文件扩展名集合（用于智能识别，避免重复追加） */
+    private static final String[] KNOWN_EXTENSIONS = {".json", ".yml", ".yaml"};
 
     /** 元数据缓存 */
     private final MetadataCache cache;
@@ -84,6 +95,9 @@ public class DataSaver implements PluginAware {
 
     /** 保存根路径 */
     private File rootDir;
+
+    /** 存储格式（默认 JSON，可通过 {@link #setFormat} 修改或 {@link #withFormat} 覆盖） */
+    private SaveFormat format = SaveFormat.JSON;
 
     /** 父级保存器（由 {@link #sub} 创建的子保存器持有，供 {@link #parent()} 向上导航） */
     private final DataSaver parent;
@@ -152,6 +166,64 @@ public class DataSaver implements PluginAware {
         return rootDir;
     }
 
+    // ========== 存储格式 ==========
+
+    /**
+     * 获取当前保存器的默认存储格式。
+     *
+     * @return 存储格式（默认 {@link SaveFormat#JSON}）
+     * @see SaveFormat
+     */
+    public SaveFormat getFormat() {
+        return format;
+    }
+
+    /**
+     * 设置默认存储格式，影响后续所有 {@code save} / {@code load} / {@code loadInto} 调用。
+     * <p>
+     * 文件扩展名会随格式自动变化：JSON → {@code .json}，YAML → {@code .yml}。
+     * <pre>{@code
+     * saver.setFormat(SaveFormat.YAML);
+     * saver.save(data, "config");   // → rootDir/config.yml
+     * }</pre>
+     *
+     * @param format 存储格式（不能为 null）
+     * @throws DataException 若 format 为 null
+     * @see SaveFormat
+     */
+    public void setFormat(SaveFormat format) {
+        if (format == null) {
+            throw new DataException("format 不能为 null");
+        }
+        this.format = format;
+    }
+
+    /**
+     * 返回一个使用指定格式的<b>独立保存器</b>，不改变当前保存器的格式状态。
+     * <p>
+     * 适用于"按调用覆盖"场景：临时用另一种格式保存/加载，而不影响当前保存器的默认格式。
+     * 返回的保存器共享同一份 {@link MetadataCache} 与 {@link Gson}，根路径与当前保存器相同，
+     * 仅格式不同。
+     * <pre>{@code
+     * saver.withFormat(SaveFormat.YAML).save(data, "config");  // → config.yml
+     * saver.save(data, "config");                               // → config.json（原格式不变）
+     * }</pre>
+     *
+     * @param format 目标格式（不能为 null）
+     * @return 使用指定格式的独立保存器
+     * @throws DataException 若 format 为 null
+     * @see SaveFormat
+     */
+    public DataSaver withFormat(SaveFormat format) {
+        if (format == null) {
+            throw new DataException("format 不能为 null");
+        }
+        DataSaver view = new DataSaver(cache, gson, null);
+        view.rootDir = this.rootDir;
+        view.format = format;
+        return view;
+    }
+
     // ========== 子路径与路径导航 ==========
 
     /**
@@ -189,6 +261,7 @@ public class DataSaver implements PluginAware {
         }
         DataSaver child = new DataSaver(cache, gson, this);
         child.rootDir = childRoot;
+        child.format = this.format;
         return child;
     }
 
@@ -266,6 +339,7 @@ public class DataSaver implements PluginAware {
         }
         DataSaver saver = new DataSaver(cache, gson, null);
         saver.rootDir = plugin.getDataFolder();
+        saver.format = this.format;
         return saver;
     }
 
@@ -274,7 +348,8 @@ public class DataSaver implements PluginAware {
     /**
      * 保存对象到根路径下的指定文件名。
      * <p>
-     * 文件名相对于 {@link #getRootDir()}，自动追加 {@code .json} 扩展名。
+     * 文件名相对于 {@link #getRootDir()}，自动追加当前格式对应的扩展名
+     *（JSON → {@code .json}，YAML → {@code .yml}）。
      * 支持子路径（如 {@code "players/steve"}），自动创建父目录。
      *
      * @param obj      要保存的对象
@@ -292,8 +367,8 @@ public class DataSaver implements PluginAware {
      * @param file 目标文件（绝对路径）
      */
     public void save(Object obj, File file) {
-        String json = toJson(obj);
-        writeStringToFile(json, file);
+        String content = serialize(obj);
+        writeStringToFile(content, file);
     }
 
     /**
@@ -310,11 +385,15 @@ public class DataSaver implements PluginAware {
 
     /**
      * 从根路径下的指定文件名加载对象。
+     * <p>
+     * 若文件<b>不存在</b>，返回 {@code null}（不抛异常）。加载前可先用
+     * {@link #exists(String)} 探测，或直接用 {@code null} 判断区分"数据缺失"
+     * 与"读取失败"两种情况。
      *
      * @param clazz    目标类
      * @param fileName 文件名（相对根路径，不含扩展名）
      * @param <T>      目标类型
-     * @return 反序列化的对象
+     * @return 反序列化的对象；文件不存在时返回 {@code null}
      */
     public <T> T load(Class<T> clazz, String fileName) {
         File file = resolveRelativeFile(fileName);
@@ -323,15 +402,23 @@ public class DataSaver implements PluginAware {
 
     /**
      * 从指定文件加载对象。
+     * <p>
+     * 若文件<b>不存在</b>，返回 {@code null}（不抛异常），以便调用方用
+     * {@code null} 区分"数据缺失/首次加载"与"读取失败"两种情况，提升鲁棒性。
+     * 若需在缺失时自动创建默认值并落盘，请改用
+     * {@link #loadOrSave(Class, File, java.util.function.Supplier) loadOrSave}。
      *
      * @param clazz 目标类
      * @param file  源文件（绝对路径）
      * @param <T>   目标类型
-     * @return 反序列化的对象
+     * @return 反序列化的对象；文件不存在时返回 {@code null}
      */
     public <T> T load(Class<T> clazz, File file) {
-        String json = readStringFromFile(file);
-        return fromJson(json, clazz);
+        if (!file.exists()) {
+            return null;
+        }
+        String content = readStringFromFile(file);
+        return fromTree(parseToTree(content), clazz);
     }
 
     // ========== 回填已有实例 ==========
@@ -358,8 +445,8 @@ public class DataSaver implements PluginAware {
      * @param file   源文件（绝对路径）
      */
     public void loadInto(Object target, File file) {
-        String json = readStringFromFile(file);
-        fromJsonInto(target, json);
+        String content = readStringFromFile(file);
+        fromTreeInto(target, parseToTree(content));
     }
 
     // ========== 文件存在性判断 ==========
@@ -531,7 +618,7 @@ public class DataSaver implements PluginAware {
         return defaultObj;
     }
 
-    // ========== JSON 字符串转换 ==========
+    // ========== 字符串转换（JSON / YAML） ==========
 
     /**
      * 将对象序列化为 JSON 字符串。
@@ -577,32 +664,54 @@ public class DataSaver implements PluginAware {
      * @param json   JSON 字符串
      */
     public void fromJsonInto(Object target, String json) {
-        // 利用 Gson 的 JsonReader 回填：先解析为 JsonObject，再用适配器逐字段 set
-        // 这里复用 Gson 的反序列化，然后通过元数据手动回填
+        fromTreeInto(target, SaveFormat.JSON.getCodec().read(json));
+    }
+
+    /**
+     * 将对象序列化为 YAML 字符串。
+     *
+     * @param obj 要序列化的对象
+     * @return YAML 字符串（块样式）
+     */
+    public String toYaml(Object obj) {
         try {
-            // 使用 Gson 反序列化为新对象，再通过元数据复制字段
-            Object parsed = gson.fromJson(json, target.getClass());
-            if (parsed == null) {
-                return;
-            }
-            cache.get(target.getClass()).ifPresent(metadata -> {
-                for (var fm : metadata.fields()) {
-                    try {
-                        Object value = fm.field().get(parsed);
-                        fm.field().set(target, value);
-                    } catch (IllegalAccessException ex) {
-                        throw new DataException("回填字段失败: " + fm.field().getName() +
-                                "（类: " + target.getClass().getName() + "）", ex);
-                    }
-                }
-            });
+            return SaveFormat.YAML.getCodec().write(gson.toJsonTree(obj));
         } catch (Exception e) {
             if (e instanceof DataException) {
                 throw e;
             }
-            throw new DataException("回填 JSON 到实例失败（类: " +
-                    target.getClass().getName() + "）", e);
+            throw new DataException("序列化对象为 YAML 失败（类: " +
+                    (obj != null ? obj.getClass().getName() : "null") + "）", e);
         }
+    }
+
+    /**
+     * 从 YAML 字符串反序列化为对象。
+     *
+     * @param yaml  YAML 字符串
+     * @param clazz 目标类
+     * @param <T>   目标类型
+     * @return 反序列化的对象
+     */
+    public <T> T fromYaml(String yaml, Class<T> clazz) {
+        try {
+            return fromTree(SaveFormat.YAML.getCodec().read(yaml), clazz);
+        } catch (Exception e) {
+            if (e instanceof DataException) {
+                throw e;
+            }
+            throw new DataException("反序列化 YAML 失败（目标类: " + clazz.getName() + "）", e);
+        }
+    }
+
+    /**
+     * 从 YAML 字符串反序列化并回填到已有实例。
+     *
+     * @param target 目标实例
+     * @param yaml   YAML 字符串
+     */
+    public void fromYamlInto(Object target, String yaml) {
+        fromTreeInto(target, SaveFormat.YAML.getCodec().read(yaml));
     }
 
     // ========== PluginAware ==========
@@ -625,17 +734,111 @@ public class DataSaver implements PluginAware {
     // ========== 内部工具方法 ==========
 
     /**
-     * 将相对文件名解析为当前根路径下的 File 对象（自动追加 .json）。
+     * 将相对文件名解析为当前根路径下的 File 对象（按格式自动追加扩展名）。
      * <p>
      * 始终基于当前保存器的根路径解析，save 与 load 行为一致。
+     * 若文件名已含已知扩展名（{@code .json} / {@code .yml} / {@code .yaml}）则不重复追加，
+     * 否则追加当前 {@link #format} 对应的扩展名。
      */
     private File resolveRelativeFile(String fileName) {
         if (rootDir == null) {
             throw new DataException("保存根路径（rootDir）尚未设置。" +
                     "请调用 setRootDir() 或通过 PluginAware 绑定插件。");
         }
-        String name = fileName.endsWith(JSON_EXTENSION) ? fileName : fileName + JSON_EXTENSION;
+        String name = hasKnownExtension(fileName) ? fileName : fileName + format.getExtension();
         return new File(rootDir, name);
+    }
+
+    /**
+     * 判断文件名是否已含已知扩展名（{@code .json} / {@code .yml} / {@code .yaml}）。
+     */
+    private static boolean hasKnownExtension(String fileName) {
+        String lower = fileName.toLowerCase();
+        for (String ext : KNOWN_EXTENSIONS) {
+            if (lower.endsWith(ext)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 格式感知序列化：将对象按当前 {@link #format} 序列化为文本。
+     * <p>
+     * 先用 Gson 注解管线将对象转为树模型（{@link JsonElement}，字段适配器
+     * 在边界处与通用数据互转，框架内部细节），再由当前格式的存取器
+     * （{@link SaveFormat#getCodec()}）直接输出文本。
+     */
+    private String serialize(Object obj) {
+        try {
+            return format.getCodec().write(gson.toJsonTree(obj));
+        } catch (Exception e) {
+            if (e instanceof DataException) {
+                throw e;
+            }
+            throw new DataException("序列化对象失败（格式: " + format + "，类: " +
+                    (obj != null ? obj.getClass().getName() : "null") + "）", e);
+        }
+    }
+
+    /**
+     * 格式感知解析：将文本按当前 {@link #format} 提取为树模型。
+     */
+    private JsonElement parseToTree(String content) {
+        try {
+            return format.getCodec().read(content);
+        } catch (Exception e) {
+            if (e instanceof DataException) {
+                throw e;
+            }
+            throw new DataException("解析内容失败（格式: " + format + "）", e);
+        }
+    }
+
+    /**
+     * 从树模型反序列化为目标类型的对象。
+     */
+    private <T> T fromTree(JsonElement tree, Class<T> clazz) {
+        try {
+            return gson.fromJson(tree, clazz);
+        } catch (Exception e) {
+            if (e instanceof DataException) {
+                throw e;
+            }
+            throw new DataException("反序列化失败（目标类: " + clazz.getName() + "）", e);
+        }
+    }
+
+    /**
+     * 从树模型反序列化并回填到已有实例（共用核心）。
+     * <p>
+     * {@link #fromJsonInto}、{@link #fromYamlInto}、{@link #loadInto(Object, File)}
+     * 均委托本方法完成回填。
+     */
+    private void fromTreeInto(Object target, JsonElement tree) {
+        try {
+            Object parsed = gson.fromJson(tree, target.getClass());
+            if (parsed == null) {
+                return;
+            }
+            cache.get(target.getClass()).ifPresent(metadata -> {
+                for (var fm : metadata.fields()) {
+                    try {
+                        Object fieldValue = fm.field().get(parsed);
+                        fm.field().set(target, fieldValue);
+                    } catch (IllegalAccessException ex) {
+                        throw new DataException("回填字段失败: " + fm.field().getName() +
+                                "（类: " + target.getClass().getName() + "）", ex);
+                    }
+                }
+            });
+        } catch (Exception e) {
+            if (e instanceof DataException) {
+                throw e;
+            }
+            throw new DataException("回填数据到实例失败（类: " +
+                    target.getClass().getName() + "）", e);
+        }
     }
 
     /**

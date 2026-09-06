@@ -1,162 +1,229 @@
 # JFrame 示例插件（jframe_example）
 
-这是一个完整的 **Nukkit（我的世界基岩版服务端）插件**样例，演示如何使用 JFrame 框架的 **事件 / 表单 / 线程 / 命令** 四大模块搭建一个可运行、可测试的插件。
-
-> 示例源码都在 `jframe_example` 内。为消除事件模块的 Spring 循环依赖，本次对 `jframe_event` 做了重构（拆分出内部 `EventEngine` + 公开 `EventService` 门面），详见根目录《建议的框架改进.txt》建议 6。
+> 一个完整可运行的 Nukkit 插件样例，演示如何**作为业务插件依赖前置 JFrame**，复用其 Spring 容器，调用事件 / 表单 / 线程 / 命令 / 箱子界面 / AI 六大模块的 API。
 
 ---
 
-## 一、目录结构
+## 📑 目录
+
+- [一、它演示什么](#一它演示什么)
+- [二、与传统写法的对比](#二与传统写法的对比)
+- [三、目录结构](#三目录结构)
+- [四、构建与部署](#四构建与部署)
+- [五、接入流程（核心）](#五接入流程核心)
+- [六、示例清单](#六示例清单)
+- [七、游戏内命令](#七游戏内命令)
+- [八、游戏内验证步骤](#八游戏内验证步骤)
+
+---
+
+## 一、它演示什么
+
+本插件展示了一个真实业务插件的**标准接入姿势**：
+
+1. 在 [`plugin.yml`](src/main/resources/plugin.yml) 声明 `depend: [JFrame]`，依赖前置插件。
+2. [`ExamplePlugin.onEnable()`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:72) 获取 [`JFrameMain`](../jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 单例，直接复用其已创建好的容器中的各模块 API。
+3. 用**自身类加载器**扫描 jar 内的 `@Wrapper`（事件）、`@CommandController`（命令），注册到框架共享容器。
+4. 通过命令打开表单 / 箱子界面、测试 AI 功能。
+
+> 本插件**不创建自己的 Spring 容器**，也不重复打包框架类（`pom.xml` 中 `jframe_main` 为 `provided` 作用域）。容器、生命周期、类加载器问题全部由前置插件 [`JFrameMain`](../jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 统一处理。
+
+---
+
+## 二、与传统写法的对比
+
+| 能力 | 传统 Nukkit 写法 | 本示例演示的 JFrame 写法 |
+|------|------|------|
+| **事件监听** | 实现 `Listener` + `@EventHandler`，每个事件一个方法，手动管理监听器注册/注销 | [`@Wrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/PlayerGameWrapper.java) 类 + `@EventRoute`，支持对象级路由、SpEL 条件、优先级独占 |
+| **命令处理** | 覆写 `onCommand`，手写 `if/else` 分发子命令、手动 `parseInt` 转换 | [`@CommandController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) + `@CommandMapping`，路径变量 / 命名参数 / 类型转换全自动 |
+| **表单界面** | 手写 `FormWindow`、手动管理打开/回调、导航要自己维护栈 | 继承 `FormView`，声明式构建 + 内置栈式导航（[`addStack`](src/main/java/io/github/JiangHu/jframe/example/view/NavigationDemoView.java) / `replaceThis`） |
+| **箱子界面** | 手动操作虚拟箱子坐标、处理点击事件、布局全靠算坐标 | 声明式组件（Button/StorageBox/Filler）+ 自动布局（[`InventoryTestView`](src/main/java/io/github/JiangHu/jframe/example/inventory/InventoryTestView.java)） |
+| **异步任务** | `scheduleAsyncTask` 或裸 `new Thread`，无队列概念 | [`ThreadAPI`](../jframe_async/src/main/java/io/github/JiangHu/jframe/async/thread/ThreadAPI.java) 命名队列，串行保证 |
+| **AI 行为** | 从零实现寻路 / 战术逻辑 | [`AiAPI`](src/main/java/io/github/JiangHu/jframe/example/command/AiController.java) 一行调用寻路、导航、战术 |
+
+---
+
+## 三、目录结构
 
 ```
 jframe_example/
-├── pom.xml                                   # Maven 构建（含 shade 打 fat jar）
+├── pom.xml                          # provided 依赖 jframe_main，shade 打 fat jar
 └── src/main/
-    ├── java/io/github/JiangHu/jframe/example/
-    │   ├── ExamplePlugin.java                # 插件主类：引导 Spring、绑定插件、注册包装类与命令
-    │   ├── command/
-    │   │   └── KitController.java              # 命令模块示例：声明式 /kit 子命令（路径变量/命名参数/权限）
-    │   ├── wrapper/
-    │   │   ├── PlayerStatWrapper.java        # 示例1：每个玩家独立的统计实例
-    │   │   └── ChatGuardWrapper.java         # 示例2：全局单例聊天审核
-    │   └── view/
-    │       ├── MainMenuView.java             # 主菜单表单
-    │       └── StatsView.java                # 子菜单表单（演示栈式导航）
+    ├── java/.../example/
+    │   ├── ExamplePlugin.java       # 主类：获取前置 JFrame、扫描注册、命令分发
+    │   ├── wrapper/                 # 事件模块示例（@Wrapper）
+    │   │   ├── PlayerGameWrapper.java     # 对象级：每玩家独立统计实例
+    │   │   ├── ChatGuardWrapper.java      # 全局单例：聊天审核（优先级+独占）
+    │   │   ├── ThunderSwordWrapper.java   # 事件触发：闪电钻石剑
+    │   │   └── Template.java              # 空模板：复制即用
+    │   ├── command/                 # 命令模块示例（@CommandController）
+    │   │   ├── KitController.java         # /kit：路径变量/命名参数/贪婪变量/权限
+    │   │   └── AiController.java          # /ai：AI 寻路与战术测试
+    │   ├── view/                    # 表单模块示例（FormView）
+    │   │   ├── FormDemoView.java          # 表单基础
+    │   │   ├── CustomFormDemoView.java    # 自定义表单
+    │   │   ├── ModalFormDemoView.java     # 模态表单
+    │   │   ├── IconDemoView.java          # 图标
+    │   │   ├── NavigationDemoView.java    # 栈式导航（含 SubView / ReplacedView）
+    │   │   ├── DataBusDemoView.java       # 数据总线
+    │   │   ├── OnDataDemoView.java        # 数据回调（含 DetailView）
+    │   │   ├── BuildStrategyDemoView.java # 构建策略
+    │   │   ├── ShopSubView.java           # 商店子视图
+    │   │   └── StatsView.java             # 统计视图
+    │   ├── inventory/               # 箱子界面示例（InventoryView）
+    │   │   ├── ShopInventoryView.java     # 商店：声明式组件
+    │   │   └── InventoryTestView.java     # 全特性测试：所有组件/布局/事件/外观
+    │   └── entity/
+    │       └── TestNpcEntity.java         # AI 测试用 NPC 实体
     └── resources/
-        └── plugin.yml                        # Nukkit 插件描述文件
+        └── plugin.yml               # depend:[JFrame] + 命令/权限声明
 ```
 
 ---
 
-## 二、构建与安装
+## 四、构建与部署
 
 ### 1. 前置条件
-- JDK 24（与框架 `pom.xml` 一致）
+
+- JDK 24（与框架一致）
 - 已在本地 Maven 仓库安装好框架各模块：在**项目根目录**执行
   ```bash
   mvn clean install -DskipTests
   ```
-  这会把 `jframe_core` / `jframe_event` / `jframe_form` / `jframe_thread` / `jframe_main` 安装到本地仓库。
 
 ### 2. 打包示例插件
+
 ```bash
 cd jframe_example
 mvn clean package
 ```
 产物：`jframe_example/target/jframe_example.jar`
 
-### 3. 关于 GUI 库（`libs/gui-1.15.1.jar`）
-表单模块依赖的 `moe.him188:GUI` 在框架中是 **system 作用域**，不会被 shade 打包。
-默认假设：**GUI 由服务端或单独的 GUI 插件提供**（运行时在 classpath 中）。
+### 3. 部署
 
-如果你希望把 GUI 一并打进 fat jar，请：
-1. 先把 jar 安装到本地仓库：
-   ```bash
-   mvn install:install-file -Dfile=libs/gui-1.15.1.jar -DgroupId=moe.him188.gui -DartifactId=GUI -Dversion=1.15.1 -Dpackaging=jar
-   ```
-2. 在本模块 `pom.xml` 的 GUI 依赖上加上 `<scope>compile</scope>`；
-3. 删除 shade 配置中的 `<exclude>moe.him188.gui:GUI</exclude>`。
-
-### 4. 部署
-把 `jframe_example.jar` 放入 Nukkit 服务端的 `plugins/` 目录，重启服务器即可。
+服务器 `plugins/` 目录需**先放** `jframe_main.jar`（前置插件），**再放** `jframe_example.jar`。启动服务器后，JFrame 先加载并创建容器，本插件随后复用。
 
 ---
 
-## 三、示例覆盖的能力点
+## 五、接入流程（核心）
 
-| 能力 | 演示文件 | 关键 API / 注解 |
-|------|----------|-----------------|
-| Spring 容器引导（event/form/thread 三模块 XML 装配） | [`ExamplePlugin`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java) | `ClassPathXmlApplicationContext` |
-| 绑定插件实例到 `PluginAware` Bean | [`ExamplePlugin`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java) | `PluginAware.bindPlugin()` |
-| 注册事件包装类 | [`ExamplePlugin`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java) | `EventService.register(Class)` |
-| 对象级路由（每玩家一实例） | [`PlayerStatWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/PlayerStatWrapper.java) | `@KeyExtractor`（4 种事件） |
-| 自定义实例工厂 + 外部可读注册表 | [`PlayerStatWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/PlayerStatWrapper.java) | `@InstanceProvider` |
-| SpEL 条件处理器（仅 OP 触发） | [`PlayerStatWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/PlayerStatWrapper.java) | `@EventRoute(condition=...)` |
-| 全局单例处理器 | [`ChatGuardWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/ChatGuardWrapper.java) | 恒定 `@KeyExtractor` + 固定 `@InstanceProvider` |
-| 优先级 + 独占（拦截后阻止低优先级） | [`ChatGuardWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/ChatGuardWrapper.java) | `@EventHandler(priority, exclusive)` |
-| filter 方法引用（编译期类型检查） | [`ChatGuardWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/ChatGuardWrapper.java) | `@EventRoute(filter=...)` |
-| 表单构建与按钮回调 | [`MainMenuView`](src/main/java/io/github/JiangHu/jframe/example/view/MainMenuView.java) | `FormView.buildForm()` / `onClicked()` |
-| 栈式导航（进入子菜单） | [`MainMenuView`](src/main/java/io/github/JiangHu/jframe/example/view/MainMenuView.java) | `FormView.addStack()` |
-| 同层替换（返回主菜单） | [`StatsView`](src/main/java/io/github/JiangHu/jframe/example/view/StatsView.java) | `FormView.replaceThis()` |
-| 异步任务队列 | [`MainMenuView`](src/main/java/io/github/JiangHu/jframe/example/view/MainMenuView.java) | `ThreadService.pushTask()` |
-| 声明式命令路由（替代 onCommand 的 if/else） | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | `@CommandController` / `@CommandMapping` |
-| 路径变量 + 自动类型转换 | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | `@PathVariable`（`give {item} {count}`） |
-| 命名参数 + 默认值 / 布尔标记 | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | `@CommandParam`（`heal --amount` / `fly --on`） |
-| 贪婪变量（捕获剩余参数） | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | `{*msg}`（`broadcast {*msg}`） |
-| 仅玩家可用 + 权限校验 | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | `@Sender Player` + `permission` |
-| 根命令动态注册到 Nukkit | [`ExamplePlugin`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java) | `CommandAPI.scan()`（无需 plugin.yml） |
+[`ExamplePlugin.onEnable()`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:72) 是接入的标准模板，分五步：
 
----
+```java
+@Override
+public void onEnable() {
+    // ① 获取前置插件 JFrame 单例
+    Plugin jframePlugin = getServer().getPluginManager().getPlugin("JFrame");
+    JFrameMain jframeMain = (JFrameMain) jframePlugin;
 
-## 四、游戏内测试步骤
+    // ② 复用 JFrame 容器中的各模块 API（无需自己创建容器）
+    eventAPI     = jframeMain.getEventAPI();
+    viewAPI      = jframeMain.getViewAPI();
+    threadAPI    = jframeMain.getThreadAPI();
+    commandAPI   = jframeMain.getCommandAPI();
+    inventoryAPI = jframeMain.getInventoryAPI();
+    aiAPI        = jframeMain.getAiAPI();
 
-服务器启动后，用玩家账号进服，按以下步骤逐项验证：
+    // ③ 扫描本插件 jar 内的 @Wrapper（必须传自身类加载器）
+    eventAPI.scan(getClass().getClassLoader(), "...example.wrapper");
 
-### ① 事件 - 玩家进服欢迎
-- **操作**：玩家进入服务器
-- **预期**：收到 `§a欢迎来到 JFrame 示例服务器！`
-- **OP 额外**：若该玩家是 OP，还会收到 `§6[管理员] 欢迎管理员上线！`（验证 SpEL 条件）
+    // ④ 扫描 @CommandController（根命令会自动注册到 Nukkit，无需 plugin.yml）
+    commandAPI.scan(getClass().getClassLoader(), "...example.command");
 
-### ② 事件 - 移动计数
-- **操作**：玩家四处移动
-- **预期**：每移动 100 次收到 `§7你已经累计移动 §eN §7次。`
+    // ⑤ 创建本插件专用的异步任务队列
+    threadAPI.createThreadTask("example");
+}
+```
 
-### ③ 表单 + 实时统计
-- **操作**：输入 `/jframe`
-- **预期**：弹出主菜单，显示当前的「移动次数」「聊天次数」（实时读取事件系统维护的数据）
-
-### ④ 表单 - 栈式导航
-- **操作**：在主菜单点击「📊 查看详细统计」
-- **预期**：进入统计子界面；点击「↩ 返回主菜单」回到主菜单（验证 `addStack` / `replaceThis`）
-
-### ⑤ 线程 - 异步任务
-- **操作**：在主菜单点击「⚡ 执行异步任务」
-- **预期**：立即收到 `§e已提交异步任务...`，约 1 秒后收到 `§b[异步任务] 耗时计算完成，结果 = N`
-
-### ⑥ 事件 - 聊天审核（优先级 + 独占）
-- **操作**：玩家发送包含违禁词（`fuck` / `shit` / `idiot`，不区分大小写）的消息
-- **预期**：消息被拦截，收到 `§c请文明发言！...`；且该条消息**不计入聊天次数**（验证 HIGH 独占阻止了 NORMAL 的统计处理器）
-- **对照**：发送正常消息时，聊天次数 +1（两个处理器都执行）
-
-### ⑦ 命令 - 声明式命令路由（`/kit`）
-
-命令模块用注解声明子命令，框架自动完成路由匹配、参数解析与类型转换，**无需手写 `onCommand` 的 `if/else`**。根命令 `/kit` 由 `CommandEngine` 在插件启用时动态注册到 Nukkit，**无需在 `plugin.yml` 声明**。
-
-| 操作 | 预期 | 验证能力 |
-|------|------|----------|
-| `/kit` | 显示帮助菜单 | 空路径匹配根命令本身 |
-| `/kit give 264 64` | 获得 64 个对应物品 | 路径变量 `{item}` + `{count}` 自动转 int |
-| `/kit give 264 abc` | 返回 `§c参数错误...` | 类型转换失败提示 |
-| `/kit sword` | 获得闪电钻石剑 | 与事件模块工具类结合 |
-| `/kit heal` | 生命值恢复至 20 | 命名参数默认值 |
-| `/kit heal --amount 10` | 生命值恢复至 10 | 命名参数 `--amount` |
-| `/kit fly --on` | 提示飞行已启用 | 布尔标记 |
-| `/kit broadcast 你好 世界` | 全服广播 `[广播] ...` | 贪婪变量 `{*msg}` 捕获剩余参数 |
-| `/kit whoami` | 显示名字/坐标/生命 | `@Sender Player`（仅玩家）+ 权限 |
-| 控制台执行 `/kit whoami` | 返回 `§c该命令只能由玩家在游戏内执行` | `@Sender Player` 类型约束 |
-| `/kit xyz`（未知子命令） | 返回 `§c未知的子命令...` | 路由未命中兜底 |
-
-> **特异性路由**：输入 `/kit give ...` 时，`give {item} {count}`（静态段多）会优先于 `/kit`（根命令帮助）命中，因此不会误触发帮助。
+> **关键点**：`scan` 必须传入 `getClass().getClassLoader()`（本插件的类加载器），否则扫描不到本插件 jar 内的类。框架容器由 JFrame 持有，但业务类由业务插件的类加载器加载。
 
 ---
 
-## 五、两个示例的设计对比
+## 六、示例清单
 
-| 维度 | PlayerStatWrapper（对象级） | ChatGuardWrapper（全局单例） |
-|------|----------------------------|------------------------------|
-| `@KeyExtractor` 返回 | `Player`（每玩家不同身份） | `Boolean.TRUE`（恒定身份） |
-| `@InstanceProvider` | 从 `ConcurrentHashMap` 查/建 | 始终返回同一个 `INSTANCE` |
-| 实例数量 | 每个在线玩家 1 个 | 全局 1 个 |
-| 优先级 | 默认 NORMAL | HIGH |
-| 是否独占 | 否（多处理器共存） | 是（拦截后阻止低优先级） |
-| 条件判断 | SpEL `condition` | Java `filter` 方法 |
-| 清理方式 | 退服时 `remove()` | 无需清理 |
+### 事件模块（`wrapper/`）
+
+| 文件 | 演示能力 |
+|------|----------|
+| [`PlayerGameWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/PlayerGameWrapper.java) | 对象级路由（每玩家一实例）、`@KeyExtractor`、自定义实例工厂、SpEL 条件处理器 |
+| [`ChatGuardWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/ChatGuardWrapper.java) | 全局单例、优先级 + 独占（拦截后阻止低优先级）、filter 方法引用 |
+| [`ThunderSwordWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/ThunderSwordWrapper.java) | 事件触发道具（右键方块召唤闪电） |
+| [`Template`](src/main/java/io/github/JiangHu/jframe/example/wrapper/Template.java) | 空模板，复制即用 |
+
+### 命令模块（`command/`）
+
+| 文件 | 演示能力 |
+|------|----------|
+| [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | 路径变量 `{item} {count}`、命名参数 `--amount`、布尔标记 `--on`、贪婪变量 `{*msg}`、`@Sender Player` 权限校验 |
+| [`AiController`](src/main/java/io/github/JiangHu/jframe/example/command/AiController.java) | AI 寻路、实体导航、战术行为（找掩体/包抄/高地）、战斗动作 |
+
+### 表单模块（`view/`）
+
+| 文件 | 演示能力 |
+|------|----------|
+| [`FormDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/FormDemoView.java) | 表单基础构建与按钮回调 |
+| [`CustomFormDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/CustomFormDemoView.java) | 自定义表单（输入框/下拉/滑块等） |
+| [`ModalFormDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/ModalFormDemoView.java) | 模态表单（是/否） |
+| [`IconDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/IconDemoView.java) | 按钮图标 |
+| [`NavigationDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/NavigationDemoView.java) | 栈式导航（含 `SubView` / `ReplacedView`，演示 `addStack` / `replaceThis`） |
+| [`DataBusDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/DataBusDemoView.java) | 数据总线（跨视图共享数据） |
+| [`OnDataDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/OnDataDemoView.java) | 数据回调（含 `DetailView`） |
+| [`BuildStrategyDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/BuildStrategyDemoView.java) | 构建策略 |
+| [`StatsView`](src/main/java/io/github/JiangHu/jframe/example/view/StatsView.java) | 统计展示 |
+
+### 箱子界面模块（`inventory/`）
+
+| 文件 | 演示能力 |
+|------|----------|
+| [`ShopInventoryView`](src/main/java/io/github/JiangHu/jframe/example/inventory/ShopInventoryView.java) | 声明式组件（Button/StorageBox）+ 自动布局 |
+| [`InventoryTestView`](src/main/java/io/github/JiangHu/jframe/example/inventory/InventoryTestView.java) | 全特性集中测试：所有组件 / 布局 / 事件 / 外观 / 图层 / 动态更新 |
+
+### 实体（`entity/`）
+
+| 文件 | 演示能力 |
+|------|----------|
+| [`TestNpcEntity`](src/main/java/io/github/JiangHu/jframe/example/entity/TestNpcEntity.java) | AI 测试用 NPC（无怪物默认 AI，供寻路/战术测试） |
 
 ---
 
-## 六、备注
+## 七、游戏内命令
 
-- **独立使用 Spring（不继承 JFrameMain）**：框架自带的 `JFrameMain` 主类构造器为 `private`，无法被插件继承。因此本示例的 `ExamplePlugin` 直接继承 `PluginBase`，用 `ClassPathXmlApplicationContext` 一次性加载 `event-spring.xml` / `form-spring.xml` / `thread-spring.xml` 三个模块的 Bean 定义。这是一种「脱离 `JFrameMain`、独立装配」的用法。
-- **事件模块已无循环依赖**：早期版本 `EventService ↔ HandlerRegistry` 存在构造器循环依赖，Spring 无法加载。现已拆分为 `EventEngine`（内部 Nukkit 桥接，无依赖）→ `HandlerRegistry`（依赖 Engine）→ `EventService`（公开门面，依赖两者）的单向 DAG，三者均可构造器注入。详见根目录《建议的框架改进.txt》建议 6。
-- **Nukkit 类加载器注意**：Spring 默认用「线程上下文类加载器」查找 `classpath:` 资源，而 Nukkit 主线程的上下文类加载器是服务器类加载器，看不到插件 jar 内的 `*-spring.xml`。`ExamplePlugin.onEnable` 在创建 Spring 上下文前后临时切换/还原了线程上下文类加载器（`getClass().getClassLoader()`）来规避此问题。详见根目录《建议的框架改进.txt》建议 4。
-- 跨线程任务中只发送了简单文本消息。若需在异步线程里操作主线程 API（如修改方块、传送），应额外调度回主线程。
+| 命令 | 来源 | 说明 |
+|------|------|------|
+| `/jframe` | [`plugin.yml`](src/main/resources/plugin.yml) | 打开示例菜单 |
+| `/sword` | [`plugin.yml`](src/main/resources/plugin.yml) + [`onCommand`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:115) | 获得闪电钻石剑 |
+| `/shop` | [`plugin.yml`](src/main/resources/plugin.yml) + [`onCommand`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:128) | 打开声明式商店箱子 |
+| `/inv <jframe>` | [`plugin.yml`](src/main/resources/plugin.yml) + [`onCommand`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:151) | 用 jframe_inventory 打开箱子 |
+| `/invtest` | [`plugin.yml`](src/main/resources/plugin.yml) + [`onCommand`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:141) | 打开箱子全特性测试界面 |
+| `/kit ...` | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) 动态注册 | 命令模块示例（无需 plugin.yml 声明） |
+| `/ai ...` | [`AiController`](src/main/java/io/github/JiangHu/jframe/example/command/AiController.java) 动态注册 | AI 模块示例（无需 plugin.yml 声明） |
+
+> `/kit`、`/ai` 由 [`CommandAPI.scan()`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:103) 扫描 `@CommandController` 后自动注册到 Nukkit，**无需在 plugin.yml 声明**；其余命令走传统 `plugin.yml` + `onCommand`。
+
+---
+
+## 八、游戏内验证步骤
+
+服务器启动后，用玩家账号进服，按以下步骤验证：
+
+### 事件
+- **进服欢迎**：玩家进入收到欢迎消息；OP 额外收到管理员上线提示（验证 SpEL 条件）。
+- **移动计数**：移动累计达到阈值收到计数提示（验证对象级路由）。
+- **聊天审核**：发送违禁词被拦截且不计入聊天次数（验证优先级 + 独占）；正常消息计数 +1。
+
+### 命令（`/kit`）
+| 操作 | 预期 |
+|------|------|
+| `/kit give 264 64` | 获得 64 个物品（路径变量 + 类型转换） |
+| `/kit give 264 abc` | 返回参数错误（转换失败） |
+| `/kit heal --amount 10` | 生命恢复至 10（命名参数） |
+| `/kit fly --on` | 启用飞行（布尔标记） |
+| `/kit broadcast 你好 世界` | 全服广播（贪婪变量） |
+| `/kit whoami`（控制台） | 提示仅玩家可用（`@Sender Player`） |
+
+### 表单 / 箱子 / AI
+- `/jframe` 打开菜单，点击进入子界面验证栈式导航。
+- `/shop`、`/invtest` 验证声明式箱子组件与布局。
+- `/ai spawn` 生成 NPC，`/ai <寻路/战术>` 验证 AI 行为。
+
+> 维护者文档请看 [DEVELOPER.md](DEVELOPER.md)。

@@ -28,14 +28,19 @@ import lombok.experimental.Accessors;
  * {@link #load} 的默认实现委托基类 {@link #setLoader(Function) loader} 槽位——
  * 通过 {@code setLoader(fn)} 注入即可启用自动加载，无需子类化。
  *
+ * <h3>键源与内部键（S = K）</h3>
+ * 本类取 {@code S=K}：键即源，对外读写入口直接用键 {@code K}（{@link #get} / {@link #put} /
+ * {@link #remove} / {@link #containsKey} / {@link #getOrCreate} 均以 {@code K} 为参数）。
+ * 构造时已默认注入 {@code keyExtractor = Function.identity()}，一般无需手动设置。
+ *
  * <h3>继承自基类的能力</h3>
- * 本类同时拥有 {@link AbstractFunctionalMap} 的 4 个功能槽位：
+ * 本类同时拥有 {@link AbstractFunctionalMap} 的功能槽位：
  * <ul>
- *   <li>{@link #setKeyExtractor} —— 启用 {@link #putValue(Object)}；</li>
  *   <li>{@link #setExpiryChecker} —— 启用过期惰性淘汰与 {@link #evictExpired()}；</li>
- *   <li>{@link #setOnEvict} —— 淘汰回调（容量超限 / 过期均会触发，替代旧版重写 {@code onEvict}）；</li>
+ *   <li>{@link #setOnEvict} —— 淘汰回调（容量超限 / 过期均会触发）；</li>
  *   <li>{@link #setLoader} —— 缓存缺失加载器，驱动 {@link #load}（进而驱动 {@link #getOrCreate}）。</li>
  * </ul>
+ * （{@code keyExtractor} 已默认为 identity，一般无需再设。）
  *
  * <pre>{@code
  * public class ResourceCache extends LruCacheMap<String, Resource> {
@@ -54,7 +59,7 @@ import lombok.experimental.Accessors;
  * @param <V> 值类型
  */
 @Accessors(chain = true)
-public class LruCacheMap<K, V> extends AbstractFunctionalMap<K, V> {
+public class LruCacheMap<K, V> extends AbstractFunctionalMap<K, K, V> {
 
     /** 最大容量（可运行时通过 {@link #setMaxSize(int)} 动态调整）。 */
     @Getter
@@ -69,6 +74,7 @@ public class LruCacheMap<K, V> extends AbstractFunctionalMap<K, V> {
     public LruCacheMap(int maxSize) {
         // accessOrder=true：按访问顺序排序，get/put 都会把条目移到末尾
         super(new LinkedHashMap<>(16, 0.75f, true));
+        setKeyExtractor(Function.identity());   // S=K：键即源
         if (maxSize <= 0) {
             throw new IllegalArgumentException("maxSize must be positive: " + maxSize);
         }
@@ -131,7 +137,12 @@ public class LruCacheMap<K, V> extends AbstractFunctionalMap<K, V> {
      */
     @Override
     public synchronized V get(K key) {
-        return data.get(key);
+        V value = data.get(key);
+        if (value != null && isExpired(key, value)) {
+            evictEntry(key, value);
+            value = null;
+        }
+        return value;
     }
 
     /**
@@ -156,17 +167,6 @@ public class LruCacheMap<K, V> extends AbstractFunctionalMap<K, V> {
     }
 
     /**
-     * 用 keyExtractor 从值提取键后存入（覆盖已有值）。可能触发容量淘汰。
-     * 需先 {@link #setKeyExtractor}。
-     */
-    @Override
-    public synchronized V putValue(V value) {
-        V old = super.putValue(value);
-        trimToSize();
-        return old;
-    }
-
-    /**
      * 仅当键不存在时放入，返回已存在的值或 {@code null}。可能触发容量淘汰。
      */
     public synchronized V putIfAbsent(K key, V value) {
@@ -186,7 +186,15 @@ public class LruCacheMap<K, V> extends AbstractFunctionalMap<K, V> {
     /** 是否包含指定键。 */
     @Override
     public synchronized boolean containsKey(K key) {
-        return data.containsKey(key);
+        V value = data.get(key);
+        if (value == null) {
+            return false;
+        }
+        if (isExpired(key, value)) {
+            evictEntry(key, value);
+            return false;
+        }
+        return true;
     }
 
     /** 当前条目数。 */

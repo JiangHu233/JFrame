@@ -16,28 +16,44 @@ import lombok.experimental.Accessors;
 /**
  * 功能可插拔的 Map 抽象基类，是 {@link LruCacheMap} 与 {@link PlayerDataMap} 的共同父类。
  *
+ * <h3>键源 S 与内部键 K（K 对使用者不透明）</h3>
+ * 本类以「键源」{@code S} 作为对外读写入口的参数类型，内部通过
+ * {@link #setKeyExtractor(Function) keyExtractor}（{@code Function<S,K>}）将源对象转换为真正的存储键 {@code K}。
+ * 因此 {@code K} 对使用者<b>不透明</b>——所有读写操作均以 {@code S} 为参数，使用者无需（也不应）直接操作 {@code K}：
+ * <ul>
+ *   <li>{@link #get(Object) get(s)} / {@link #put(Object, Object) put(s, v)} /
+ *       {@link #remove(Object) remove(s)} / {@link #containsKey(Object) containsKey(s)} /
+ *       {@link #getOrCreate(Object) getOrCreate(s)}。</li>
+ * </ul>
+ * 两个子类的 {@code S} 取值：
+ * <ul>
+ *   <li>{@link LruCacheMap}：{@code S=K}，键即源（通用缓存，直接用键读写）；</li>
+ *   <li>{@link PlayerDataMap}：{@code S=Player}，键来自玩家（{@code K} 可为玩家名 / UUID 等）。</li>
+ * </ul>
+ *
  * <p><b>后端存储</b>：默认 {@link ConcurrentHashMap}；子类可通过
  * {@link #AbstractFunctionalMap(Map)} 传入自定义 Map 实现（例如 {@link LruCacheMap}
  * 传入 access-order 的 {@link java.util.LinkedHashMap}）。子类通过 {@link #data} 字段访问后端。
  *
  * <p><b>4 个功能槽位</b>（注入函数即启用，{@code null} 即关闭）：
  * <ul>
- *   <li>{@link #setKeyExtractor(Function) keyExtractor} {@code Function<V,K>} ——
- *       从值提取键，支持 {@link #putValue(Object) putValue(v)} 免手写 key。</li>
- *   <li>{@link #setLoader(Function) loader} {@code Function<K,V>} ——
- *       缓存缺失自动加载，支持 {@link #getOrCreate(Object) getOrCreate(k)}。</li>
+ *   <li>{@link #setKeyExtractor(Function) keyExtractor} {@code Function<S,K>} ——
+ *       从键源对象提取内部键 {@code K}，是所有读写操作的前提（未设置时读写会抛异常）。</li>
+ *   <li>{@link #setLoader(Function) loader} {@code Function<S,V>} ——
+ *       缓存缺失时从键源自动加载，支持 {@link #getOrCreate(Object) getOrCreate(s)}。</li>
  *   <li>{@link #setExpiryChecker(BiPredicate) expiryChecker} {@code BiPredicate<K,V>} ——
- *       过期判断，读取时惰性淘汰，也可 {@link #evictExpired()} 主动扫描。</li>
+ *       过期判断（基于内部键与值），读取时惰性淘汰，也可 {@link #evictExpired()} 主动扫描。</li>
  *   <li>{@link #setOnEvict(BiConsumer) onEvict} {@code BiConsumer<K,V>} ——
  *       淘汰回调：任何条目被淘汰时触发（释放资源 / 回写磁盘等）。</li>
  * </ul>
  *
- * @param <K> 键类型
+ * @param <S> 键源类型：对外读写入口的参数类型（「和键有关的对象」）
+ * @param <K> 内部存储键类型（对使用者不透明，由 keyExtractor 从 S 转换而来）
  * @param <V> 值类型
  */
 @Getter
 @Accessors(chain = true)
-public abstract class AbstractFunctionalMap<K, V> {
+public abstract class AbstractFunctionalMap<S, K, V> {
 
     /**
      * 后端存储。默认 {@link ConcurrentHashMap}；子类可在构造时通过
@@ -46,11 +62,11 @@ public abstract class AbstractFunctionalMap<K, V> {
     @Getter(AccessLevel.NONE)
     protected final Map<K, V> data;
 
-    /** 从值提取键，启用 {@link #putValue(Object)}。 */
-    @Setter private Function<V, K> keyExtractor;
-    /** 缓存缺失加载器，启用 {@link #getOrCreate(Object)}。 */
-    @Setter private Function<K, V> loader;
-    /** 过期判断，启用读取时惰性淘汰与 {@link #evictExpired()}。 */
+    /** 从键源对象提取内部键（所有读写操作的前提）。 */
+    @Setter private Function<S, K> keyExtractor;
+    /** 缓存缺失加载器（从键源加载），启用 {@link #getOrCreate(Object)}。 */
+    @Setter private Function<S, V> loader;
+    /** 过期判断（基于内部键与值），启用读取时惰性淘汰与 {@link #evictExpired()}。 */
     @Setter private BiPredicate<K, V> expiryChecker;
     /** 淘汰回调：任何条目被淘汰时触发。 */
     @Setter private BiConsumer<K, V> onEvict;
@@ -77,7 +93,7 @@ public abstract class AbstractFunctionalMap<K, V> {
      * <p>子类在执行实际移除（容量淘汰 / 过期淘汰 / 玩家退出清理等）后调用本方法。
      * 本方法<b>不</b>执行移除，仅触发回调。
      *
-     * @param key   被淘汰条目的键
+     * @param key   被淘汰条目的内部键
      * @param value 被淘汰条目的值
      */
     protected void onEvicted(K key, V value) {
@@ -89,26 +105,21 @@ public abstract class AbstractFunctionalMap<K, V> {
     // ==================== 键提取 ====================
 
     /**
-     * 从值提取键（委托注入的 {@code keyExtractor}）。
+     * 从键源对象提取内部键（委托注入的 {@code keyExtractor}）。
      *
+     * <p>「键源」{@code S} 是对外读写入口的参数类型，与真正的存储键 {@code K} 解耦：
+     * {@link LruCacheMap} 中 {@code S=K}（键即源），{@link PlayerDataMap} 中 {@code S=Player}。
+     *
+     * @param source 键源对象
+     * @return 提取出的内部键
      * @throws IllegalStateException 未设置 keyExtractor 时
      */
-    protected K extractKey(V value) {
+    protected K extractKey(S source) {
         if (keyExtractor == null) {
             throw new IllegalStateException(
-                    "keyExtractor 未设置，无法从值提取键；请先 setKeyExtractor 或改用 put(key, value)");
+                    "keyExtractor 未设置，无法从键源提取内部键；请先 setKeyExtractor");
         }
-        return keyExtractor.apply(value);
-    }
-
-    /**
-     * 用 keyExtractor 从值提取键后存入，免手写 key。
-     * 需先 {@link #setKeyExtractor(Function)}。
-     *
-     * @return 该键原来的旧值（无则为 {@code null}）
-     */
-    public V putValue(V value) {
-        return data.put(extractKey(value), value);
+        return keyExtractor.apply(source);
     }
 
     // ==================== 加载 ====================
@@ -118,9 +129,11 @@ public abstract class AbstractFunctionalMap<K, V> {
      *
      * <p>命中但已过期则先淘汰再走未命中流程；loader 返回 {@code null} 不缓存。
      *
+     * @param source 键源
      * @return 命中/加载到的值，加载失败为 {@code null}
      */
-    public V getOrCreate(K key) {
+    public V getOrCreate(S source) {
+        K key = extractKey(source);
         V value = data.get(key);
         if (value != null && isExpired(key, value)) {
             evictEntry(key, value);
@@ -132,7 +145,7 @@ public abstract class AbstractFunctionalMap<K, V> {
         if (loader == null) {
             return null;
         }
-        V loaded = loader.apply(key);
+        V loaded = loader.apply(source);
         if (loaded == null) {
             return null;
         }
@@ -176,13 +189,17 @@ public abstract class AbstractFunctionalMap<K, V> {
         return n;
     }
 
-    // ==================== 基础操作 ====================
+    // ==================== 基础操作（均以键源 S 为参数，K 不透明） ====================
 
     /**
      * 取值，命中但已过期则淘汰并返回 {@code null}。
      * 不会自动加载，需要加载请用 {@link #getOrCreate(Object)}。
+     *
+     * @param source 键源
+     * @return 值，或 {@code null}
      */
-    public V get(K key) {
+    public V get(S source) {
+        K key = extractKey(source);
         V value = data.get(key);
         if (value != null && isExpired(key, value)) {
             evictEntry(key, value);
@@ -191,16 +208,35 @@ public abstract class AbstractFunctionalMap<K, V> {
         return value;
     }
 
-    public V put(K key, V value) {
-        return data.put(key, value);
+    /**
+     * 放入键值对（覆盖已有值），返回旧值。
+     *
+     * @param source 键源
+     * @param value  值
+     * @return 该键源原来的旧值（无则为 {@code null}）
+     */
+    public V put(S source, V value) {
+        return data.put(extractKey(source), value);
     }
 
-    public V remove(K key) {
-        return data.remove(key);
+    /**
+     * 移除键源对应的条目，返回旧值。
+     *
+     * @param source 键源
+     * @return 被移除的值，或 {@code null}
+     */
+    public V remove(S source) {
+        return data.remove(extractKey(source));
     }
 
-    /** 是否包含且未过期（过期项会被惰性淘汰）。 */
-    public boolean containsKey(K key) {
+    /**
+     * 是否包含且未过期（过期项会被惰性淘汰）。
+     *
+     * @param source 键源
+     * @return {@code true} 表示存在且未过期
+     */
+    public boolean containsKey(S source) {
+        K key = extractKey(source);
         V value = data.get(key);
         if (value == null) {
             return false;

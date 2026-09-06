@@ -25,12 +25,18 @@ import cn.nukkit.math.Vector3;
  * <ol>
  *   <li>{@link InventoryView#open} 延迟 {@code OPEN_DELAY_TICKS} tick 后调用
  *       {@code player.addWindow}。</li>
- *   <li>{@link #onOpen} 内<b>同步</b>完成：
+ *   <li>{@link #onOpen} 内：
  *     {@link FakeBlockHelper#create} 发送客户端假方块（{@code UpdateBlockPacket} +
- *     {@code BlockEntityDataPacket}，runtimeId 基于玩家 GameVersion），
- *     然后 {@code super.onOpen}（{@link ContainerInventory#onOpen}）发送
- *     {@code ContainerOpenPacket} + {@code sendContents}。</li>
+ *     {@code BlockEntityDataPacket}，runtimeId 基于玩家 GameVersion；双联箱额外发送
+ *     配对 NBT {@code pairx}/{@code pairz}），然后 {@code super.onOpen}
+ *     （{@link ContainerInventory#onOpen}）发送 {@code ContainerOpenPacket} +
+ *     {@code sendContents}。</li>
  * </ol>
+ * <b>双联箱特殊处理</b>：双联箱需先发包配对两个箱子，客户端处理配对 NBT 需要时间，
+ * 因此 {@link #onOpen} 对双联箱延迟 {@link #DOUBLE_OPEN_DELAY_TICKS} tick 再发送
+ * {@code ContainerOpenPacket}（与 FakeInventories 库的 {@code DoubleChestFakeInventory}
+ * 一致）。单箱则立即发送。
+ * <p>
  * 该方案与经过验证的 FakeInventories 库完全一致，确保网易版客户端兼容。
  *
  * <h3>关闭流程</h3>
@@ -68,6 +74,16 @@ public class VirtualInventory extends ContainerInventory {
     private final FakeBlockMenu fakeBlockHolder;
 
     /**
+     * 双联箱打开延迟（tick）：发送配对 NBT（{@code pairx}/{@code pairz}）后等待多少 tick，
+     * 再发送 {@code ContainerOpenPacket}。
+     * <p>
+     * 双联箱需要客户端先处理两个箱子的配对，再接收打开包。若配对 NBT 与打开包在同一 tick
+     * 发送，客户端尚未完成配对会拒绝打开或显示异常。与 FakeInventories 库的
+     * {@code DoubleChestFakeInventory} 一致，默认 3 tick。
+     */
+    static final int DOUBLE_OPEN_DELAY_TICKS = 3;
+
+    /**
      * 创建虚拟库存。
      *
      * @param view  所属视图
@@ -99,24 +115,51 @@ public class VirtualInventory extends ContainerInventory {
     }
 
     /**
-     * 打开库存——同步发送客户端假方块 + {@code ContainerOpenPacket}。
+     * 打开库存——发送客户端假方块 + {@code ContainerOpenPacket}。
      * <p>
-     * 由 {@code player.addWindow(this)} → {@code inventory.open(player)} 调用。
-     * 在 {@code super.onOpen} 之前，先通过 {@link FakeBlockHelper#create} 发送客户端假方块
-     * （{@code UpdateBlockPacket} + {@code BlockEntityDataPacket}），使网易版客户端
-     * 通过方块校验（runtimeId 基于玩家 GameVersion），然后 {@code super.onOpen} 同步发送
-     * {@code ContainerOpenPacket} + {@code sendContents}。
+     * 由 {@code player.addWindow(this)} → {@code inventory.open(player)} 调用。流程：
+     * <ol>
+     *   <li>通过 {@link FakeBlockHelper#create} 发送客户端假方块
+     *       （{@code UpdateBlockPacket} + {@code BlockEntityDataPacket}），使网易版客户端
+     *       通过方块校验（runtimeId 基于玩家 GameVersion）。双联箱额外发送配对 NBT
+     *       （{@code pairx}/{@code pairz}，双向）。</li>
+     *   <li>更新 holder 坐标（{@code ContainerOpenPacket} 使用此坐标）。</li>
+     *   <li>发送 {@code ContainerOpenPacket} + {@code sendContents}：
+     *     <ul>
+     *       <li><b>单箱</b>：立即调用 {@code super.onOpen} 同步发送。</li>
+     *       <li><b>双联箱</b>：延迟 {@link #DOUBLE_OPEN_DELAY_TICKS} tick 后发送。
+     *           客户端需要时间处理两个箱子的配对 NBT，若与打开包同 tick 发送会拒绝打开。
+     *           与 FakeInventories 库的 {@code DoubleChestFakeInventory} 一致。</li>
+     *     </ul>
+     *   </li>
+     * </ol>
+     * <p>
+     * 注意：{@code player.addWindow} 在调用本方法前已完成 windowId 注册，因此即使双联箱
+     * 延迟发送打开包，服务器侧窗口映射已就绪，客户端交易可正常路由。
      */
     @Override
     public void onOpen(Player player) {
-        // 1. 在世界中放置真实容器方块，获取坐标
+        // 1. 发送客户端假方块（双联箱含配对 NBT：pairx/pairz，双向）
         Vector3 position = this.fakeBlock.create(player, this.getTitle());
-        // 2. 更新 holder 坐标
+        // 2. 更新 holder 坐标（ContainerOpenPacket 使用此坐标）
         this.fakeBlockHolder.x = position.x;
         this.fakeBlockHolder.y = position.y;
         this.fakeBlockHolder.z = position.z;
-        // 3. ContainerInventory.onOpen：同步发送 ContainerOpenPacket（使用 holder 坐标）+ sendContents
-        super.onOpen(player);
+        // 3. 发送 ContainerOpenPacket + sendContents
+        if (this.fakeBlock.isDoubled()) {
+            // 双联箱：客户端需要时间处理配对 NBT，必须延迟发送打开包，
+            // 否则客户端尚未完成两个箱子的配对会拒绝打开（与 FakeInventories 库一致）
+            cn.nukkit.Server.getInstance().getScheduler()
+                    .scheduleDelayedTask(view.plugin(), () -> {
+                        // 延迟期间玩家可能下线或关闭窗口，需校验窗口仍有效
+                        if (player.isOnline() && player.getWindowId(this) != -1) {
+                            super.onOpen(player);
+                        }
+                    }, DOUBLE_OPEN_DELAY_TICKS);
+        } else {
+            // 单箱：无需配对，立即发送打开包
+            super.onOpen(player);
+        }
     }
 
     /**

@@ -47,6 +47,9 @@ public class InventoryManager implements Listener {
     /** 每玩家当前打开的视图 */
     private final Map<Player, InventoryView> views = new ConcurrentHashMap<>();
 
+    /** 每玩家最后一次 openView 的时间戳（毫秒），用于重复打开防抖 */
+    private final Map<Player, Long> lastOpenTime = new ConcurrentHashMap<>();
+
     /** 插件实例（由 InventoryAPI 注入，用于向 Nukkit 注册事件监听器） */
     private Plugin plugin;
 
@@ -60,25 +63,119 @@ public class InventoryManager implements Listener {
     }
 
     /**
-     * 打开视图。
+     * 打开视图（鲁棒模式，带重复打开防抖，使用默认打开延迟）。
      * <p>
-     * 如果玩家已有打开的视图，会先关闭旧视图。
+     * 等价于 {@code openView(player, view, InventoryView.OPEN_DELAY_TICKS)}。
      *
      * @param player 玩家
      * @param view   视图
+     * @see #openView(Player, InventoryView, int)
      */
     public void openView(Player player, InventoryView view) {
-        // 如果已有打开的视图，先关闭
-        InventoryView current = views.remove(player);
-        if (current != null) {
+        openView(player, view, InventoryView.OPEN_DELAY_TICKS);
+    }
+
+    /**
+     * 打开视图（鲁棒模式，带重复打开防抖，自定义打开延迟）。
+     * <p>
+     * 采用<b>时间窗口防抖</b>策略，兼顾两种场景：
+     * <ul>
+     *   <li><b>网易版重复右键</b>：玩家在防抖窗口内（默认约 1 秒）重复调用 openView，
+     *       框架<b>忽略</b>后续请求，避免"先关旧视图再开新视图"导致界面秒关。</li>
+     *   <li><b>丢包恢复</b>：如果上一次打开的 {@code ContainerOpenPacket} 因丢包未送达客户端，
+     *       玩家本地看不到界面。玩家在防抖窗口<b>之外</b>再次右键时，框架会关闭旧视图
+     *       并重新打开，避免界面卡死。</li>
+     * </ul>
+     * <p>
+     * 防抖窗口大小 = 当前活跃视图<b>实际打开延迟</b>（{@link InventoryView#openDelayTicks()}）× 50ms
+     * + 500ms 缓冲，覆盖视图从"开始打开"到"完全弹出"的整个过程。使用自定义延迟打开的视图，
+     * 其防抖窗口也按自定义延迟计算，避免长延迟视图在弹出前被误判超时而关闭重开。
+     * <p>
+     * <b>界面切换场景</b>（如点击按钮从界面 A 切到界面 B）请使用 {@link #forceOpenView}，
+     * 它不检查防抖，直接关闭当前视图后打开新视图。
+     *
+     * @param player     玩家
+     * @param view       视图
+     * @param delayTicks 打开延迟（tick），负值视为 0（立即打开）；
+     *                   网易版客户端兼容建议不低于 5 tick
+     */
+    public void openView(Player player, InventoryView view, int delayTicks) {
+        long now = System.currentTimeMillis();
+        InventoryView current = views.get(player);
+
+        // 重复打开防抖：玩家有活跃视图 + 防抖窗口内 → 忽略（吸收网易版重复右键）
+        if (current != null && !current.isClosed()) {
+            Long last = lastOpenTime.get(player);
+            if (last != null && now - last < openDebounceMs(current)) {
+                return;
+            }
+            // 超过防抖窗口：可能是丢包导致界面未弹出，关闭旧视图后重开
+        }
+
+        // 关闭旧视图（如果有活跃的）
+        views.remove(player);
+        if (current != null && !current.isClosed()) {
             current.close();
         }
 
-        // 注入插件实例（保留兼容，子类可能需要）
+        // 记录打开时间，打开新视图（自定义延迟）
+        lastOpenTime.put(player, now);
         view.bindPlugin(plugin);
+        view.open(player, delayTicks);
+        views.put(player, view);
+    }
 
-        // 打开新视图
-        view.open(player);
+    /**
+     * 计算重复打开的防抖窗口（毫秒）。
+     * <p>
+     * = 指定视图<b>实际打开延迟</b>（{@link InventoryView#openDelayTicks()}）× 50ms + 500ms 缓冲。
+     * 动态读取视图记录的延迟，兼容自定义延迟与运行时调整。
+     *
+     * @param view 当前活跃视图（null 时回退到 {@link InventoryView#OPEN_DELAY_TICKS}）
+     * @return 防抖窗口毫秒数
+     */
+    private long openDebounceMs(InventoryView view) {
+        int delayTicks = view != null ? view.openDelayTicks() : InventoryView.OPEN_DELAY_TICKS;
+        return delayTicks * 50L + 500L;
+    }
+
+    /**
+     * 强制打开视图（关闭当前视图后打开新视图，使用默认打开延迟）。
+     * <p>
+     * 等价于 {@code forceOpenView(player, view, InventoryView.OPEN_DELAY_TICKS)}。
+     *
+     * @param player 玩家
+     * @param view   视图
+     * @see #forceOpenView(Player, InventoryView, int)
+     */
+    public void forceOpenView(Player player, InventoryView view) {
+        forceOpenView(player, view, InventoryView.OPEN_DELAY_TICKS);
+    }
+
+    /**
+     * 强制打开视图（关闭当前视图后打开新视图，自定义打开延迟）。
+     * <p>
+     * 用于<b>界面切换</b>场景：无论玩家当前是否有活跃视图，都会先关闭旧的再打开新的。
+     * 不检查防抖窗口，适合界面内按钮跳转。
+     * <p>
+     * 普通打开请使用 {@link #openView}，它带防抖保护，能吸收网易版重复右键。
+     *
+     * @param player     玩家
+     * @param view       视图
+     * @param delayTicks 打开延迟（tick），负值视为 0（立即打开）；
+     *                   网易版客户端兼容建议不低于 5 tick
+     */
+    public void forceOpenView(Player player, InventoryView view, int delayTicks) {
+        // 强制关闭当前视图
+        InventoryView current = views.remove(player);
+        if (current != null && !current.isClosed()) {
+            current.close();
+        }
+
+        // 打开新视图（自定义延迟）
+        lastOpenTime.put(player, System.currentTimeMillis());
+        view.bindPlugin(plugin);
+        view.open(player, delayTicks);
         views.put(player, view);
     }
 
@@ -88,6 +185,7 @@ public class InventoryManager implements Listener {
      * @param player 玩家
      */
     public void closeView(Player player) {
+        lastOpenTime.remove(player);
         InventoryView view = views.remove(player);
         if (view != null) {
             view.close();
@@ -112,6 +210,7 @@ public class InventoryManager implements Listener {
             entry.getValue().close();
         }
         views.clear();
+        lastOpenTime.clear();
     }
 
     // -------------------- Nukkit 事件处理 --------------------
@@ -213,5 +312,6 @@ public class InventoryManager implements Listener {
         // 清理视图（不调用 removeWindow，因为窗口已经被玩家关闭）
         view.cleanup();
         views.remove(event.getPlayer());
+        lastOpenTime.remove(event.getPlayer());
     }
 }

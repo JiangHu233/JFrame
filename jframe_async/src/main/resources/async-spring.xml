@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+       http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!-- 命名线程池：异步任务队列 -->
+    <bean class="io.github.JiangHu.jframe.async.thread.ThreadAPI" id="threadAPI"/>
+
+    <!-- 可挂起 Nukkit 主线程任务管理器 -->
+    <bean class="io.github.JiangHu.jframe.async.task.TaskAPI" id="taskAPI"/>
+
+    <!-- 线程切换流程服务：回调链 + 虚拟线程 -->
+    <bean class="io.github.JiangHu.jframe.async.flow.ThreadFlow" id="threadFlow">
+        <constructor-arg ref="threadAPI"/>
+    </bean>
+
+    <!-- 主线程多通道缓释调度器：异步任务按策略分批释放到主线程 -->
+    <bean class="io.github.JiangHu.jframe.async.release.ReleaseAPI" id="releaseAPI"/>
+
+</beans>

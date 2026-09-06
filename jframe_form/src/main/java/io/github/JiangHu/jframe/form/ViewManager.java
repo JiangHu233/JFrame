@@ -204,9 +204,21 @@ public class ViewManager {
         java.util.Collections.reverse(tmp); // 栈底在前
         tmp.add(index, view);
         views.clear();
-        for (int i = tmp.size() - 1; i >= 0; i--) {
+        for (int i = 0; i < tmp.size(); i++) {
             views.push(tmp.get(i));
         }
+    }
+
+    /**
+     * 在指定位置插入一个视图，并向其传递一次性数据（触发其 {@link FormView#onData}）。
+     *
+     * @param index 插入位置（0 ~ size）
+     * @param view  要插入的视图
+     * @param data  传递给视图的数据
+     */
+    public void insert(int index, FormView view, Object data) {
+        insert(index, view);
+        view.receiveData(data);
     }
 
     /**
@@ -223,7 +235,7 @@ public class ViewManager {
         java.util.Collections.reverse(tmp); // 栈底在前
         FormView removed = tmp.remove(index);
         views.clear();
-        for (int i = tmp.size() - 1; i >= 0; i--) {
+        for (int i = 0; i < tmp.size(); i++) {
             views.push(tmp.get(i));
         }
         removed.handleClose();
@@ -247,9 +259,21 @@ public class ViewManager {
         newView.bind(this);
         tmp.set(idx, newView);
         views.clear();
-        for (int i = tmp.size() - 1; i >= 0; i--) {
+        for (int i = 0; i < tmp.size(); i++) {
             views.push(tmp.get(i));
         }
+    }
+
+    /**
+     * 用新视图替换栈中的旧视图（同层替换），并向新视图传递一次性数据。
+     *
+     * @param oldView 要被替换的视图（必须在栈中）
+     * @param newView 替换为的新视图
+     * @param data    传递给新视图的数据
+     */
+    public void replace(FormView oldView, FormView newView, Object data) {
+        replace(oldView, newView);
+        newView.receiveData(data);
     }
 
     /**
@@ -263,6 +287,21 @@ public class ViewManager {
      */
     public void replaceAndSend(FormView oldView, FormView newView) {
         replace(oldView, newView);
+        send();
+    }
+
+    /**
+     * 用新视图替换栈中的旧视图，向新视图传递一次性数据，并立即发送新视图。
+     * <p>
+     * 替换后保持父视图关系不变：新视图在栈中的位置与旧视图相同，
+     * 其下方的父视图不受影响。
+     *
+     * @param oldView 要被替换的视图（必须在栈中）
+     * @param newView 替换为的新视图
+     * @param data    传递给新视图的数据
+     */
+    public void replaceAndSend(FormView oldView, FormView newView, Object data) {
+        replace(oldView, newView, data);
         send();
     }
 
@@ -289,6 +328,19 @@ public class ViewManager {
     public void restartWith(FormView newRoot) {
         clear();
         push(newRoot);
+        send();
+    }
+
+    /**
+     * 清空当前视图栈，以新视图作为根视图重新开始，并向其传递一次性数据。
+     *
+     * @param newRoot 新的根视图
+     * @param data    传递给新根视图的数据
+     */
+    public void restartWith(FormView newRoot, Object data) {
+        clear();
+        push(newRoot);
+        newRoot.receiveData(data);
         send();
     }
 

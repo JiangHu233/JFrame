@@ -8,12 +8,23 @@
 
 ---
 
-## 📖 这个框架是干什么的？
+## 📑 目录
+
+- [一、这个框架是干什么的？](#一这个框架是干什么的)
+- [二、整体架构](#二整体架构)
+- [三、快速上手](#三快速上手)
+- [四、路径匹配与特异性排序](#四路径匹配与特异性排序)
+- [五、所有 API 详解](#五所有-api-详解)
+- [六、跨插件扫描（forPlugin）](#六跨插件扫描forplugin)
+
+---
+
+## 一、这个框架是干什么的？
 
 让玩家输入的命令文本（如 `/guild kick Steve --reason 违规`）自动找到正确的处理方法，并且：
 
 - **路径模式匹配**：`kick {target}` 自动捕获 `target=Steve`，支持单值 `{id}`、贪婪 `{*msg}`、兼容 `#{id}`
-- **参数自动绑定**：路径变量、命名参数（`--key value`）、位置参数各司其职，自动类型转换
+- **参数自动绑定**：路径变量、命名参数（`--key value` / `--key=value`）、位置参数各司其职，自动类型转换
 - **特异性路由**：多条模式匹配同一输入时，静态段多的优先（`kick {target}` 优先于 `{cmd} {target}`）
 - **权限与仅玩家校验**：声明式 `permission` 属性 + `@Sender Player` 类型约束
 
@@ -24,7 +35,7 @@
 | [`@CommandController`](annotation/CommandController.java) | `@Controller` | 声明命令控制器，指定**根命令** | 类 |
 | [`@CommandMapping`](annotation/CommandMapping.java) | `@RequestMapping` | 声明命令处理方法，指定**子路径**与元数据 | 实例方法 |
 | [`@PathVariable`](annotation/PathVariable.java) | `@PathVariable` | 绑定**路径变量**（从路径模式捕获） | 方法参数 |
-| [`@CommandParam`](annotation/CommandParam.java) | `@RequestParam` | 绑定**命名参数**（`--key value`） | 方法参数 |
+| [`@CommandParam`](annotation/CommandParam.java) | `@RequestParam` | 绑定**命名参数**（`--key value` / `--key=value`） | 方法参数 |
 | [`@Sender`](annotation/Sender.java) | — | 注入**命令发送者**（`Player` 类型强制仅玩家） | 方法参数 |
 | [`@RawArgs`](annotation/RawArgs.java) | — | 注入**原始参数数组**（自行解析） | 方法参数 |
 
@@ -32,7 +43,7 @@
 
 ---
 
-## 🏗️ 整体架构
+## 二、整体架构
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -64,7 +75,7 @@
 
 ---
 
-## 🚀 快速上手
+## 三、快速上手
 
 ### 前置：初始化框架
 
@@ -134,10 +145,11 @@ public void broadcast(@Sender CommandSender sender,
 
 ### 用法三：命名参数 `@CommandParam` + 默认值
 
-可选参数用 `--key value` 形式追加在命令尾部，顺序无关。
+可选参数用 `--key value`（**分离格式**）或 `--key=value`（**内联格式**）追加在命令尾部，顺序无关。
 
 ```java
-// /guild kick Steve --reason 违规     →  reason = "违规"
+// /guild kick Steve --reason 违规     →  reason = "违规"（分离格式）
+// /guild kick Steve --reason=违规     →  reason = "违规"（内联格式）
 // /guild kick Steve                   →  reason = "无"（使用默认值）
 @CommandMapping("kick {target}")
 public void kick(@PathVariable("target") String target,
@@ -147,6 +159,9 @@ public void kick(@PathVariable("target") String target,
 ```
 
 > **与 Spring MVC 一致**：声明了 `defaultValue` 的参数**隐式变为可选**，缺失时回退默认值，不会报错。
+>
+> **内联格式 `--key=value` 的优势**：值与参数名在同一 token 中，可传递以 `-` 开头的值
+> （如 `--offset=-5`）；分离格式会把紧跟的 `-5` 误判为短选项。
 
 **布尔标记**：`--flag` 后不跟值时绑定为 `"true"`，适合 boolean 参数：
 
@@ -226,7 +241,36 @@ public class HomeController {
 
 ---
 
-## 🔀 路径匹配与特异性排序
+### 🔤 命令名大小写（对齐 Nukkit）
+
+框架的命令名大小写处理与 **Nukkit 命令系统完全对齐**：命令名大小写不敏感，且内部统一以小写存储。
+
+- **注册时归一化**：`@CommandController` / `@CommandMapping` 中声明的根命令与子命令（静态段）在解析时自动转为小写。
+- **匹配时大小写不敏感**：玩家输入 `/GameItem`、`/gameitem`、`/GAMEITEM` 均命中同一路由。
+- **变量值保留原样**：路径变量 `{name}` 捕获的值是**数据**，保留玩家输入的原始大小写，不会被转换。
+
+> **为什么这么做？** Nukkit 注册命令后内部恒以小写存储，运行时 `command.getName()` 回传的也是小写。
+> 若框架保留原始大小写（如 `GameItem`），会导致「注册名」与「Nukkit 回传名」不一致，路由匹配失败
+> （表现为「未知的子命令」）。归一化为小写后，两者始终一致。
+
+```java
+// 即使根命令用驼峰命名，也能正常工作（内部自动归一化为 gameitem）
+@CommandController("GameItem")
+public class GameItemCommand {
+
+    @CommandMapping(desc = "打开管理表单")        // /gameitem、/GameItem 均可触发
+    public void main(@Sender Player player) { ... }
+
+    @CommandMapping("give")                       // /gameitem give、/gameitem GIVE 均可触发
+    public void give(@Sender Player player, String id) { ... }
+}
+```
+
+> 💡 虽然框架已对大小写健壮，但遵循 Minecraft 惯例，**建议根命令统一用全小写**（如 `gameitem`），更清晰规范。
+
+---
+
+## 四、路径匹配与特异性排序
 
 当多条模式都能匹配同一输入时，按特异性选择最优（与 Spring `RequestMappingHandlerMapping` 一致）：
 
@@ -241,7 +285,7 @@ public class HomeController {
 
 ---
 
-## 📚 所有 API 详解
+## 五、所有 API 详解
 
 ### `@CommandController`（类级）
 
@@ -300,7 +344,26 @@ public class HomeController {
 | `unregister(Class<?> controllerClass)` | 注销整个控制器的所有路由 |
 | `scan(String... basePackages)` | 包扫描注册（使用线程上下文类加载器） |
 | `scan(ClassLoader, String...)` | 包扫描注册（指定类加载器） |
+| `forPlugin(Plugin)` / `forPlugin(String)` | 返回 [`CommandPluginScope`](CommandPluginScope.java)，绑定指定插件的 ClassLoader |
 | `bindPlugin(Plugin plugin)` | 绑定插件实例（框架自动调用） |
+
+---
+
+## 六、跨插件扫描（forPlugin）
+
+当你的插件需要扫描**自身 jar 内**的 `@CommandController` 类时，由于 Nukkit 插件类加载器隔离，必须使用自身插件的 ClassLoader。[`forPlugin`](../core/module/ForPlugin.java) 提供了统一入口：
+
+```java
+// 扫描当前插件 jar 内的命令控制器
+commandAPI.forPlugin(this).scan("com.myplugin.command");
+
+// 扫描其他插件的命令控制器（按插件名）
+commandAPI.forPlugin("OtherPlugin").scan("com.otherplugin.cmd");
+```
+
+[`CommandPluginScope`](CommandPluginScope.java) 只暴露 `scan` 方法，内部委托给 core 的 [`AnnotatedClassScanner`](../core/scan/AnnotatedClassScanner.java) 完成扫描，扫描结果统一注册到共享的 `CommandRegistry`。
+
+> **与 `scan(String...)` 的区别**：`scan(String...)` 使用线程上下文类加载器（TCCL），依赖调用方在 `onEnable` 期间正确设置 TCCL；`forPlugin(this).scan(...)` 显式绑定插件 ClassLoader，更可靠。详见 [core/README — ForPlugin](../core/README.md#四forplugin跨插件作用域代理)。
 
 ---
 
@@ -310,7 +373,8 @@ public class HomeController {
 |------|------|---------|
 | [`GuildController`](../../../../../../../test/java/io/github/JiangHu/jframe/command/example/GuildController.java) | 公会命令（`/guild`） | `@PathVariable` 单值/贪婪/`#`、`@CommandParam` 默认值、位置参数转换、`@Sender` |
 | [`ShopController`](../../../../../../../test/java/io/github/JiangHu/jframe/command/example/ShopController.java) | 商店命令（`/shop`） | 多路径变量、布尔标记 `--all`、`@RawArgs`、`@Sender Player`、`permission` |
-| [`CommandLogicTest`](../../../../../../../test/java/io/github/JiangHu/jframe/command/test/CommandLogicTest.java) | 30 项逻辑测试 | 无 Nukkit 服务器的纯 JVM 可运行测试，覆盖全部能力 |
+| [`CaseController`](../../../../../../../test/java/io/github/JiangHu/jframe/command/example/CaseController.java) | 大小写回归（`/gameitem`） | 根命令大写归一化、大小写不敏感匹配、变量值保留原样 |
+| [`CommandLogicTest`](../../../../../../../test/java/io/github/JiangHu/jframe/command/test/CommandLogicTest.java) | 47 项逻辑测试 | 无 Nukkit 服务器的纯 JVM 可运行测试，覆盖全部能力 |
 
 **运行测试：**
 ```bash

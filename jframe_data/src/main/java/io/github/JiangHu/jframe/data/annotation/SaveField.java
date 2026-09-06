@@ -74,17 +74,21 @@ public @interface SaveField {
      * 字段级自定义序列化适配器。
      * <p>
      * 为该字段指定一个 {@link SaveFieldAdapter} 实现类，保存/加载该字段时将调用适配器的
-     * {@link SaveFieldAdapter#toJson(Object) toJson} /
-     * {@link SaveFieldAdapter#fromJson(JsonElement) fromJson}，
-     * 而非委托 Gson 默认反射。
+     * {@link SaveFieldAdapter#toSave(Object) toSave} /
+     * {@link SaveFieldAdapter#fromSave(io.github.JiangHu.jframe.data.value.SaveValue) fromSave}，
+     * 而非委托框架默认反射。
      * <p>
-     * 适用于字段类型无法被 Gson 默认处理（如第三方库类、无无参构造、需要特殊编码），
+     * 适配器只负责「内存数据 ↔ 通用中间数据（{@link io.github.JiangHu.jframe.data.value.SaveValue}）」
+     * 的转换，不感知存储格式 — 同一份适配器在 JSON 与 YAML 下行为完全一致。
+     * <p>
+     * 适用于字段类型无法被默认处理（如第三方库类、无无参构造、需要特殊编码），
      * 或希望复用已有的序列化方法的场景。适配器类需有无参构造器（可以是 private）。
      * <p>
-     * 默认 {@link SaveFieldAdapter.None} 表示不使用适配器，回退 Gson 默认序列化。
+     * 默认 {@link SaveFieldAdapter.None} 表示不使用适配器，回退默认序列化。
      *
      * @return 适配器实现类，默认 {@link SaveFieldAdapter.None}
      * @see SaveFieldAdapter
+     * @see io.github.JiangHu.jframe.data.value.SaveValue
      */
     Class<? extends SaveFieldAdapter> adapter() default SaveFieldAdapter.None.class;
 }

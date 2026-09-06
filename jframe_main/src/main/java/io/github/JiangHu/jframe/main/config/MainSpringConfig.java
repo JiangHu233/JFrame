@@ -1,12 +1,15 @@
 package io.github.JiangHu.jframe.main.config;
 
+import io.github.JiangHu.jframe.ai.config.AiSpringConfig;
 import io.github.JiangHu.jframe.command.config.CommandSpringConfig;
 import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
 import io.github.JiangHu.jframe.data.config.DataSpringConfig;
 import io.github.JiangHu.jframe.event.config.EventSpringConfig;
 import io.github.JiangHu.jframe.form.config.FormSpringConfig;
-import io.github.JiangHu.jframe.inventory.ui.config.InventorySpringConfig;
-import io.github.JiangHu.jframe.thread.config.ThreadSpringConfig;
+import io.github.JiangHu.jframe.inventory.config.InventorySpringConfig;
+import io.github.JiangHu.jframe.async.config.AsyncSpringConfig;
+import io.github.JiangHu.jframe.scoreboard.config.ScoreboardSpringConfig;
+import io.github.JiangHu.jframe.title.config.TitleSpringConfig;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.ImportResource;
@@ -25,11 +28,14 @@ import org.springframework.context.annotation.ImportResource;
 @Import({
         CoreSpringConfig.class,
         CommandSpringConfig.class,
-        ThreadSpringConfig.class,
+        AsyncSpringConfig.class,
         FormSpringConfig.class,
         EventSpringConfig.class,
         DataSpringConfig.class,
-        InventorySpringConfig.class
+        InventorySpringConfig.class,
+        AiSpringConfig.class,
+        ScoreboardSpringConfig.class,
+        TitleSpringConfig.class
 })
 public class MainSpringConfig {
 }

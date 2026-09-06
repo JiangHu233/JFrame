@@ -3,6 +3,8 @@ package io.github.JiangHu.jframe.inventory.codec;
 import cn.nukkit.item.Item;
 import cn.nukkit.nbt.NBTIO;
 import cn.nukkit.nbt.tag.CompoundTag;
+import cn.nukkit.nbt.tag.IntTag;
+import cn.nukkit.nbt.tag.ShortTag;
 import cn.nukkit.nbt.tag.Tag;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -53,6 +55,8 @@ public final class ItemCodec {
 
     /** 附加 NBT 的嵌套键名 */
     private static final String KEY_EXTRA_NBT = "tag";
+    /** 物品 namespace 键名（基岩版 1.21+ 新物品仅有 namespace，无固定数字 ID） */
+    private static final String KEY_NAMESPACE = "Namespace";
     /** 物品 id 键名 */
     private static final String KEY_ID = "id";
     /** 物品 damage/meta 键名 */
@@ -60,6 +64,8 @@ public final class ItemCodec {
     /** 物品 count 键名 */
     private static final String KEY_COUNT = "Count";
 
+    /** JSON 模式：物品 namespace 键名 */
+    private static final String JSON_NAMESPACE = "namespace";
     /** JSON 模式：物品 id 键名 */
     private static final String JSON_ID = "id";
     /** JSON 模式：物品 damage 键名 */
@@ -198,6 +204,11 @@ public final class ItemCodec {
             return null;
         }
         JsonObject obj = new JsonObject();
+        // namespace 优先存储（基岩版 1.21+ 新物品仅有 namespace，无固定数字 ID）
+        String namespace = safeGetNamespaceId(item);
+        if (namespace != null && !namespace.isEmpty()) {
+            obj.addProperty(JSON_NAMESPACE, namespace);
+        }
         obj.addProperty(JSON_ID, item.getId());
         obj.addProperty(JSON_DAMAGE, item.getDamage());
         obj.addProperty(JSON_COUNT, item.getCount());
@@ -217,10 +228,20 @@ public final class ItemCodec {
         if (obj == null || obj.isJsonNull()) {
             return Item.get(Item.AIR);
         }
-        int id = obj.get(JSON_ID).getAsInt();
         int damage = obj.has(JSON_DAMAGE) ? obj.get(JSON_DAMAGE).getAsInt() : 0;
         int count = obj.has(JSON_COUNT) ? obj.get(JSON_COUNT).getAsInt() : 1;
-        Item item = Item.get(id, damage, count);
+        Item item;
+        // 优先使用 namespace 创建物品（基岩版 1.21+ 新物品仅有 namespace）
+        if (obj.has(JSON_NAMESPACE) && !obj.get(JSON_NAMESPACE).isJsonNull()) {
+            String namespace = obj.get(JSON_NAMESPACE).getAsString();
+            item = Item.fromString(namespace);
+            item.setDamage(damage);
+            item.setCount(count);
+        } else {
+            // 回退到数字 ID（向后兼容旧格式数据）
+            int id = obj.get(JSON_ID).getAsInt();
+            item = Item.get(id, damage, count);
+        }
         if (obj.has(JSON_NBT) && !obj.get(JSON_NBT).isJsonNull()) {
             Tag tag = NbtJsonConverter.jsonToTag(obj.get(JSON_NBT));
             if (!(tag instanceof CompoundTag)) {
@@ -238,9 +259,14 @@ public final class ItemCodec {
      */
     private static CompoundTag itemToNbt(Item item) {
         CompoundTag tag = new CompoundTag()
-                .putShort(KEY_ID, (short) item.getId())
-                .putShort(KEY_DAMAGE, (short) item.getDamage())
+                .putInt(KEY_ID, item.getId())
+                .putInt(KEY_DAMAGE, item.getDamage())
                 .putByte(KEY_COUNT, item.getCount());
+        // namespace 优先存储（基岩版 1.21+ 新物品仅有 namespace，无固定数字 ID）
+        String namespace = safeGetNamespaceId(item);
+        if (namespace != null && !namespace.isEmpty()) {
+            tag.putString(KEY_NAMESPACE, namespace);
+        }
         if (item.hasCompoundTag()) {
             CompoundTag extra = item.getNamedTag();
             if (extra != null) {
@@ -254,10 +280,20 @@ public final class ItemCodec {
      * CompoundTag → Item（与 {@link #itemToNbt} 对称）。
      */
     private static Item nbtToItem(CompoundTag tag) {
-        int id = tag.getShort(KEY_ID);
-        int damage = tag.getShort(KEY_DAMAGE);
+        int damage = readIntOrShort(tag, KEY_DAMAGE);
         int count = tag.getByte(KEY_COUNT);
-        Item item = Item.get(id, damage, count);
+        Item item;
+        // 优先使用 namespace 创建物品（基岩版 1.21+ 新物品仅有 namespace）
+        if (tag.contains(KEY_NAMESPACE)) {
+            String namespace = tag.getString(KEY_NAMESPACE);
+            item = Item.fromString(namespace);
+            item.setDamage(damage);
+            item.setCount(count);
+        } else {
+            // 回退到数字 ID（向后兼容旧格式数据，兼容 short/int 两种 NBT 类型）
+            int id = readIntOrShort(tag, KEY_ID);
+            item = Item.get(id, damage, count);
+        }
         if (tag.contains(KEY_EXTRA_NBT)) {
             CompoundTag extra = tag.getCompound(KEY_EXTRA_NBT);
             if (extra != null) {
@@ -265,6 +301,47 @@ public final class ItemCodec {
             }
         }
         return item;
+    }
+
+    /**
+     * 安全获取物品的 namespace ID。
+     * <p>
+     * {@link Item#getNamespaceId()} 内部依赖 {@code RuntimeItems.getMapping()}，
+     * 在 RuntimeItems 未初始化的环境（如单元测试）中会抛出 NullPointerException。
+     * 本方法捕获异常并返回 null，确保编解码在无服务器环境下也能正常工作。
+     * 在服务器运行时，此方法等同于直接调用 {@link Item#getNamespaceId()}。
+     *
+     * @param item 物品
+     * @return namespace ID（如 "minecraft:stone"），或 null（不可用时）
+     */
+    private static String safeGetNamespaceId(Item item) {
+        try {
+            return item.getNamespaceId();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 从 CompoundTag 读取 int 或 short 值（向后兼容）。
+     * <p>
+     * 旧格式用 {@code putShort} 存储 id/damage，新格式改用 {@code putInt}。
+     * 本方法通过检测 NBT 节点的实际类型（{@link IntTag} / {@link ShortTag}）来正确读取，
+     * 确保新旧格式数据都能兼容。
+     *
+     * @param tag NBT 复合标签
+     * @param key 键名
+     * @return 读取到的值，键不存在时返回 0
+     */
+    private static int readIntOrShort(CompoundTag tag, String key) {
+        Tag raw = tag.get(key);
+        if (raw instanceof IntTag) {
+            return ((IntTag) raw).data;
+        }
+        if (raw instanceof ShortTag) {
+            return ((ShortTag) raw).data;
+        }
+        return 0;
     }
 
     /**

@@ -68,8 +68,10 @@ class InventoryCodecTest {
 
             String encoded = InventoryCodec.encodeSlots(slots, CHEST_SIZE);
             // 只应有一个非空条目（index=0）
-            long entryCount = encoded.chars().filter(c -> c == '=').count();
-            assertEquals(1, entryCount, "只应有 1 个非空条目: " + encoded);
+            // 注意：不能用 '=' 字符计数来判断条目数，因为 Base64 padding 也含 '='
+            Map<Integer, Item> decoded = InventoryCodec.decodeSlots(encoded);
+            assertEquals(1, decoded.size(), "只应有 1 个非空条目: " + encoded);
+            assertEquals(STONE_ID, decoded.get(0).getId());
         }
 
         @Test

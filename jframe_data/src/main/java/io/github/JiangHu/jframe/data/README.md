@@ -1,14 +1,45 @@
-# jframe_data — 注解驱动的 JSON 持久化工具
+# jframe_data — 注解驱动的 JSON / YAML 持久化工具
 
-通过 `@SaveField` 注解标记类中需要保存的属性，使用 `DataSaver` 将对象序列化为 JSON 文件或从 JSON 加载回对象。
+通过 `@SaveField` 注解标记类中需要保存的属性，使用 `DataSaver` 将对象序列化为 **JSON 或 YAML** 文件，或从文件加载回对象。两种格式共用同一套 `@SaveField` 注解机制，通过 [`setFormat()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 或 [`withFormat()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 一键切换。
+
+## 📑 目录
+
+- [与传统方式的对比](#与传统方式的对比)
+- [核心特性](#核心特性)
+- [快速开始](#快速开始)
+- [存储格式（JSON / YAML）](#存储格式json--yaml)
+- [@SaveField 注解](#savefield-注解)
+- [容器与嵌套对象](#容器与嵌套对象)
+- [字段级自定义适配器](#字段级自定义适配器savefieldadapter)
+- [SaveIdentifiable 接口](#saveidentifiable-接口可选)
+- [DataSaver API](#datasaver-api)
+
+---
+
+## 与传统方式的对比
+
+Nukkit 插件持久化数据的传统做法是**手写 YAML/JSON 读写**：每个字段手动 `set("key", val)` / `getXxx("key")`，字段一多就变成一长串易错的样板代码，且存储键名与 Java 字段名硬编码耦合，重构时极易遗漏。
+
+| 维度 | 手写 Config | 本框架 |
+|------|------|------|
+| **声明方式** | 每个字段手写 `set()` / `getXxx()` | 字段标注 [`@SaveField`](annotation/SaveField.java) 即自动序列化 |
+| **键名耦合** | 存储键名硬编码在读写代码里，改字段名易遗漏 | `value` 别名解耦 Java 命名与存储格式 |
+| **容器 / 嵌套** | 手动遍历 List/Map、手动处理嵌套对象 | 自动递归处理 List/Set/Map/数组/嵌套对象 |
+| **自定义格式** | 需整体改写读写逻辑 | 字段级 [`SaveFieldAdapter`](adapter/SaveFieldAdapter.java) 单独接管 |
+| **必需校验** | 手动判断 null、手动报错 | `required = true` 加载缺失即抛 [`DataException`](exception/DataException.java) |
+| **路径组织** | 手动拼接文件路径 | [`sub()`](DataSaver.java) / [`parent()`](DataSaver.java) / [`root()`](DataSaver.java) 路径导航 |
+| **跨插件隔离** | 各插件自行管理目录 | [`forPlugin()`](DataSaver.java) 一键创建独立根保存器 |
+
+---
 
 ## 核心特性
 
 - **注解驱动**：只需在字段上标注 [`@SaveField`](src/main/java/io/github/JiangHu/jframe/data/annotation/SaveField.java)，无需继承基类、无需实现接口
-- **别名支持**：通过 `value` 指定 JSON 键别名（如 `player_name`），解耦 Java 命名与存储格式
+- **双格式支持**：JSON（默认）与 YAML 两种存储格式，通过 [`setFormat()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 切换或 [`withFormat()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 按调用覆盖，同一套 `@SaveField` 注解对两种格式完全透明
+- **别名支持**：通过 `value` 指定键别名（如 `player_name`），解耦 Java 命名与存储格式
 - **必需校验**：`required = true` 标记关键字段，加载时缺失即报错，防止数据损坏静默失败
 - **自动递归**：`List` / `Set` / `Map` / 数组 / 嵌套对象自动递归处理，嵌套类有 `@SaveField` 则同样按注解规则序列化
-- **字段级适配器**：通过 `adapter` 指定 [`SaveFieldAdapter`](src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) 自定义单个字段的 JSON 格式（如坐标压缩为 `"x,y"` 字符串）
+- **字段级适配器**：通过 `adapter` 指定 [`SaveFieldAdapter`](src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) 自定义单个字段的存储格式（如坐标压缩为 `"x,y"` 字符串），操作框架自有的 [`SaveValue`](src/main/java/io/github/JiangHu/jframe/data/value/SaveValue.java) 中间数据模型，对 JSON / YAML 双格式通用
 - **子路径与路径导航**：[`sub()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 向下、[`parent()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 向上、[`root()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 一步回根，三者仅作用于临时子路径、不篡改根路径
 - **跨插件隔离**：[`forPlugin(plugin)`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 为业务插件创建独立根保存器，数据落入各自 `plugins/<插件名>/` 目录，互不干扰
 - **灵活命名**：显式指定文件名、绝对路径文件、或实现 [`SaveIdentifiable`](src/main/java/io/github/JiangHu/jframe/data/SaveIdentifiable.java) 自动命名
@@ -74,6 +105,78 @@ PlayerData loaded = saver.load(PlayerData.class, "players/steve");
 
 ---
 
+## 存储格式（JSON / YAML）
+
+`DataSaver` 默认使用 **JSON** 格式（`.json`），也可切换为 **YAML** 格式（`.yml`）。两种格式共用同一套 `@SaveField` 注解机制，对用户完全透明——切换格式无需修改任何数据类定义。
+
+### 切换格式
+
+| 方法 | 说明 |
+|------|------|
+| [`getFormat()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) | 获取当前格式（默认 `JSON`） |
+| [`setFormat(SaveFormat)`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) | 修改当前保存器的默认格式，影响后续所有 save/load |
+| [`withFormat(SaveFormat)`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) | 返回一个使用指定格式的**独立保存器**，不改变当前保存器的格式状态 |
+
+```java
+// 方式一：修改当前保存器的默认格式（影响后续所有调用）
+saver.setFormat(SaveFormat.YAML);
+saver.save(data, "config");   // → config.yml
+saver.load(Cfg.class, "config");  // 读取 config.yml
+
+// 方式二：按调用覆盖（不影响当前保存器的默认格式）
+saver.withFormat(SaveFormat.YAML).save(data, "config");  // → config.yml
+saver.save(data, "config");                               // → config.json（原格式不变）
+```
+
+### YAML 输出示例
+
+同样的 `PlayerData` 对象，YAML 格式输出为：
+
+```yaml
+player_name: Steve
+level: 42
+health: 19.5
+```
+
+嵌套对象与集合同样支持：
+
+```yaml
+name: Steve
+home:
+  world: world
+  x: 100
+  y: 64
+tags:
+  - a
+  - b
+  - c
+```
+
+### 字符串互转
+
+除了文件 IO，YAML 也可直接在内存中转换：
+
+```java
+String yaml = saver.toYaml(data);                        // 对象 → YAML 字符串
+PlayerData obj = saver.fromYaml(yaml, PlayerData.class); // YAML 字符串 → 对象
+saver.fromYamlInto(existing, yaml);                      // YAML 字符串 → 回填已有实例
+```
+
+### 格式与文件扩展名
+
+| 格式 | 扩展名 | 枚举值 |
+|------|--------|--------|
+| JSON（默认） | `.json` | `SaveFormat.JSON` |
+| YAML | `.yml` | `SaveFormat.YAML` |
+
+- 切换格式后，文件扩展名自动变化（JSON → `.json`，YAML → `.yml`）
+- 若文件名已含已知扩展名（`.json` / `.yml` / `.yaml`），不会重复追加
+- [`sub()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 和 [`forPlugin()`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 创建的保存器会**继承**父级的格式
+
+> **YAML 规范**：使用 SnakeYAML 2.x，其默认 resolver 沿用 YAML 1.1 隐式类型规则（手写配置中的裸 `yes`/`no`/`on`/`off` 会解析为布尔值）。框架写出的字符串值会自动加引号（如 `flag: 'yes'`），因此 write → read 往返始终类型一致。
+
+---
+
 ## @SaveField 注解
 
 标注在**字段**上，标记该字段需要被序列化。只有标注了 `@SaveField` 的**非 static、非 transient** 字段才会被保存。
@@ -82,7 +185,7 @@ PlayerData loaded = saver.load(PlayerData.class, "players/steve");
 |------|------|--------|------|
 | `value` | `String` | `""` | JSON 键别名。为空时使用 Java 字段名 |
 | `required` | `boolean` | `false` | 加载时是否必需。为 `true` 时 JSON 缺少该键或值为 `null` 将抛出 `DataException` |
-| `adapter` | `Class<? extends SaveFieldAdapter>` | `None.class` | 字段级自定义序列化适配器。指定后该字段不再走 Gson 默认序列化，而由适配器的 `toJson`/`fromJson` 控制 JSON 格式 |
+| `adapter` | `Class<? extends SaveFieldAdapter>` | `None.class` | 字段级自定义序列化适配器。指定后该字段不再走 Gson 默认序列化，而由适配器的 `toSave`/`fromSave`（操作 [`SaveValue`](src/main/java/io/github/JiangHu/jframe/data/value/SaveValue.java) 中间数据）控制存储格式，JSON / YAML 通用 |
 
 ### 别名示例
 
@@ -146,18 +249,20 @@ public class Location {
 
 ## 字段级自定义适配器（SaveFieldAdapter）
 
-当某个字段需要**非标准的 JSON 格式**时（如把坐标对象压缩成字符串、自定义枚举编码、第三方类型转换），可通过 `adapter` 属性指定一个 [`SaveFieldAdapter`](src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) 实现类，接管该字段的序列化/反序列化。
+当某个字段需要**非标准的存储格式**时（如把坐标对象压缩成字符串、自定义枚举编码、第三方类型转换），可通过 `adapter` 属性指定一个 [`SaveFieldAdapter`](src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) 实现类，接管该字段的序列化/反序列化。
+
+适配器操作框架自有的 [`SaveValue`](src/main/java/io/github/JiangHu/jframe/data/value/SaveValue.java) 通用数据模型（而非 Gson/SnakeYAML 类型），因此**同一个适配器在 JSON 与 YAML 两种格式下通用**——适配器只负责"内存对象 ↔ 通用数据"的字段级转换，"树模型 ↔ 文件文本"由格式层（codec）完成。未绑定适配器的属性不经过 SaveValue，直接往返于格式存取器。
 
 ### 适配器接口
 
 ```java
 public interface SaveFieldAdapter<T> {
 
-    /** 将字段值转换为 JsonElement（Gson 树模型） */
-    JsonElement toJson(T value);
+    /** 将字段值转换为中间数据（SaveValue 树模型） */
+    SaveValue toSave(T value);
 
-    /** 从 JsonElement 还原字段值 */
-    T fromJson(JsonElement json);
+    /** 从中间数据还原字段值 */
+    T fromSave(SaveValue value);
 
     /** 标记类：@SaveField 默认值，表示不使用适配器 */
     final class None implements SaveFieldAdapter<Object> { ... }
@@ -173,19 +278,19 @@ public interface SaveFieldAdapter<T> {
 public class PosAdapter implements SaveFieldAdapter<Pos> {
 
     @Override
-    public JsonElement toJson(Pos pos) {
+    public SaveValue toSave(Pos pos) {
         if (pos == null) {
-            return JsonNull.INSTANCE;
+            return SaveValue.ofNull();
         }
-        return new JsonPrimitive(pos.x + "," + pos.y);
+        return SaveValue.of(pos.x + "," + pos.y);
     }
 
     @Override
-    public Pos fromJson(JsonElement json) {
-        if (json.isJsonNull()) {
+    public Pos fromSave(SaveValue value) {
+        if (value.isNull()) {
             return null;
         }
-        String[] parts = json.getAsString().split(",");
+        String[] parts = value.asString().split(",");
         return new Pos(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
     }
 }
@@ -210,12 +315,35 @@ public class PlayerData {
 }
 ```
 
+生成的 YAML（同一适配器，无需任何修改）：
+
+```yaml
+name: Steve
+location: 10,20
+```
+
+### SaveValue 常用 API
+
+[`SaveValue`](src/main/java/io/github/JiangHu/jframe/data/value/SaveValue.java) 是密封接口，6 种节点对应 6 类数据：
+
+| 数据 | 创建 | 读取 |
+|------|------|------|
+| null | `SaveValue.ofNull()` | `value.isNull()` |
+| 布尔 | `SaveValue.of(true)` | `value.asBoolean()` |
+| 数字 | `SaveValue.of(42)` / `SaveValue.of(1.5)` | `value.asInt()` / `value.asDouble()` / `value.asLong()` |
+| 字符串 | `SaveValue.of("abc")` | `value.asString()` |
+| 列表 | `SaveValue.list()` → `.add(...)` | `value.asList()` → `.get(i)` |
+| 映射 | `SaveValue.map()` → `.put(k, v)` | `value.asMap()` → `.get(k)` |
+
+- 判断节点类型：`isNull()` / `isBool()` / `isNum()` / `isStr()` / `isList()` / `isMap()`
+- 类型不匹配的取值（如对字符串调 `asInt()`）抛出 [`DataException`](src/main/java/io/github/JiangHu/jframe/data/exception/DataException.java)
+
 ### 使用要点
 
 - **逐字段独立**：`adapter` 作用于单个字段，同一类中不同字段可指定不同适配器；未指定的字段仍走 Gson 默认序列化
 - **无参构造器**：适配器类必须有无参构造器（支持 `private`），框架通过反射实例化一次并缓存
 - **无状态**：适配器实例被缓存复用，必须线程安全、无状态
-- **树模型 API**：适配器操作 `JsonElement`（Gson 树模型），可返回任意 JSON 结构（基本类型、对象、数组、null）
+- **中间数据 API**：适配器操作 `SaveValue`（框架自有树模型），可返回任意结构（标量、列表、映射、null），对 JSON 与 YAML 两种格式透明
 - **默认值**：不指定 `adapter` 时默认为 `SaveFieldAdapter.None.class`，表示走 Gson 默认序列化
 
 ---
@@ -290,7 +418,7 @@ vip.root().load(C.class, "config");              // → rootDir/config.json
 **典型场景**：用 `sub()` 把数据按"模块 / 玩家 / VIP"分层组织到不同子目录，需要访问上级目录（如全局配置、默认模板）时用 `parent()` 显式向上导航，路径关系清晰可控。
 
 > **注意**：
-> - save 与 load 都严格作用于当前保存器的目录，**不会自动向上回退查找**。若当前目录无目标文件，`load` / `loadInto` 直接抛出 `DataException`；需要访问上级时请显式调用 `parent()` 或一步 `root()`。
+> - save 与 load 都严格作用于当前保存器的目录，**不会自动向上回退查找**。若当前目录无目标文件，`load` 返回 `null`、`loadInto` 抛出 `DataException`；需要访问上级时请显式调用 `parent()` 或一步 `root()`。
 > - sub/parent/root 仅在**临时子路径**内导航，**不能变化根路径**：子保存器调用 `setRootDir()` 会抛出 `DataException`。根路径只能由根保存器通过 `setRootDir()` 或 `bindPlugin()` 设置。
 
 ### 跨插件独立根保存器（forPlugin）
@@ -347,7 +475,8 @@ saver.loadInto(existing, "players/steve");
 
 ### 文件存在性判断
 
-在 `load` 之前探测目标文件是否已存在，避免文件缺失时抛出 `DataException`：
+探测目标文件是否已存在。`load` 在文件缺失时本就返回 `null`（不抛异常），
+`exists()` 主要用于 `loadInto`（缺失会抛异常）调用前的预判，或需要布尔语义的场景：
 
 | 方法 | 说明 |
 |------|------|
@@ -356,11 +485,15 @@ saver.loadInto(existing, "players/steve");
 | `exists(obj)` | 判断 `SaveIdentifiable` 对象的**序列化目标文件**是否存在（基于 `saveKey()`） |
 
 ```java
-// 加载前先判断，避免文件缺失抛异常
-if (saver.exists("players/steve")) {
-    PlayerData data = saver.load(PlayerData.class, "players/steve");
-} else {
+// load 文件缺失时返回 null，可直接据此区分"无存档"与"读取失败"
+PlayerData data = saver.load(PlayerData.class, "players/steve");
+if (data == null) {
     // 首次进入：尚无存档
+}
+
+// loadInto 缺失会抛异常，调用前可用 exists 预判
+if (saver.exists("players/steve")) {
+    saver.loadInto(existing, "players/steve");
 }
 
 // 判断某条 SaveIdentifiable 数据是否已落盘
@@ -431,12 +564,13 @@ saver.fromJsonInto(existing, json);                  // JSON 字符串 → 回�
 
 | 调用方式 | 解析结果 |
 |----------|----------|
-| `save(obj, "players/steve")` | `rootDir/players/steve.json` |
+| `save(obj, "players/steve")` | `rootDir/players/steve.json`（JSON 格式）或 `.yml`（YAML 格式） |
 | `save(obj, "players/steve.json")` | `rootDir/players/steve.json`（已有扩展名则不重复追加） |
 | `save(obj, new File(...))` | 直接使用该 File 对象 |
-| `save(obj)`（SaveIdentifiable） | `rootDir/<saveKey()>.json` |
+| `save(obj)`（SaveIdentifiable） | `rootDir/<saveKey()>.json` 或 `.yml` |
 
-- 相对路径自动追加 `.json` 扩展名（若未包含）
+- 相对路径自动追加当前格式对应的扩展名（JSON → `.json`，YAML → `.yml`）
+- 若文件名已含已知扩展名（`.json` / `.yml` / `.yaml`），不重复追加
 - 父目录不存在时自动创建
 - 未设置 `rootDir` 时使用相对路径会抛出 `DataException`
 
@@ -454,7 +588,7 @@ saver.fromJsonInto(existing, json);                  // JSON 字符串 → 回�
 metadataCache → dataSaver
 ```
 
-- [`MetadataCache`](src/main/java/io/github/JiangHu/jframe/data/core/MetadataCache.java)：扫描 `@SaveField` 字段并缓存反射结果（无依赖）
+- [`MetadataCache`](src/main/java/io/github/JiangHu/jframe/data/core/meta/MetadataCache.java)：扫描 `@SaveField` 字段并缓存反射结果（无依赖）
 - [`DataSaver`](src/main/java/io/github/JiangHu/jframe/data/DataSaver.java)：构造器注入 `MetadataCache`，创建配置好的 Gson 实例
 
 ### 启用模块
@@ -497,7 +631,7 @@ public class PlayerService {
 |------|----------|
 | required 字段缺失 | `必需字段 'xxx' 在 JSON 中缺失或为 null` |
 | 类缺少无参构造器 | `类 xxx 缺少无参构造器，无法实例化` |
-| 文件不存在 | `文件不存在: /path/to/file.json` |
+| 文件不存在（`loadInto`） | `文件不存在: /path/to/file.json`（注：`load` 缺失返回 `null`，不抛此异常） |
 | 未设置 rootDir | `保存根路径（rootDir）尚未设置` |
 | 未实现 SaveIdentifiable | `对象 xxx 未实现 SaveIdentifiable，无法自动确定文件名` |
 

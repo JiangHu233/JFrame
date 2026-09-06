@@ -26,22 +26,48 @@
             <groupId>io.github.JiangHu.jframe</groupId>
             <artifactId>jframe_main</artifactId>
             <version>1.0-SNAPSHOT</version>
+            <!--
+              provided：jframe_example 运行时 depend 前置插件 JFrame（jframe_main），
+              由 JFrame 的类加载器统一加载框架类（jframe_command / jframe_ai / jframe_inventory 等），
+              避免本插件重复 shade 框架类导致 Nukkit 多插件类加载器冲突
+              （IllegalAccessError：同一框架类被两个 PluginClassLoader 各加载一份，
+              外层类与内部类分属不同加载器时触发）。
+              部署时需先放入 jframe_main.jar，再放入 jframe_example.jar。
+            -->
+            <scope>provided</scope>
         </dependency>
-        <!--
-          fakeinventories：第三方假方块箱子库，用于对比演示。
-          采用 system 作用域直接引用 libs/ 下的 jar，不安装到本地仓库。
-          shade 插件默认不打包 system 作用域依赖——该 jar 本身是独立 Nukkit 插件，
-          运行时需单独放入服务器 plugins 目录，故不打包进 jframe_example。
-          ${maven.multiModuleProjectDirectory} 指向 reactor 根目录（JFrame/），从根目录构建时路径有效。
 
+        <!-- spring 依赖 -->
         <dependency>
-            <groupId>com.nukkitx</groupId>
-            <artifactId>fakeinventories</artifactId>
-            <version>1.0.3-MOT-SNAPSHOT</version>
-            <scope>system</scope>
-            <systemPath>${maven.multiModuleProjectDirectory}/libs/fakeinventories-1.0.3-MOT-SNAPSHOT.jar</systemPath>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+            <version>5.3.24</version>
+            <scope>provided</scope>
         </dependency>
-        -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-core</artifactId>
+            <version>5.3.24</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-beans</artifactId>
+            <version>5.3.24</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-aop</artifactId>
+            <version>5.3.24</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-aspects</artifactId>
+            <version>5.3.24</version>
+            <scope>provided</scope>
+        </dependency>
 
     </dependencies>
 

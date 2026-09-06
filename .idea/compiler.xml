@@ -8,22 +8,44 @@
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
       </profile>
-      <profile name="Annotation profile for JFrame" enabled="true">
+      <profile name="Annotation profile for jframe_example" enabled="true">
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
         <processorPath useClasspath="false">
           <entry name="$MAVEN_REPOSITORY$/org/projectlombok/lombok/1.18.42/lombok-1.18.42.jar" />
         </processorPath>
-        <module name="jframe_core" />
-        <module name="jframe_event" />
-        <module name="jframe_command" />
-        <module name="jframe_thread" />
         <module name="jframe_example" />
+      </profile>
+      <profile name="Annotation profile for jframe_main" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+        <processorPath useClasspath="false">
+          <entry name="$MAVEN_REPOSITORY$/org/projectlombok/lombok/1.18.42/lombok-1.18.42.jar" />
+        </processorPath>
+        <module name="jframe_main" />
+      </profile>
+      <profile name="Annotation profile for JFrame" enabled="true">
+        <sourceOutputDir name="target/generated-sources/annotations" />
+        <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
+        <outputRelativeToContentRoot value="true" />
+        <processorPath useClasspath="false">
+          <entry name="$MAVEN_REPOSITORY$/org/projectlombok/lombok/1.18.42/lombok-1.18.42.jar" />
+          <entry name="$MAVEN_REPOSITORY$/org/projectlombok/lombok/1.18.42/lombok-1.18.42.jar" />
+        </processorPath>
+        <module name="jframe_core" />
+        <module name="jframe_scoreboard_depend_template" />
+        <module name="jframe_command" />
+        <module name="jframe_title_depend_template" />
         <module name="jframe_inventory" />
         <module name="jframe_form" />
-        <module name="jframe_main" />
         <module name="jframe_data" />
+        <module name="jframe_listener" />
+        <module name="jframe_template" />
+        <module name="jframe_ai" />
+        <module name="jframe_async" />
+        <module name="jframe_nbt" />
       </profile>
     </annotationProcessing>
   </component>

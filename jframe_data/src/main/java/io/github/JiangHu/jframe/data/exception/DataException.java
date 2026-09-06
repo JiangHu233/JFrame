@@ -1,5 +1,7 @@
 package io.github.JiangHu.jframe.data.exception;
 
+import io.github.JiangHu.jframe.core.JFrameException;
+
 /**
  * 数据保存/加载异常。
  * <p>
@@ -13,12 +15,12 @@ package io.github.JiangHu.jframe.data.exception;
  *   <li>反射访问字段失败（无参构造器缺失、字段不可访问等）</li>
  * </ul>
  * <p>
- * 继承 {@link RuntimeException}，调用方无需强制 try-catch；
+ * 继承 {@link JFrameException}，调用方无需强制 try-catch；
  * 如需精细处理，可 catch 本异常并检查 {@link #getCause()} 获取根因。
  *
  * @see io.github.JiangHu.jframe.data.DataSaver
  */
-public class DataException extends RuntimeException {
+public class DataException extends JFrameException {
 
     /**
      * 构造数据异常。

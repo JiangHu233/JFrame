@@ -134,6 +134,13 @@ public class ShopView extends InventoryView {
 inventoryAPI.openView(player, new ShopView());
 ```
 
+如需自定义打开延迟（tick），使用三参重载：
+
+```java
+// 延迟 20 tick（1 秒）后弹出界面
+inventoryAPI.openView(player, new ShopView(), 20);
+```
+
 ---
 
 ## 🎨 格子类型 (SlotType)
@@ -208,6 +215,26 @@ Item[] snapshot = box.exportItems();
 ```
 
 > **时序要求**：`loadItems` / `exportItems` 必须在视图已打开（`onOpen` 之后）时调用。视图未打开时 `exportItems` 返回全空气数组，`loadItems` 不执行任何操作。
+
+#### ⭐ 物品退还
+
+`returnItems()` 将存储格内所有物品退还到玩家背包，背包满时剩余物品掉落到玩家脚下，随后清空存储格。`returnOnClose(true)` 开关开启后，视图关闭时自动执行退还。
+
+```java
+// 方式一：关闭界面时自动退还（推荐用于临时存储场景）
+StorageBox box = new StorageBox(3, 1);
+box.returnOnClose(true);  // 玩家关闭界面时，物品自动退还到背包
+
+// 方式二：手动退还（如点击"提取全部"按钮）
+Button extract = new Button(...);
+extract.onClick(click -> {
+    StorageBox box = findComponent("depositBox", StorageBox.class);
+    Item[] returned = box.returnItems();  // 退还物品到玩家背包并清空存储格
+    click.player().sendMessage("已退还物品");
+});
+```
+
+> **自动退还时序**：`onUnmount()` 在视图关闭流程中、`view`/`viewer`/`inventory` 置空之前调用，此时读取物品和操作玩家背包均安全有效。
 
 ### Filler — 填充
 
@@ -412,7 +439,10 @@ public class ShopView extends InventoryView {
 
 | 方法 | 说明 |
 |------|------|
-| `openView(Player, InventoryView)` | 打开视图（自动关闭旧视图） |
+| `openView(Player, InventoryView)` | 打开视图（自动关闭旧视图，带防抖） |
+| `openView(Player, InventoryView, int)` | 打开视图，自定义打开延迟（tick），防抖窗口按实际延迟联动 |
+| `forceOpenView(Player, InventoryView)` | 强制切换视图（不检查防抖，适合界面内跳转） |
+| `forceOpenView(Player, InventoryView, int)` | 强制切换视图，自定义打开延迟（tick） |
 | `closeView(Player)` | 关闭玩家的视图 |
 | `getView(Player)` | 获取玩家当前视图 |
 | `closeAll()` | 关闭所有视图（插件禁用时调用） |

@@ -114,6 +114,16 @@ public class ShopInventoryView extends InventoryView {
                 click.player().sendMessage("§b自身按钮: §f" + self.name());
             }
 
+            // 演示 4：手动退还左侧存储格物品到玩家背包
+            if (left != null) {
+                Item[] returned = left.returnItems();  // 退还并清空存储格
+                int count = 0;
+                for (Item it : returned) {
+                    if (it != null && !it.isNull()) count++;
+                }
+                click.player().sendMessage("§d已退还 §f" + count + " §d件物品到背包");
+            }
+
             repaint();
         });
         root.add(clearBtn, 1, 5);
@@ -121,6 +131,7 @@ public class ShopInventoryView extends InventoryView {
         // 右侧存储区（列 6-8）
         StorageBox rightBox = new StorageBox(3, 1);
         rightBox.name("rightStorage");
+        rightBox.returnOnClose(true);  // 演示：关闭界面时自动退还物品到玩家背包
         rightBox.onStore(this::onItemStored);
         root.add(rightBox, 1, 6);
 

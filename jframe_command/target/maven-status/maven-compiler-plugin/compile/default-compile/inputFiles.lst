@@ -6,6 +6,7 @@ G:\Code\Java\EE\fapixel\JFrame\jframe_command\src\main\java\io\github\JiangHu\jf
 G:\Code\Java\EE\fapixel\JFrame\jframe_command\src\main\java\io\github\JiangHu\jframe\command\annotation\Sender.java
 G:\Code\Java\EE\fapixel\JFrame\jframe_command\src\main\java\io\github\JiangHu\jframe\command\CommandAPI.java
 G:\Code\Java\EE\fapixel\JFrame\jframe_command\src\main\java\io\github\JiangHu\jframe\command\CommandEngine.java
+G:\Code\Java\EE\fapixel\JFrame\jframe_command\src\main\java\io\github\JiangHu\jframe\command\CommandPluginScope.java
 G:\Code\Java\EE\fapixel\JFrame\jframe_command\src\main\java\io\github\JiangHu\jframe\command\config\CommandSpringConfig.java
 G:\Code\Java\EE\fapixel\JFrame\jframe_command\src\main\java\io\github\JiangHu\jframe\command\resolve\ArgumentConversionException.java
 G:\Code\Java\EE\fapixel\JFrame\jframe_command\src\main\java\io\github\JiangHu\jframe\command\resolve\ArgumentResolver.java

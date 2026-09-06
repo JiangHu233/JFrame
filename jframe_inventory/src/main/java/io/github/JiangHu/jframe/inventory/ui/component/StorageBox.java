@@ -1,5 +1,6 @@
 package io.github.JiangHu.jframe.inventory.ui.component;
 
+import cn.nukkit.Player;
 import cn.nukkit.item.Item;
 import io.github.JiangHu.jframe.inventory.ui.model.SlotAppearance;
 import io.github.JiangHu.jframe.inventory.ui.model.SlotType;
@@ -7,7 +8,9 @@ import io.github.JiangHu.jframe.inventory.ui.model.event.StoreEvent;
 import io.github.JiangHu.jframe.inventory.ui.view.InventoryView;
 import io.github.JiangHu.jframe.inventory.ui.view.RenderContext;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -44,12 +47,32 @@ import java.util.function.Consumer;
  * 已打开（{@link InventoryView#onOpen} 之后）时调用，此时底层库存已就绪。
  * 视图未打开时 {@code exportItems} 返回全空气数组，{@code loadItems} 不执行任何操作。
  *
+ * <h3>物品退还</h3>
+ * <p>
+ * {@link #returnItems()} 将存储格内所有物品退还到玩家背包，背包满时剩余物品
+ * 掉落到玩家脚下，随后清空存储格。{@link #returnOnClose(boolean)} 开关开启后，
+ * 视图关闭时（{@code onUnmount} 阶段）自动执行退还，确保物品不会因界面关闭而丢失。
+ *
+ * <pre>{@code
+ * StorageBox box = new StorageBox(3, 1);
+ * box.returnOnClose(true);  // 关闭界面时自动退还物品到玩家背包
+ *
+ * // 也可手动退还（如点击"提取全部"按钮）
+ * Button extract = new Button(...);
+ * extract.onClick(click -> {
+ *     Item[] returned = box.returnItems();  // 退还并清空存储格
+ * });
+ * }</pre>
+ *
  * @see SlotType#STORAGE
  */
 public class StorageBox extends InventoryComponent {
 
     /** 存取回调（可选） */
     private Consumer<StoreEvent> storeHandler;
+
+    /** 关闭界面时是否自动退还物品到玩家背包 */
+    private boolean returnOnClose = false;
 
     /** 渲染时记录的绝对基准行（用于计算格子绝对序号，供加载/导出使用） */
     private int absBaseRow = 0;
@@ -76,6 +99,30 @@ public class StorageBox extends InventoryComponent {
     public StorageBox onStore(Consumer<StoreEvent> handler) {
         this.storeHandler = handler;
         return this;
+    }
+
+    /**
+     * 设置关闭界面时是否自动退还物品到玩家背包。
+     * <p>
+     * 开启后，当视图关闭（玩家关箱子或调用 {@code close()}）时，
+     * 自动调用 {@link #returnItems()} 将存储格内物品退还给玩家。
+     * 默认关闭（{@code false}），不影响原有行为。
+     *
+     * @param enabled 是否自动退还
+     * @return 当前组件（链式调用）
+     */
+    public StorageBox returnOnClose(boolean enabled) {
+        this.returnOnClose = enabled;
+        return this;
+    }
+
+    /**
+     * 查询是否启用了关闭时自动退还。
+     *
+     * @return 是否自动退还
+     */
+    public boolean isReturnOnClose() {
+        return returnOnClose;
     }
 
     /**
@@ -127,6 +174,49 @@ public class StorageBox extends InventoryComponent {
     }
 
     /**
+     * 将存储格内所有物品退还到玩家背包，并清空存储格。
+     * <p>
+     * 退还逻辑：
+     * <ol>
+     *   <li>导出当前所有物品快照（{@link #exportItems()}）</li>
+     *   <li>将非空物品添加到玩家背包（{@code player.getInventory().addItem()}）</li>
+     *   <li>背包满时，剩余物品掉落到玩家脚下（{@code level.dropItem()}）</li>
+     *   <li>清空存储格（{@link #loadItems(Item[])} 填入全空气）</li>
+     * </ol>
+     * <p>
+     * 必须在视图已打开后调用。视图未打开或无查看玩家时，返回全空气数组且不执行退还。
+     *
+     * @return 退还前的物品快照数组（含空气格子），视图未打开时返回全空气
+     */
+    public Item[] returnItems() {
+        Item[] snapshot = exportItems();
+        Player player = viewer();
+        if (view == null || player == null) {
+            return snapshot;
+        }
+        // 收集非空物品
+        List<Item> toReturn = new ArrayList<>();
+        for (Item item : snapshot) {
+            if (item != null && !item.isNull()) {
+                toReturn.add(item);
+            }
+        }
+        if (!toReturn.isEmpty()) {
+            // 添加到玩家背包，返回值为无法放入的剩余物品
+            Item[] remaining = player.getInventory().addItem(toReturn.toArray(new Item[0]));
+            // 背包满时掉落到玩家脚下
+            for (Item drop : remaining) {
+                if (drop != null && !drop.isNull()) {
+                    player.getLevel().dropItem(player, drop);
+                }
+            }
+        }
+        // 清空存储格（null 视为空气）
+        loadItems(new Item[width * height]);
+        return snapshot;
+    }
+
+    /**
      * 计算相对坐标对应的绝对格子序号。
      *
      * @param relRow 相对行
@@ -155,6 +245,15 @@ public class StorageBox extends InventoryComponent {
     protected void onStore(StoreEvent event) {
         if (storeHandler != null) {
             storeHandler.accept(event);
+        }
+    }
+
+    @Override
+    protected void onUnmount() {
+        // 关闭界面时自动退还物品到玩家背包（如果开关已开启）
+        // 时序安全：onUnmount() 在 this.view 置空前调用，此时 view、viewer、inventory 均有效
+        if (returnOnClose) {
+            returnItems();
         }
     }
 }

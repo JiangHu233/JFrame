@@ -3,11 +3,8 @@ package io.github.JiangHu.jframe.command.scan;
 import cn.nukkit.Server;
 import io.github.JiangHu.jframe.command.CommandAPI;
 import io.github.JiangHu.jframe.command.annotation.CommandController;
-
-import org.springframework.beans.factory.config.BeanDefinition;
-import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
-import org.springframework.core.io.DefaultResourceLoader;
-import org.springframework.core.type.filter.AnnotationTypeFilter;
+import io.github.JiangHu.jframe.core.JFrameLog;
+import io.github.JiangHu.jframe.core.scan.AnnotatedClassScanner;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -17,10 +14,10 @@ import java.util.Set;
 /**
  * 命令控制器包扫描器 — 自动发现并注册标注了 {@link CommandController} 的类。
  * <p>
- * 基于 Spring 的 {@link ClassPathScanningCandidateComponentProvider}，与
- * {@code WrapperScanner} 同构：给定基础包，递归扫描其下（含子包）的所有
- * {@code .class} 文件，找出标注 {@code @CommandController} 的具体类，交由
- * {@link CommandAPI#register} 注册。
+ * 内部委托给 {@link AnnotatedClassScanner}（封装 Spring 的
+ * {@code ClassPathScanningCandidateComponentProvider} 样板），
+ * 给定基础包，递归扫描其下（含子包）的所有 {@code .class} 文件，
+ * 找出标注 {@code @CommandController} 的具体类，交由 {@link CommandAPI#register} 注册。
  *
  * <h3>类加载器策略</h3>
  * <p>
@@ -29,10 +26,14 @@ import java.util.Set;
  * （参见示例 {@code ExamplePlugin}），扫描器即可正确发现插件 jar 内的控制器类。
  * 也可通过 {@link #scan(ClassLoader, String...)} 显式指定类加载器。
  *
- * <h3>过滤规则</h3>
+ * <h3>推荐方式</h3>
  * <p>
- * Spring 扫描器内置过滤：即使标注了 {@code @CommandController}，接口、抽象类、注解类型
- * 也会被自动跳过（无法实例化，注册无意义）。
+ * 更推荐使用 {@link CommandAPI#forPlugin(cn.nukkit.plugin.Plugin)} 获取
+ * {@link io.github.JiangHu.jframe.command.CommandPluginScope}，
+ * 无需手动管理类加载器：
+ * <pre>{@code
+ * commandAPI.forPlugin(this).scan("com.myplugin.command");
+ * }</pre>
  *
  * <h3>使用示例</h3>
  * <pre>{@code
@@ -49,11 +50,17 @@ import java.util.Set;
  *
  * @see CommandController
  * @see CommandAPI#scan
+ * @see AnnotatedClassScanner
  */
 public class CommandScanner {
 
+    private static final String TAG = "CommandScanner";
+
     /** 命令服务：扫描到的类通过它注册 */
     private final CommandAPI commandAPI;
+
+    /** 复用的注解扫描器（封装 Spring 样板） */
+    private final AnnotatedClassScanner annotatedScanner;
 
     /**
      * 构造扫描器。
@@ -62,6 +69,7 @@ public class CommandScanner {
      */
     public CommandScanner(CommandAPI commandAPI) {
         this.commandAPI = commandAPI;
+        this.annotatedScanner = new AnnotatedClassScanner(CommandController.class);
     }
 
     /**
@@ -73,11 +81,7 @@ public class CommandScanner {
      * @return 实际注册成功的控制器类列表（保持发现顺序）
      */
     public List<Class<?>> scan(String... basePackages) {
-        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-        if (classLoader == null) {
-            classLoader = CommandScanner.class.getClassLoader();
-        }
-        return scan(classLoader, basePackages);
+        return scan(AnnotatedClassScanner.resolveClassLoader(), basePackages);
     }
 
     /**
@@ -95,27 +99,18 @@ public class CommandScanner {
             return registered;
         }
 
-        ClassPathScanningCandidateComponentProvider provider = createProvider(classLoader);
-
-        for (String basePackage : basePackages) {
-            if (basePackage == null || basePackage.isBlank()) continue;
-            for (BeanDefinition bd : provider.findCandidateComponents(basePackage.trim())) {
-                String className = bd.getBeanClassName();
-                try {
-                    Class<?> clazz = Class.forName(className, false, classLoader);
-                    commandAPI.register(clazz);
-                    registered.add(clazz);
-                    Server.getInstance().getLogger().info(
-                            "[CommandScanner] 已注册命令控制器: " + className);
-                } catch (Throwable e) {
-                    Server.getInstance().getLogger().error(
-                            "[CommandScanner] 注册命令控制器失败: " + className, e);
-                }
+        Set<Class<?>> candidates = annotatedScanner.scan(classLoader, basePackages);
+        for (Class<?> clazz : candidates) {
+            try {
+                commandAPI.register(clazz);
+                registered.add(clazz);
+                JFrameLog.info(TAG, "已注册命令控制器: " + clazz.getName());
+            } catch (Throwable e) {
+                JFrameLog.error(TAG, "注册命令控制器失败: " + clazz.getName(), e);
             }
         }
 
-        Server.getInstance().getLogger().info(
-                "[CommandScanner] 扫描完成，共注册 " + registered.size() + " 个命令控制器。");
+        JFrameLog.info(TAG, "扫描完成，共注册 " + registered.size() + " 个命令控制器。");
         return registered;
     }
 
@@ -127,31 +122,6 @@ public class CommandScanner {
      * @return 候选控制器类集合（保持发现顺序）
      */
     public Set<Class<?>> findControllerClasses(String basePackage, ClassLoader classLoader) {
-        Set<Class<?>> result = new LinkedHashSet<>();
-        ClassPathScanningCandidateComponentProvider provider = createProvider(classLoader);
-        for (BeanDefinition bd : provider.findCandidateComponents(basePackage)) {
-            try {
-                result.add(Class.forName(bd.getBeanClassName(), false, classLoader));
-            } catch (Throwable e) {
-                Server.getInstance().getLogger().warning(
-                        "[CommandScanner] 跳过无法加载的类: " + bd.getBeanClassName()
-                                + " (" + e.getClass().getSimpleName() + ")");
-            }
-        }
-        return result;
-    }
-
-    /**
-     * 创建配置好的 Spring 类路径扫描器。
-     * <p>
-     * 关闭默认过滤器，仅添加 {@code @CommandController} 注解过滤器，
-     * 并绑定指定类加载器以扫描 Nukkit 插件 jar 内的类。
-     */
-    private ClassPathScanningCandidateComponentProvider createProvider(ClassLoader classLoader) {
-        ClassPathScanningCandidateComponentProvider provider =
-                new ClassPathScanningCandidateComponentProvider(false);
-        provider.addIncludeFilter(new AnnotationTypeFilter(CommandController.class));
-        provider.setResourceLoader(new DefaultResourceLoader(classLoader));
-        return provider;
+        return new LinkedHashSet<>(annotatedScanner.scan(classLoader, basePackage));
     }
 }

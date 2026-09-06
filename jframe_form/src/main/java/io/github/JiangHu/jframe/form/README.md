@@ -8,6 +8,7 @@
 ## 目录
 
 - [核心特性](#核心特性)
+- [与传统 Nukkit FormWindow 的对比](#与传统-nukkit-formwindow-的对比)
 - [快速开始](#快速开始)
 - [三种表单类型](#三种表单类型)
   - [SimpleForm（按钮列表）](#simpleform按钮列表)
@@ -31,12 +32,26 @@
 
 | 特性 | 说明 |
 |------|------|
-| **零第三方依赖** | 直接封装 Nukkit MOT 原生 `FormWindow` API，不再依赖 `moe.him188.gui` |
+| **零第三方依赖** | 直接封装 Nukkit MOT 原生 `FormWindow` API，无额外第三方库 |
 | **面向对象按钮** | 每个 [`Button`](window/Button.java) 自带点击回调，告别 `switch(id)` 魔法索引 |
 | **统一三种表单** | [`JForm`](window/JForm.java) 统一抽象，SimpleForm / CustomForm / ModalForm 一套 API |
 | **栈式导航** | [`ViewManager`](ViewManager.java) 维护视图栈，支持进入子菜单、返回上一级、原地替换 |
 | **数据总线** | [`ViewDataBus`](data/ViewDataBus.java) 实现窗口间数据塞入与订阅通知更新 |
 | **自动清理** | 玩家退出时自动释放资源，无内存泄漏 |
+
+---
+
+## 与传统 Nukkit FormWindow 的对比
+
+| 维度 | 传统 Nukkit `FormWindow` | jframe_form |
+|------|--------------------------|-------------|
+| **按钮回调** | `onClicked(int id)` + `switch(id)` 魔法索引 | 每个 [`Button`](window/Button.java) 自带 `onClick` 回调 |
+| **表单类型** | `FormWindowSimple`/`Custom`/`Modal` 三套独立 API | [`JForm`](window/JForm.java) 统一抽象 |
+| **导航返回** | 手动管理父界面引用，重新构造丢失状态 | [`ViewManager`](ViewManager.java) 栈式导航，`goBack()` 保留状态 |
+| **窗口间传值** | 静态变量或手动传参 | [`ViewDataBus`](data/ViewDataBus.java) 订阅通知 |
+| **界面刷新** | 手动重新 `showFormWindow` | `notifyUpdate()` 自动重建 |
+| **资源清理** | 手动监听退出事件释放 | 玩家退出自动释放 |
+| **构建方式** | 命令式 `addButton()` 逐个添加 | 链式 Builder 流式描述 |
 
 ---
 
@@ -212,17 +227,34 @@ restartWith(new HomeView());
 
 ## 窗口间数据传递
 
-### 场景一：带参打开子界面（一次性数据）
+### 场景一：一次性数据传递（带参打开 / 更换视图）
+
+所有「切换到新视图」的导航方法都支持附加一个数据参数，目标视图通过
+[`onData(Object)`](FormView.java) 接收：
+
+```java
+// 目标视图：接收数据
+@Override
+protected void onData(Object data) {
+    this.item = (Item) data;
+}
+```
+
+| 导航场景 | 方法 | 说明 |
+|---------|------|------|
+| 进入子界面 | `addStack(new DetailView(), item)` | 压入新视图并传参 |
+| 原地替换 | `replaceThis(new EditView(), item)` | 同层替换并传参（保持父视图关系） |
+| 回到首页 | `restartWith(new HomeView(), payload)` | 清空栈、以新视图为根并传参 |
 
 ```java
 // 父界面：打开详情时传入物品
 .button("查看详情", click -> addStack(new DetailView(), selectedItem))
 
-// 子界面：接收数据
-@Override
-protected void onData(Object data) {
-    this.item = (Item) data;
-}
+// 编辑界面：替换为预览界面时把草稿传过去
+.button("预览", click -> replaceThis(new PreviewView(), draft))
+
+// 流程结束后回到首页，带上结算结果
+.button("完成", click -> restartWith(new HomeView(), result))
 ```
 
 ### 场景二：共享状态 + 通知更新（数据总线）
@@ -389,6 +421,9 @@ public class ShopView extends FormView {
 ```java
 // 编辑界面 → 预览界面（可 goBack 回到父菜单）
 replaceThis(new PreviewView(item));
+
+// 也可在替换时传递一次性数据（目标视图通过 onData 接收）
+replaceThis(new PreviewView(), draft);
 ```
 
 **建立新根**（`restartWith`）：清空整个视图栈，以新视图为根重新开始。
@@ -397,6 +432,9 @@ replaceThis(new PreviewView(item));
 ```java
 // 完成流程后回到首页（清空所有导航历史）
 restartWith(new HomeView());
+
+// 同样支持传递一次性数据
+restartWith(new HomeView(), result);
 ```
 
 ---
@@ -444,7 +482,6 @@ restartWith(new HomeView());
 </dependency>
 ```
 
-本模块仅依赖 `jframe_core`（用于 `PluginAware` 自动绑定机制）与 Nukkit MOT API，
-**不再依赖** `moe.him188.gui`。
+本模块仅依赖 `jframe_core`（用于 `PluginAware` 自动绑定机制）与 Nukkit MOT API，无额外第三方依赖。
 
 > 📖 更详细的 API 说明请参阅 [DEVELOPER.md](DEVELOPER.md)

@@ -1,5 +1,6 @@
 package io.github.JiangHu.jframe.command.test;
 
+import io.github.JiangHu.jframe.command.example.CaseController;
 import io.github.JiangHu.jframe.command.example.GuildController;
 import io.github.JiangHu.jframe.command.example.ShopController;
 import io.github.JiangHu.jframe.command.routing.CommandRegistry;
@@ -23,6 +24,7 @@ public final class CommandLogicTest {
         CommandRegistry registry = new CommandRegistry();
         registry.register(GuildController.class);
         registry.register(ShopController.class);
+        registry.register(CaseController.class);
 
         System.out.println("已注册根命令: " + registry.getRootCommands());
         System.out.println("路由总数: " + registry.getRoutes().size());
@@ -82,10 +84,10 @@ public final class CommandLogicTest {
         check("9. sell 默认 all=false", r9.success());
         check("9. sell 静态字段", "sword (all=false)".equals(ShopController.lastSell));
 
-        // 10. @RawArgs 原始参数透传（含子命令名 echo 本身）
+        // 10. @RawArgs 原始参数透传（不含子命令名 echo，仅剩余参数）
         CommandRoute.InvokeResult r10 = registry.dispatch(op, "shop", new String[]{"echo", "foo", "bar", "baz"});
         check("10. echo 原始透传", r10.success());
-        check("10. echo 静态字段", "echo foo bar baz".equals(ShopController.lastEcho));
+        check("10. echo 静态字段", "foo bar baz".equals(ShopController.lastEcho));
 
         // 11. @Sender Player 类型 → 非玩家执行失败（权限通过后由类型校验拦截）
         ShopController.spawnInvoked = false;
@@ -108,6 +110,64 @@ public final class CommandLogicTest {
         CommandRoute.InvokeResult r14 = registry.dispatch(op, "shop", new String[]{"buy", "apple", "notANumber"});
         check("14. 类型转换失败", !r14.success());
         check("14. 类型转换提示", r14.errorMessage() != null && r14.errorMessage().contains("参数错误"));
+
+        // ========== CaseController（大小写对齐 Nukkit）==========
+        // 注册时根命令为 "GameItem"（首字母大写），复刻真实插件场景。
+
+        // 15. 根命令归一化为小写：getRootCommands() 应含 "gameitem"（而非 "GameItem"）
+        check("15. 根命令归一化小写", registry.getRootCommands().contains("gameitem"));
+
+        // 16. 小写 dispatch 命中 main（模拟 Nukkit 回传 command.getName()="gameitem"）
+        CaseController.lastTriggered = null;
+        CommandRoute.InvokeResult r16 = registry.dispatch(op, "gameitem", new String[]{});
+        check("16. 小写根命令命中", r16.success());
+        check("16. 命中 main 方法", "main".equals(CaseController.lastTriggered));
+
+        // 17. give 子命令 + 位置参数（小写子命令）
+        CaseController.lastTriggered = null;
+        CommandRoute.InvokeResult r17 = registry.dispatch(op, "gameitem", new String[]{"give", "sword"});
+        check("17. give 子命令命中", r17.success());
+        check("17. give 参数绑定", "give:sword".equals(CaseController.lastTriggered));
+
+        // 18. 大写/混合大小写根命令也能命中（大小写不敏感，对齐 Nukkit）
+        CaseController.lastTriggered = null;
+        CommandRoute.InvokeResult r18 = registry.dispatch(op, "GameItem", new String[]{});
+        check("18. 大写根命令命中", r18.success() && "main".equals(CaseController.lastTriggered));
+        CaseController.lastTriggered = null;
+        CommandRoute.InvokeResult r18b = registry.dispatch(op, "GAMEITEM", new String[]{});
+        check("18b. 全大写根命令命中", r18b.success() && "main".equals(CaseController.lastTriggered));
+
+        // 19. 子命令大小写不敏感（玩家输入 /gameitem GIVE x 也能命中 give）
+        CaseController.lastTriggered = null;
+        CommandRoute.InvokeResult r19 = registry.dispatch(op, "gameitem", new String[]{"GIVE", "bow"});
+        check("19. 子命令大小写不敏感", r19.success() && "give:bow".equals(CaseController.lastTriggered));
+
+        // 20. 变量值保留原样大小写（路径变量是数据，不应被转小写）
+        CaseController.lastTriggered = null;
+        CommandRoute.InvokeResult r20 = registry.dispatch(op, "guild", new String[]{"create", "MyGuild"});
+        check("20. 变量值保留大小写", r20.success() && "MyGuild".equals(GuildController.lastCreateName));
+
+        // ========== --key=value 内联命名参数格式 ==========
+
+        // 21. --key=value 长选项内联格式（等价于 --reason 违规 分离格式）
+        CommandRoute.InvokeResult r21 = registry.dispatch(op, "guild", new String[]{"kick", "Steve", "--reason=违规"});
+        check("21. kick 内联命名参数", r21.success());
+        check("21. kick 静态字段", "Steve:违规".equals(GuildController.lastKick));
+
+        // 22. --key=value 可传递以 - 开头的值（内联格式优势；分离格式会把 -违规 误判为短选项）
+        CommandRoute.InvokeResult r22 = registry.dispatch(op, "guild", new String[]{"kick", "Alex", "--reason=-违规"});
+        check("22. kick 内联负号值", r22.success());
+        check("22. kick 静态字段", "Alex:-违规".equals(GuildController.lastKick));
+
+        // 23. --key=value 布尔内联 true
+        CommandRoute.InvokeResult r23 = registry.dispatch(op, "shop", new String[]{"sell", "sword", "--all=true"});
+        check("23. sell --all=true", r23.success());
+        check("23. sell 静态字段", "sword (all=true)".equals(ShopController.lastSell));
+
+        // 24. --key=value 布尔内联 false（显式覆盖默认值）
+        CommandRoute.InvokeResult r24 = registry.dispatch(op, "shop", new String[]{"sell", "sword", "--all=false"});
+        check("24. sell --all=false", r24.success());
+        check("24. sell 静态字段", "sword (all=false)".equals(ShopController.lastSell));
 
         System.out.println("==================== 测试汇总 ====================");
         System.out.println("通过: " + pass + "，失败: " + fail);

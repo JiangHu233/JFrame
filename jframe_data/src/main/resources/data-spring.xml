@@ -13,7 +13,7 @@
     -->
 
     <!-- 元数据缓存（内部）：扫描 @SaveField 字段并缓存反射结果 -->
-    <bean class="io.github.JiangHu.jframe.data.core.MetadataCache" id="metadataCache"/>
+    <bean class="io.github.JiangHu.jframe.data.core.meta.MetadataCache" id="metadataCache"/>
 
     <!-- 数据保存器（公开入口）：基于注解将对象序列化为 JSON 文件或反序列化回对象 -->
     <bean class="io.github.JiangHu.jframe.data.DataSaver" id="dataSaver">

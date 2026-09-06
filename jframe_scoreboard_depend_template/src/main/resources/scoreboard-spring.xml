@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+       http://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <!--
+        计分板模块 Bean 装配（单向 DAG，无循环依赖）：
+        创建顺序：templateEngine → scoreboardManager → scoreboardAPI
+
+        templateEngine   : 无依赖（最先创建，来自 jframe_dependency_template）
+        scoreboardManager: 构造器依赖 templateEngine（IScoreboardManager 延迟获取）
+        scoreboardAPI    : 构造器依赖 scoreboardManager + templateEngine（最后创建）
+    -->
+
+    <!-- 模板引擎（内部）：XML 解析 + SpEL 渲染 + 缓存 -->
+    <bean class="io.github.JiangHu.jframe.content_template.TemplateEngine" id="templateEngine"/>
+
+    <!-- 计分板管理器（内部）：模板注册表 + 玩家视图映射 + 生命周期 -->
+    <bean class="io.github.JiangHu.jframe.scoreboard.ScoreboardManager" id="scoreboardManager">
+        <constructor-arg name="engine" ref="templateEngine"/>
+    </bean>
+
+    <!-- 计分板服务（公开入口）：show/showIf/showAll/update/hide/loadTemplate -->
+    <bean class="io.github.JiangHu.jframe.scoreboard.ScoreboardAPI" id="scoreboardAPI">
+        <constructor-arg name="manager" ref="scoreboardManager"/>
+        <constructor-arg name="engine" ref="templateEngine"/>
+    </bean>
+
+</beans>

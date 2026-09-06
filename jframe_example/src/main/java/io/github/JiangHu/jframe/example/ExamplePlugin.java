@@ -3,41 +3,52 @@ package io.github.JiangHu.jframe.example;
 import cn.nukkit.Player;
 import cn.nukkit.command.Command;
 import cn.nukkit.command.CommandSender;
+import cn.nukkit.entity.Entity;
 import cn.nukkit.item.Item;
+import cn.nukkit.plugin.Plugin;
 import cn.nukkit.plugin.PluginBase;
+import io.github.JiangHu.jframe.ai.AiAPI;
 import io.github.JiangHu.jframe.command.CommandAPI;
-import io.github.JiangHu.jframe.core.module.PluginAware;
 import io.github.JiangHu.jframe.event.EventAPI;
+import io.github.JiangHu.jframe.example.command.AiController;
+import io.github.JiangHu.jframe.example.entity.TestNpcEntity;
 import io.github.JiangHu.jframe.example.inventory.InventoryTestView;
 import io.github.JiangHu.jframe.example.inventory.ShopInventoryView;
-import io.github.JiangHu.jframe.example.view.MainMenuView;
 import io.github.JiangHu.jframe.example.wrapper.ThunderSwordWrapper;
 import io.github.JiangHu.jframe.form.ViewAPI;
 import io.github.JiangHu.jframe.inventory.ui.InventoryAPI;
-import io.github.JiangHu.jframe.thread.ThreadAPI;
-import org.springframework.context.support.ClassPathXmlApplicationContext;
+import io.github.JiangHu.jframe.main.JFrameMain;
+import io.github.JiangHu.jframe.async.thread.ThreadAPI;
 
 /**
  * JFrame 示例插件主类。
  * <p>
- * 本类演示如何「使用框架各模块」搭建一个完整的 Nukkit 插件：
+ * 本类演示如何「作为业务插件依赖前置 JFrame」搭建一个完整的 Nukkit 插件：
  * <ol>
- *   <li>启动 Spring 容器，加载 event / form / thread / command / inventory 五个模块的服务 Bean</li>
- *   <li>绑定插件实例到所有 {@link PluginAware} Bean（含 EventEngine 与 CommandEngine）</li>
- *   <li>注册事件包装类</li>
- *   <li>注册声明式命令控制器（{@code /kit} 及其子命令）</li>
- *   <li>通过 {@code /jframe} 命令打开表单菜单</li>
+ *   <li>获取前置插件 {@link JFrameMain} 的单例</li>
+ *   <li>直接复用 JFrame 已创建好的 Spring 容器中的各模块 API（EventAPI / ViewAPI / CommandAPI / AiAPI 等）</li>
+ *   <li>用本插件类加载器扫描自身 jar 内的 {@code @Wrapper} / {@code @CommandController}，注册到框架共享容器</li>
+ *   <li>通过 {@code /jframe} 命令打开表单菜单，{@code /ai} 命令测试 AI 功能</li>
  * </ol>
  *
- * <h3>独立使用 Spring（不依赖 JFrameMain）</h3>
- * 本示例直接继承 {@link PluginBase}，用 {@link ClassPathXmlApplicationContext}
- * 加载各模块的 {@code *-spring.xml}。这是一种「脱离 {@code JFrameMain}、独立装配」的用法，
- * 适合不想继承框架主类、只需使用部分模块的插件。
+ * <h3>为什么不自己创建 Spring 容器？</h3>
+ * <p>
+ * {@link JFrameMain} 在其 {@code onEnable} 时已用 {@code AnnotationConfigApplicationContext}
+ * 创建好完整的 Spring 容器（基于 {@code MainSpringConfig}，非 XML），并完成了：
+ * <ul>
+ *   <li>加载全部模块 Bean（event / form / thread / command / inventory / ai / data）</li>
+ *   <li>绑定 {@code PluginAware} Bean（EventEngine / CommandEngine 等已绑定 JFrame 插件实例）</li>
+ *   <li>将各 API 注册到 Nukkit {@code ServiceManager}</li>
+ * </ul>
+ * 业务插件只需调用 {@link JFrameMain#getInstance()} 的门面方法（{@code getAiAPI()} 等）即可获取现成的 Bean，
+ * 无需重复加载 {@code *-spring.xml}，也无需处理 Nukkit 多插件类加载器的资源加载问题。
  *
- * <h3>Nukkit 类加载器隔离</h3>
- * Spring 解析 classpath 资源（{@code *-spring.xml}）时默认使用「线程上下文类加载器」。
- * Nukkit 主线程的上下文类加载器是服务器类加载器，看不到插件 jar 内部的资源，
- * 因此在 {@code onEnable} 期间切换为插件自身的类加载器，方法结束前还原。
+ * <h3>部署方式</h3>
+ * <ul>
+ *   <li>{@code plugin.yml} 声明 {@code depend: [JFrame]}</li>
+ *   <li>{@code pom.xml} 中 {@code jframe_main} 为 {@code provided} 作用域（不重复打包框架类）</li>
+ *   <li>服务器 {@code plugins/} 目录先放 {@code jframe_main.jar}，再放 {@code jframe_example.jar}</li>
+ * </ul>
  *
  * <h3>箱子界面对比演示</h3>
  * 通过 {@code /inv <jframe|fake>} 命令可对比两种打开虚拟箱子的方式：
@@ -45,82 +56,61 @@ import org.springframework.context.support.ClassPathXmlApplicationContext;
  *   <li>{@code /inv jframe} —— 使用本框架 {@code jframe_inventory}（声明式组件 + 假方块延迟打开）</li>
  *   <li>{@code /inv fake} —— 使用第三方 {@code com.nukkitx:fakeinventories} 库（原生假方块 API）</li>
  * </ul>
- * 两者底层都依赖「假方块 + 延迟打开」机制欺骗基岩版客户端，区别在于上层抽象：
- * jframe_inventory 提供声明式组件（Button/StorageBox/Filler）与布局管理，
- * 而 fakeinventories 需手动 setItem 与监听点击。
  */
 public class ExamplePlugin extends PluginBase {
-
-    /** Spring 应用上下文：持有 event / form / thread / command / inventory 五个模块的 Bean。 */
-    private ClassPathXmlApplicationContext applicationContext;
 
     private EventAPI eventAPI;
     private ViewAPI viewAPI;
     private ThreadAPI threadAPI;
     private CommandAPI commandAPI;
     private InventoryAPI inventoryAPI;
+    /** AI 服务（jframe_ai 模块门面） */
+    private AiAPI aiAPI;
 
 
     @Override
     public void onEnable() {
-        // 【关键】切换线程上下文类加载器为插件自身，确保 Spring 能找到 jar 内的 *-spring.xml 资源
-        ClassLoader serverClassLoader = Thread.currentThread().getContextClassLoader();
-        Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
-        try {
-            // 1. 启动 Spring 容器：加载 event / form / thread / command / inventory 五个模块的 XML
-            //    各模块内部均为单向 DAG，无循环依赖
-            applicationContext = new ClassPathXmlApplicationContext(
-                    "event-spring.xml",
-                    "form-spring.xml",
-                    "thread-spring.xml",
-                    "command-spring.xml",
-                    "inventory-spring.xml"
-            );
-
-            // 2. 获取各模块的服务 Bean
-            eventAPI = applicationContext.getBean("eventAPI", EventAPI.class);
-            viewAPI = applicationContext.getBean("viewService", ViewAPI.class);
-            threadAPI = applicationContext.getBean("threadAPI", ThreadAPI.class);
-            commandAPI = applicationContext.getBean("commandAPI", CommandAPI.class);
-            inventoryAPI = applicationContext.getBean("inventoryAPI", InventoryAPI.class);
-
-            // 3. 绑定插件实例：扫描容器中所有 PluginAware Bean（即 EventEngine）并注入插件实例。
-            //    EventEngine 需要插件实例才能向 Nukkit 注册事件监听。
-            for (PluginAware aware : applicationContext.getBeansOfType(PluginAware.class).values()) {
-                aware.bindPlugin(this);
-            }
-
-            // 4. 包扫描注册：自动发现 wrapper 包下所有 @Wrapper 类并注册
-            //    （类似 Spring 的 @ComponentScan，无需逐个手动 register）
-            eventAPI.scan("io.github.JiangHu.jframe.example.wrapper");
-
-            // 5. 命令模块：扫描 command 包下所有 @CommandController 类并注册。
-            //    CommandEngine 已在第 3 步作为 PluginAware Bean 被绑定插件实例，
-            //    因此注册的根命令（如 /kit）会立即同步到 Nukkit，无需在 plugin.yml 声明。
-            commandAPI.scan(getClass().getClassLoader(), "io.github.JiangHu.jframe.example.command");
-
-            // 6. 创建一个名为 "example" 的串行任务队列，供表单中的异步任务使用
-            threadAPI.createThreadTask("example");
-
-            getLogger().info("JFrame 示例插件已启用：/jframe 菜单 | /shop 商店 | /inv <jframe|fake> 箱子对比 | /invtest 全特性测试");
-        } finally {
-            Thread.currentThread().setContextClassLoader(serverClassLoader);
+        // 1. 获取前置插件 JFrame 的单例（其 onEnable 时已创建好 Spring 容器）
+        Plugin jframePlugin = getServer().getPluginManager().getPlugin("JFrame");
+        if (!(jframePlugin instanceof JFrameMain jframeMain)) {
+            throw new IllegalStateException(
+                    "前置插件 JFrame 未找到或类型不匹配，请确认已部署 jframe_main.jar 并在 plugin.yml 声明 depend: [JFrame]");
         }
+
+        // 2. 直接复用 JFrame 已创建好的 Spring 容器中的各模块 API
+        //    JFrameMain 在 onEnable 时已完成：创建容器、绑定 PluginAware、注册 ServiceManager
+        eventAPI = jframeMain.getEventAPI();
+        viewAPI = jframeMain.getViewAPI();
+        threadAPI = jframeMain.getThreadAPI();
+        commandAPI = jframeMain.getCommandAPI();
+        inventoryAPI = jframeMain.getInventoryAPI();
+        aiAPI = jframeMain.getAiAPI();
+
+        // 3. 包扫描注册：用本插件类加载器扫描 example 包下的 @Wrapper 类
+        //    （显式传入 getClass().getClassLoader()，因为要扫描的是 jframe_example.jar 内的类）
+        eventAPI.scan(getClass().getClassLoader(), "io.github.JiangHu.jframe.example.wrapper");
+
+        // 4. 命令模块：注入 AiAPI + 扫描 command 包下的 @CommandController 类
+        //    CommandEngine 已由 JFrameMain 绑定 JFrame 插件实例，
+        //    因此注册的根命令（如 /ai）会立即同步到 Nukkit，无需在 plugin.yml 声明。
+        //    AiController 用静态字段持有 AiAPI（jframe_command 仅支持无参构造），需在 scan 前注入。
+        // 注册 AI 测试用 NPC 实体类型（EntityHuman 子类，无怪物默认 AI）。
+        // 必须在 /ai spawn 之前完成注册，否则 Entity.createEntity("TestNpc", ...) 无法识别；
+        // TestNpcEntity.spawnAt 直接 new 构造不依赖注册，但注册后两种生成方式都可用。
+        Entity.registerEntity(TestNpcEntity.NETWORK_NAME, TestNpcEntity.class);
+
+        AiController.setAi(aiAPI);
+        commandAPI.scan(getClass().getClassLoader(), "io.github.JiangHu.jframe.example.command");
+
+        // 5. 创建一个名为 "example" 的串行任务队列，供表单中的异步任务使用
+        threadAPI.createThreadTask("example");
+
+        getLogger().info("JFrame 示例插件已启用：/jframe 菜单 | /shop 商店 | /inv <jframe|fake> 箱子对比 | /invtest 全特性测试 | /ai AI测试");
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         String name = command.getName();
-
-        if (name.equalsIgnoreCase("jframe")) {
-            if (!(sender instanceof Player player)) {
-                sender.sendMessage("§c该命令只能由玩家在游戏内执行");
-                return true;
-            }
-            // 打开主菜单：ViewAPI 会自动为该玩家创建视图管理器
-            viewAPI.sendForm(new MainMenuView(threadAPI, player), player);
-            return true;
-        }
 
         if (name.equalsIgnoreCase("sword")) {
             if (!(sender instanceof Player player)) {
@@ -178,20 +168,10 @@ public class ExamplePlugin extends PluginBase {
         return false;
     }
 
-
-
-
     @Override
     public void onDisable() {
-        // 先关闭线程池，再关闭 Spring 容器
-        if (inventoryAPI != null) {
-            inventoryAPI.closeAll();
-        }
-        if (threadAPI != null) {
-            threadAPI.stopAll();
-        }
-        if (applicationContext != null) {
-            applicationContext.close();
-        }
+        // 仅清理本插件创建的 AI 测试实体。
+        // 注意：不关闭 Spring 容器 / 线程池 / 箱子视图 —— 这些由前置插件 JFrameMain 统一管理生命周期。
+        AiController.clearAll();
     }
 }

@@ -10,6 +10,7 @@ import io.github.JiangHu.jframe.command.resolve.CommandContext;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -199,10 +200,13 @@ public class CommandRegistry {
                 ? new ArrayList<>(fullPath.subList(consumed, fullPath.size()))
                 : Collections.emptyList();
 
+        // 计算路径消耗后的剩余原始参数（去除已用于路由匹配的子命令段，保留命名参数原样）
+        String[] remainingRawArgs = computeRemainingRawArgs(args, parsed, consumed);
+
         CommandContext ctx = new CommandContext(
                 sender, canonicalRoot,
                 remainder, parsed.named(),
-                best.match.pathVars(), args);
+                best.match.pathVars(), remainingRawArgs);
 
         // ⑧ 执行
         return best.route.invoke(ctx);
@@ -236,6 +240,40 @@ public class CommandRegistry {
     }
 
     // ========== 内部工具 ==========
+
+    /**
+     * 计算路径消耗后的剩余原始参数。
+     * <p>
+     * 利用 {@link ArgumentResolver.ParsedArgs#positionalIndices()} 中记录的每个位置参数在原始
+     * {@code args} 数组中的下标，结合路径模式消耗的 token 数（{@code consumed}），定位到第一个
+     * <b>未被消耗</b>的位置参数在原始 {@code args} 中的起始位置，截取其后所有元素（含穿插的命名参数）。
+     * <p>
+     * {@code consumed} 包含根命令段（{@code fullPath[0]}），而根命令不在 {@code args} 中，
+     * 因此位置参数消耗数 = {@code consumed -1}。
+     *
+     * @param args    原始参数数组（Nukkit 传入）
+     * @param parsed  已解析的参数（含位置参数原始下标）
+     * @param consumed 路径模式消耗的 fullPath token 数（含根命令）
+     * @return 剩余原始参数数组（路径匹配后未消耗的部分）
+     */
+    private static String[] computeRemainingRawArgs(String[] args, ArgumentResolver.ParsedArgs parsed, int consumed) {
+        if (args == null || args.length == 0) {
+            return new String[0];
+        }
+        List<Integer> indices = parsed.positionalIndices();
+        int positionalConsumed = consumed - 1; // 减去根命令段
+        if (positionalConsumed <= 0) {
+            // 仅消耗了根命令，全部 args 为剩余
+            return args;
+        }
+        if (positionalConsumed < indices.size()) {
+            // 第一个未被消耗的位置参数在原始 args 中的下标
+            int start = indices.get(positionalConsumed);
+            return Arrays.copyOfRange(args, start, args.length);
+        }
+        // 所有位置参数已被路径消耗
+        return new String[0];
+    }
 
     /**
      * 拼接基础路径与方法路径。
