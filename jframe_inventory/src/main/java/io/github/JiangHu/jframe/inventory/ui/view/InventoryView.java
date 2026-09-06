@@ -87,6 +87,9 @@ public abstract class InventoryView {
     /** 窗口是否已注册到玩家（addWindow 已完成，防止打开过程中 InventoryCloseEvent 误触发清理） */
     private boolean windowRegistered = false;
 
+    /** 本次打开实际使用的延迟（tick），由 open(Player, int) 记录，供重复打开防抖窗口计算 */
+    private int openDelayTicks = OPEN_DELAY_TICKS;
+
     /**
      * 打开延迟（tick）：调用 {@code open()} 后等待多少 tick 再注册窗口（{@code addWindow}）。
      * <p>
@@ -379,9 +382,21 @@ public abstract class InventoryView {
     }
 
     /**
-     * 打开视图（延迟注册窗口策略）。
+     * 打开视图（延迟注册窗口策略，使用默认延迟 {@link #OPEN_DELAY_TICKS}）。
      * <p>
-     * 延迟 {@link #OPEN_DELAY_TICKS} tick 后调用 {@code player.addWindow()}，
+     * 等价于 {@code open(player, OPEN_DELAY_TICKS)}。
+     *
+     * @param player 玩家
+     * @see #open(Player, int)
+     */
+    public void open(Player player) {
+        open(player, OPEN_DELAY_TICKS);
+    }
+
+    /**
+     * 打开视图（延迟注册窗口策略，自定义延迟）。
+     * <p>
+     * 延迟 {@code delayTicks} tick 后调用 {@code player.addWindow()}，
      * 由 {@link VirtualInventory#onOpen} <b>同步</b>完成：
      * <ol>
      *   <li>发送客户端假方块（{@link cn.nukkit.network.protocol.UpdateBlockPacket} +
@@ -391,12 +406,20 @@ public abstract class InventoryView {
      * </ol>
      * <p>
      * 该方案与经过验证的 FakeInventories 库完全一致，确保网易版客户端兼容。
+     * <p>
+     * 本次实际使用的延迟会记录到实例状态（见 {@link #openDelayTicks()}），
+     * 供 {@link InventoryManager} 计算"重复打开防抖"窗口，
+     * 避免自定义长延迟时防抖窗口过短导致界面被误关重开。
      *
-     * @param player 玩家
+     * @param player     玩家
+     * @param delayTicks 打开延迟（tick），负值视为 0（立即打开）；
+     *                   网易版客户端兼容建议不低于 5 tick（过短可能导致窗口打不开）
      */
-    public void open(Player player) {
+    public void open(Player player, int delayTicks) {
         this.viewer = player;
         this.cleanedUp = false;
+        // 记录本次打开实际使用的延迟（负值归一化为 0，表示立即打开）
+        this.openDelayTicks = Math.max(0, delayTicks);
 
         if (plugin == null) {
             JFrameLog.error("InventoryView", "plugin 未注入，无法打开界面");
@@ -412,7 +435,7 @@ public abstract class InventoryView {
 
             VirtualInventory inv = this.inventory;
 
-            // 3. 延迟 OPEN_DELAY_TICKS 后注册窗口：
+            // 3. 延迟 openDelayTicks 后注册窗口：
             //    addWindow → VirtualInventory.onOpen 内同步发送客户端假方块 + ContainerOpenPacket
             cn.nukkit.Server.getInstance().getScheduler()
                     .scheduleDelayedTask(plugin, () -> {
@@ -424,7 +447,7 @@ public abstract class InventoryView {
                         this.windowRegistered = true;
                         // 生命周期回调（窗口已注册后调用）
                         onOpen();
-                    }, OPEN_DELAY_TICKS);
+                    }, this.openDelayTicks);
         } catch (Exception e) {
             JFrameLog.error("InventoryView", "Failed to open inventory for " + player.getName(), e);
         }
@@ -496,6 +519,18 @@ public abstract class InventoryView {
      */
     public int size() {
         return size;
+    }
+
+    /**
+     * 获取本次打开实际使用的延迟（tick）。
+     * <p>
+     * 由 {@link #open(Player, int)} 记录，未打开过时为默认值 {@link #OPEN_DELAY_TICKS}。
+     * 供 {@link InventoryManager} 计算"重复打开防抖"窗口。
+     *
+     * @return 打开延迟（tick）
+     */
+    public int openDelayTicks() {
+        return openDelayTicks;
     }
 
     /**

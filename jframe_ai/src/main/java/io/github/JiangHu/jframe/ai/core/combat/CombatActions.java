@@ -1,9 +1,11 @@
 package io.github.JiangHu.jframe.ai.core.combat;
 
 import cn.nukkit.entity.Entity;
+import cn.nukkit.event.entity.EntityDamageByEntityEvent;
 import cn.nukkit.event.entity.EntityDamageEvent;
 import cn.nukkit.item.Item;
 import cn.nukkit.math.Vector3;
+import cn.nukkit.network.protocol.AnimatePacket;
 
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -12,10 +14,21 @@ import java.util.concurrent.ThreadLocalRandom;
  * <p>
  * 提供四种核心战斗能力：
  * <ul>
- *   <li>{@link #meleeAttack} —— 近战攻击：对目标施加 {@link EntityDamageEvent} 伤害</li>
+ *   <li>{@link #meleeAttack} —— 近战攻击：广播挥刀动画并对目标施加
+ *       {@link EntityDamageByEntityEvent} 伤害（携带攻击者，触发原版击退）</li>
  *   <li>{@link #shootArrow} —— 射箭：创建箭抛射物并赋予朝向目标的速度（含重力补偿与散布）</li>
  *   <li>{@link #throwProjectile} —— 投掷抛射物：通用版，支持雪球/药水/经验瓶等任意已注册抛射物</li>
  *   <li>{@link #useItemOn} / {@link #useItemOnSelf} —— 使用物品：对目标或自身使用物品（药水、命名牌等）</li>
+ * </ul>
+ *
+ * <h3>动画说明</h3>
+ * AI 假人（服务端 NPC 实体）没有客户端本地动画，所有动作的动画表现均由本类通过
+ * {@link AnimatePacket} 主动广播给视野内玩家。每个动作方法均提供带
+ * {@code AnimatePacket.Action} 参数的重载用于自定义动画，约定 <b>{@code action = null}
+ * 表示不广播动画</b>（适配自带动画逻辑的自定义实体）。各动作默认动画：
+ * <ul>
+ *   <li>近战 / 射箭 / 投掷 / 对目标使用物品 —— {@link #DEFAULT_COMBAT_ANIMATION}（挥臂）</li>
+ *   <li>对自身使用物品 —— 不广播（原版吃喝动画由客户端本地播放，服务端无对应动作）</li>
  * </ul>
  *
  * <h3>设计说明</h3>
@@ -23,6 +36,10 @@ import java.util.concurrent.ThreadLocalRandom;
  *   <li>所有方法均为<b>无状态</b>，仅依赖传入实体与世界状态，线程安全（随机数使用
  *       {@link ThreadLocalRandom}）。</li>
  *   <li>攻击/射击前会自动令执行者面向目标（设置 {@code yaw}），使动作表现自然。</li>
+ *   <li>近战伤害使用 {@link EntityDamageByEntityEvent}（damager 在前的四参构造器），
+ *       使 Nukkit {@code EntityLiving.attack()} 的原版击退分支生效，击退力度与方向
+ *       自动与真人 PVP 对齐（默认 knockBack = 0.4）。</li>
+ *   <li>时序统一为<b>先动画、后结算</b>：伤害事件被取消时"挥空刀"动画照播，符合原版观感。</li>
  *   <li>射箭与投掷采用<b>经验性重力补偿</b>：根据距离给方向向量一个向上分量，使远距离
  *       也能大致命中；{@code inaccuracy} 参数控制散布程度，模拟 AI 的不精确瞄准。</li>
  *   <li>抛射物通过 {@link Entity#createEntity(String, cn.nukkit.level.Position, Object...)}
@@ -31,14 +48,18 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * <h3>典型用法</h3>
  * <pre>{@code
- * // 近战
+ * // 近战（默认挥刀动画 + 原版击退）
  * combat.meleeAttack(zombie, player, 4.0f);
+ * // 近战自定义动画（如暴击表现），传 null 关闭动画
+ * combat.meleeAttack(zombie, player, 4.0f, AnimatePacket.Action.CRITICAL_HIT);
  * // 射箭（速度 1.5，散布 0.3）
  * combat.shootArrow(skeleton, player, 1.5, 0.3);
  * // 投掷药水
  * combat.throwProjectile(witch, "SplashPotion", player, 1.2, 0.2);
  * // 对友军使用治疗物品
  * combat.useItemOn(healer, ally, healingItem);
+ * // 独立播放任意实体动画
+ * combat.playAnimation(boss, AnimatePacket.Action.CRITICAL_HIT);
  * }</pre>
  */
 public class CombatActions {
@@ -55,9 +76,12 @@ public class CombatActions {
     static final double PROJECTILE_GRAVITY = 0.05;
     /** 瞄准点相对目标脚部的高度（躯干中心，避免箭飞过目标头顶） */
     private static final double TARGET_AIM_HEIGHT = 1.0;
+    /** 战斗动作默认动画：挥臂（近战挥刀 / 射箭 / 投掷 / 对目标使用物品共用） */
+    public static final AnimatePacket.Action DEFAULT_COMBAT_ANIMATION = AnimatePacket.Action.SWING_ARM;
 
     /**
-     * 近战攻击：令 {@code attacker} 面向 {@code target} 并对其施加近战伤害。
+     * 近战攻击：令 {@code attacker} 面向 {@code target}，广播默认挥刀动画
+     * （{@link #DEFAULT_COMBAT_ANIMATION}）并对其施加近战伤害。
      *
      * @param attacker 攻击者
      * @param target   目标
@@ -65,13 +89,73 @@ public class CombatActions {
      * @return true 表示伤害成功施加（未被事件取消）
      */
     public boolean meleeAttack(Entity attacker, Entity target, float damage) {
+        return meleeAttack(attacker, target, damage, DEFAULT_COMBAT_ANIMATION);
+    }
+
+    /**
+     * 近战攻击：令 {@code attacker} 面向 {@code target}，广播指定动画并对其施加近战伤害。
+     * <p>
+     * 伤害通过 {@link EntityDamageByEntityEvent}（damager 在前的四参构造器）施加，
+     * Nukkit {@code EntityLiving.attack()} 中的原版击退分支因此生效，击退力度与方向
+     * 自动与真人 PVP 对齐（默认 knockBack = 0.4）。时序为先动画、后结算伤害：
+     * 伤害事件被取消时"挥空刀"动画照播，符合原版"先挥刀后掉血"观感。
+     *
+     * @param attacker 攻击者
+     * @param target   目标
+     * @param damage   伤害值（半心）
+     * @param action   攻击动画；{@code null} 表示不广播动画（适配自带动画的自定义实体）
+     * @return true 表示伤害成功施加（未被事件取消）
+     */
+    public boolean meleeAttack(Entity attacker, Entity target, float damage, AnimatePacket.Action action) {
         if (attacker == null || target == null || target.closed || damage <= 0) {
             return false;
         }
         faceTo(attacker, target);
-        EntityDamageEvent event = new EntityDamageEvent(
-                attacker, EntityDamageEvent.DamageCause.ENTITY_ATTACK, damage);
+        if (action != null) {
+            playAnimation(attacker, action);
+        }
+        EntityDamageEvent event = new EntityDamageByEntityEvent(
+                attacker, target, EntityDamageEvent.DamageCause.ENTITY_ATTACK, damage);
         return target.attack(event);
+    }
+
+    /**
+     * 向视野内玩家广播实体的指定动作动画。
+     * <p>
+     * AI 假人（服务端 NPC 实体）没有客户端本地动画，必须由服务端主动广播
+     * {@link AnimatePacket} 才有动作表现；本方法按实体所在区块广播给视野内玩家，
+     * 与 Nukkit 官方播实体动画姿势一致。可用于独立播放任意动画（如受击、暴击表现）。
+     *
+     * @param entity 动画实体
+     * @param action 动画动作
+     * @return true 表示广播成功；实体为空/已关闭/未加入世界（{@code getLevel() == null}）时返回 false
+     */
+    public boolean playAnimation(Entity entity, AnimatePacket.Action action) {
+        if (entity == null || entity.closed || action == null) {
+            return false;
+        }
+        cn.nukkit.level.Level level = entity.getLevel();
+        if (level == null) {
+            return false;
+        }
+        // 按实体所在区块广播给视野内玩家（Level.addChunkPacket 仅提供区块坐标重载）
+        level.addChunkPacket((int) entity.x >> 4, (int) entity.z >> 4,
+                buildAnimationPacket(entity.getId(), action));
+        return true;
+    }
+
+    /**
+     * 构造实体动画广播包（纯函数，便于单元测试）。
+     *
+     * @param entityId 动画实体 ID
+     * @param action   动画动作
+     * @return 动画包
+     */
+    static AnimatePacket buildAnimationPacket(long entityId, AnimatePacket.Action action) {
+        AnimatePacket packet = new AnimatePacket();
+        packet.eid = entityId;
+        packet.action = action;
+        return packet;
     }
 
     /**
@@ -86,7 +170,7 @@ public class CombatActions {
     }
 
     /**
-     * 射箭：向 {@code target} 射出一支箭，可指定速度与散布。
+     * 射箭：向 {@code target} 射出一支箭，可指定速度与散布，广播默认挥臂动画。
      *
      * @param shooter    射手
      * @param target     目标
@@ -95,11 +179,26 @@ public class CombatActions {
      * @return 生成的箭实体；失败返回 {@code null}
      */
     public Entity shootArrow(Entity shooter, Entity target, double speed, double inaccuracy) {
-        return throwProjectile(shooter, ARROW_TYPE, target, speed, inaccuracy);
+        return shootArrow(shooter, target, speed, inaccuracy, DEFAULT_COMBAT_ANIMATION);
     }
 
     /**
-     * 投掷抛射物：向 {@code target} 发射指定类型的抛射物。
+     * 射箭：向 {@code target} 射出一支箭，可指定速度、散布与动画。
+     *
+     * @param shooter    射手
+     * @param target     目标
+     * @param speed      初速度（方块/tick）
+     * @param inaccuracy 散布程度（0=精准，越大越偏）
+     * @param action     射击动画；{@code null} 表示不广播动画
+     * @return 生成的箭实体；失败返回 {@code null}
+     */
+    public Entity shootArrow(Entity shooter, Entity target, double speed, double inaccuracy,
+                             AnimatePacket.Action action) {
+        return throwProjectile(shooter, ARROW_TYPE, target, speed, inaccuracy, action);
+    }
+
+    /**
+     * 投掷抛射物：向 {@code target} 发射指定类型的抛射物，广播默认挥臂动画。
      *
      * @param shooter        投掷者
      * @param projectileType 抛射物注册名（如 {@code "Arrow"}、{@code "Snowball"}、
@@ -111,6 +210,25 @@ public class CombatActions {
      */
     public Entity throwProjectile(Entity shooter, String projectileType, Entity target,
                                   double speed, double inaccuracy) {
+        return throwProjectile(shooter, projectileType, target, speed, inaccuracy, DEFAULT_COMBAT_ANIMATION);
+    }
+
+    /**
+     * 投掷抛射物：向 {@code target} 发射指定类型的抛射物，可指定动画。
+     * <p>
+     * 时序为先广播动画、后生成抛射物（先挥臂后出箭，符合原版观感）。
+     *
+     * @param shooter        投掷者
+     * @param projectileType 抛射物注册名（如 {@code "Arrow"}、{@code "Snowball"}、
+     *                       {@code "SplashPotion"}、{@code "ThrownExpBottle"} 等）
+     * @param target         目标
+     * @param speed          初速度（方块/tick）
+     * @param inaccuracy     散布程度（0=精准，越大越偏）
+     * @param action         投掷动画；{@code null} 表示不广播动画
+     * @return 生成的抛射物实体；失败返回 {@code null}
+     */
+    public Entity throwProjectile(Entity shooter, String projectileType, Entity target,
+                                  double speed, double inaccuracy, AnimatePacket.Action action) {
         if (shooter == null || target == null || shooter.closed || target.closed) {
             return null;
         }
@@ -118,6 +236,9 @@ public class CombatActions {
             return null;
         }
         faceTo(shooter, target);
+        if (action != null) {
+            playAnimation(shooter, action);
+        }
         // 发射点：射手眼部位置
         cn.nukkit.level.Position launchPos = new cn.nukkit.level.Position(
                 shooter.x, shooter.y + EYE_HEIGHT, shooter.z, shooter.getLevel());
@@ -136,7 +257,7 @@ public class CombatActions {
     }
 
     /**
-     * 对目标实体使用物品（如对敌人泼洒药水、对生物使用命名牌）。
+     * 对目标实体使用物品（如对敌人泼洒药水、对生物使用命名牌），广播默认挥臂动画。
      *
      * @param user   使用者
      * @param target 目标实体
@@ -144,23 +265,57 @@ public class CombatActions {
      * @return true 表示使用成功
      */
     public boolean useItemOn(Entity user, Entity target, Item item) {
+        return useItemOn(user, target, item, DEFAULT_COMBAT_ANIMATION);
+    }
+
+    /**
+     * 对目标实体使用物品（如对敌人泼洒药水、对生物使用命名牌），可指定动画。
+     *
+     * @param user   使用者
+     * @param target 目标实体
+     * @param item   物品（会被消耗）
+     * @param action 使用动画；{@code null} 表示不广播动画
+     * @return true 表示使用成功
+     */
+    public boolean useItemOn(Entity user, Entity target, Item item, AnimatePacket.Action action) {
         if (user == null || target == null || item == null) {
             return false;
         }
         faceTo(user, target);
+        if (action != null) {
+            playAnimation(user, action);
+        }
         return item.useOn(target);
     }
 
     /**
      * 对自身使用物品（如食用食物恢复、对自己施加药水效果）。
+     * <p>
+     * 默认不广播动画：原版吃喝动画由客户端本地播放，服务端 {@link AnimatePacket}
+     * 无对应动作；如需表现可通过带 {@code action} 参数的重载显式指定。
      *
      * @param user 使用者
      * @param item 物品（会被消耗）
      * @return true 表示使用成功
      */
     public boolean useItemOnSelf(Entity user, Item item) {
+        return useItemOnSelf(user, item, null);
+    }
+
+    /**
+     * 对自身使用物品（如食用食物恢复、对自己施加药水效果），可指定动画。
+     *
+     * @param user   使用者
+     * @param item   物品（会被消耗）
+     * @param action 使用动画；{@code null} 表示不广播动画
+     * @return true 表示使用成功
+     */
+    public boolean useItemOnSelf(Entity user, Item item, AnimatePacket.Action action) {
         if (user == null || item == null) {
             return false;
+        }
+        if (action != null) {
+            playAnimation(user, action);
         }
         return item.useOn(user);
     }

@@ -9,7 +9,7 @@
         <version>1.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>jframe_event</artifactId>
+    <artifactId>jframe_title_depend_template</artifactId>
 
     <properties>
         <maven.compiler.source>24</maven.compiler.source>
@@ -18,11 +18,23 @@
     </properties>
 
     <dependencies>
-        <!-- 依赖 core 模块：复用 PluginAware 等框架级契约 -->
         <dependency>
             <groupId>io.github.JiangHu.jframe</groupId>
             <artifactId>jframe_core</artifactId>
-            <version>1.0-SNAPSHOT</version>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.JiangHu.jframe</groupId>
+            <artifactId>jframe_template</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- 测试 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.11.4</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 

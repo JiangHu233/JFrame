@@ -1,6 +1,6 @@
 # jframe_core — 维护者文档
 
-> 面向模块维护者。记录核心基础设施的实现原理：PluginAware 绑定机制、ForPlugin 作用域代理、跨插件类加载策略、注解扫描封装、统一异常与日志、纠缠值的并发模型与广播流程、函数式映射的键源设计。
+> 面向模块维护者。记录核心基础设施的实现原理：PluginAware 绑定机制、ForPlugin 作用域代理、跨插件类加载策略、注解扫描封装、统一异常与日志、纠缠值的并发模型与广播流程、函数式映射的键源设计、倒计时触发器的并发模型。
 > 使用文档请看 [README.md](README.md)，数据容器详细文档请看 [data/README.md](data/README.md)。
 
 ---
@@ -18,7 +18,8 @@
 - [九、两阶段广播流程](#九两阶段广播流程)
 - [十、异构纠缠的实现](#十异构纠缠的实现)
 - [十一、函数式映射的键源设计](#十一函数式映射的键源设计)
-- [十二、扩展指南](#十二扩展指南)
+- [十二、倒计时触发器的并发模型](#十二倒计时触发器的并发模型)
+- [十三、扩展指南](#十三扩展指南)
 
 ---
 
@@ -521,7 +522,37 @@ public interface Entangled {
 
 ---
 
-## 十二、扩展指南
+## 十二、倒计时触发器的并发模型
+
+[`CountdownTrigger`](data/trigger/CountdownTrigger.java) 采用「**同步段判定触发权 + 锁外执行 action**」模型，与纠缠体系的「状态更新段持锁、回调锁外执行」思路一致，但锁粒度为**实例级**（`synchronized(this)`），无全局静态锁：
+
+```java
+public boolean tick() {
+    final boolean fire;
+    synchronized (this) {                    // ① 同步段：状态判定
+        if (cancelled || remaining <= 0) return false;
+        remaining--;
+        fire = remaining == 0;
+        if (fire) {
+            triggerCount++;
+            if (mode == Mode.RECURRING) remaining = count;   // 自动开始下一轮
+        }
+    }
+    if (fire) runAction();                   // ② 锁外：执行绑定函数
+    return fire;
+}
+```
+
+设计要点：
+
+- **恰好一次**：触发权（`remaining` 归零判定）在同步段内完成，并发调用下绑定函数对每次归零恰好执行一次，不会重复触发。
+- **锁外执行**：`runAction()` 在同步段外调用，action 内可安全调用 `tick()` / `reset()` / `cancel()`（重入同步段）而不会死锁；也避免 action 耗时长导致其他线程阻塞在计数上。
+- **异常隔离**：action 抛出的 `RuntimeException` 由 `errorHandler` 捕获（默认打印 `System.err`），不影响计数状态；`RECURRING` 模式异常后仍继续下一轮。
+- **可见性**：状态字段 `volatile`，查询方法（`getRemaining()` / `isCancelled()` 等）无锁读取，读到的是最近一次同步段提交的值。
+
+---
+
+## 十三、扩展指南
 
 ### 新增一个 PluginAware Bean
 
@@ -559,6 +590,7 @@ public interface Entangled {
 
 - **新的响应式容器**：若需要不同于 `EntangledValue` 的语义（如带版本的值、限流通知），可实现 [`Entangled`](data/reactive/Entangled.java) 接口加入现有纠缠体系，复用通道与广播机制。
 - **新的映射类型**：继承 [`AbstractFunctionalMap`](data/map/AbstractFunctionalMap.java)，指定 `<S, K>` 泛型与 `keyExtractor`，复用加载 / 过期 / 淘汰框架。
+- **新的触发类型**：若需要按条件（而非按次数）触发，可参考 [`CountdownTrigger`](data/trigger/CountdownTrigger.java) 的「同步段判定触发权 + 锁外执行 action」模型，替换计数判定逻辑即可。
 
 ### 修改纠缠体系并发策略
 
@@ -567,4 +599,4 @@ public interface Entangled {
 - 细化为每通道锁，但必须妥善处理通道合并（`mergeFrom`）的锁顺序，避免死锁。
 - 或改用无锁结构（如 `ConcurrentHashMap` 存储成员 + CAS 更新值），但广播的原子性保障会更复杂。
 
-> 任何修改请同步更新 [data/README.md](data/README.md) 的线程安全说明与测试覆盖（[`EntangledValueTest`](../../../../../test/java/io/github/JiangHu/jframe/core/data/reactive/EntangledValueTest.java) 含 17 类场景、65 个断言）。
+> 任何修改请同步更新 [data/README.md](data/README.md) 的线程安全说明与测试覆盖（[`EntangledValueTest`](../../../../../test/java/io/github/JiangHu/jframe/core/data/reactive/EntangledValueTest.java) 含 17 类场景、65 个断言；[`CountdownTriggerTest`](../../../../../test/java/io/github/JiangHu/jframe/core/data/trigger/CountdownTriggerTest.java) 含 11 类场景、103 个断言）。

@@ -9,6 +9,7 @@ import io.github.JiangHu.jframe.form.config.FormSpringConfig;
 import io.github.JiangHu.jframe.inventory.config.InventorySpringConfig;
 import io.github.JiangHu.jframe.async.config.AsyncSpringConfig;
 import io.github.JiangHu.jframe.scoreboard.config.ScoreboardSpringConfig;
+import io.github.JiangHu.jframe.title.config.TitleSpringConfig;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.ImportResource;
@@ -33,7 +34,8 @@ import org.springframework.context.annotation.ImportResource;
         DataSpringConfig.class,
         InventorySpringConfig.class,
         AiSpringConfig.class,
-        ScoreboardSpringConfig.class
+        ScoreboardSpringConfig.class,
+        TitleSpringConfig.class
 })
 public class MainSpringConfig {
 }

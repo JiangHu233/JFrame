@@ -10,9 +10,9 @@ package io.github.JiangHu.jframe.content_template.ast;
  * <ul>
  *   <li>{@link TextNode} — 纯文本，原样输出</li>
  *   <li>{@link ExpressionNode} — {@code {{...}}} 表达式，SpEL 求值后输出</li>
- *   <li>{@link IfNode} — {@code <if>/<elif>/<else>} 条件分支</li>
- *   <li>{@link EachNode} — {@code <each>} 行内循环（拼接成一行）</li>
+ *   <li>{@link IfNode} — 行内 {@code <if>/<elif>/<else>} 条件分支</li>
+ *   <li>{@link ForNode} — 行内 {@code <for>} 循环（拼接成一行）</li>
  * </ul>
  */
-public sealed interface TemplateNode permits TextNode, ExpressionNode, IfNode, EachNode {
+public sealed interface TemplateNode permits TextNode, ExpressionNode, IfNode, ForNode {
 }

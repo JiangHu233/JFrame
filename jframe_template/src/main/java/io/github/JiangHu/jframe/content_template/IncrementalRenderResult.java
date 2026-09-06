@@ -17,8 +17,8 @@ import java.util.Set;
  * <h3>变更类型</h3>
  * <ul>
  *   <li><b>内容变更</b>（{@code changedLineIndices} 非空）：某些行的文本变了，行数不变</li>
- *   <li><b>结构变更</b>（{@code structureChanged = true}）：行数变化（DynamicLine 展开数变化、
- *       StaticLine 条件显隐切换），必须全量重建</li>
+ *   <li><b>结构变更</b>（{@code structureChanged = true}）：行数变化（块级 if/for 展开行数变化），
+ *       必须全量重建</li>
  *   <li><b>标题变更</b>（{@code titleChanged = true}）：标题文本变化</li>
  *   <li><b>无变更</b>（{@code hasChanges() = false}）：可完全跳过，不发送任何数据包</li>
  * </ul>

@@ -49,30 +49,74 @@ public class InventoryAPI implements PluginAware {
     }
 
     /**
-     * 打开视图（鲁棒模式，带重复打开保护）。
+     * 打开视图（鲁棒模式，带重复打开保护，使用默认打开延迟）。
      * <p>
      * 如果玩家已有活跃视图（正在打开或已打开），<b>忽略</b>本次请求，避免重复打开。
      * 这能有效吸收网易版客户端右键时短时间内重复发送的事件，防止界面秒关。
      * <p>
      * <b>界面切换</b>请使用 {@link #forceOpenView}。
+     * <p>
+     * 等价于 {@code openView(player, view, InventoryView.OPEN_DELAY_TICKS)}。
      *
      * @param player 玩家
      * @param view   视图
+     * @see #openView(Player, InventoryView, int)
      */
     public void openView(Player player, InventoryView view) {
         manager.openView(player, view);
     }
 
     /**
-     * 强制打开视图（关闭当前视图后打开新视图）。
+     * 打开视图（鲁棒模式，带重复打开保护，自定义打开延迟）。
+     * <p>
+     * 与 {@link #openView(Player, InventoryView)} 行为一致（防抖保护、重复打开忽略），
+     * 但使用调用方指定的延迟（tick）等待后再弹出界面。
+     * 防抖窗口会按本视图实际使用的延迟计算，长延迟视图不会在弹出前被误判超时。
+     * <p>
+     * <b>使用示例</b>：延迟 20 tick（1 秒）后打开
+     * <pre>{@code
+     * inventoryAPI.openView(player, new ShopView(), 20);
+     * }</pre>
+     *
+     * @param player     玩家
+     * @param view       视图
+     * @param delayTicks 打开延迟（tick），负值视为 0（立即打开）；
+     *                   网易版客户端兼容建议不低于 5 tick（过短可能导致窗口打不开）
+     * @see InventoryView#OPEN_DELAY_TICKS
+     */
+    public void openView(Player player, InventoryView view, int delayTicks) {
+        manager.openView(player, view, delayTicks);
+    }
+
+    /**
+     * 强制打开视图（关闭当前视图后打开新视图，使用默认打开延迟）。
      * <p>
      * 用于<b>界面切换</b>场景：无论玩家当前是否有活跃视图，都会先关闭旧的再打开新的。
+     * <p>
+     * 等价于 {@code forceOpenView(player, view, InventoryView.OPEN_DELAY_TICKS)}。
      *
      * @param player 玩家
      * @param view   视图
+     * @see #forceOpenView(Player, InventoryView, int)
      */
     public void forceOpenView(Player player, InventoryView view) {
         manager.forceOpenView(player, view);
+    }
+
+    /**
+     * 强制打开视图（关闭当前视图后打开新视图，自定义打开延迟）。
+     * <p>
+     * 与 {@link #forceOpenView(Player, InventoryView)} 行为一致（不检查防抖、
+     * 先关闭旧视图再打开新视图），但使用调用方指定的延迟（tick）等待后再弹出界面。
+     * 适合界面切换时配合过渡动画、延迟跳转等场景。
+     *
+     * @param player     玩家
+     * @param view       视图
+     * @param delayTicks 打开延迟（tick），负值视为 0（立即打开）；
+     *                   网易版客户端兼容建议不低于 5 tick（过短可能导致窗口打不开）
+     */
+    public void forceOpenView(Player player, InventoryView view, int delayTicks) {
+        manager.forceOpenView(player, view, delayTicks);
     }
 
     /**

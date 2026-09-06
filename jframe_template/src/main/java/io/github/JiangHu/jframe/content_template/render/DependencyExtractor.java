@@ -1,11 +1,12 @@
 package io.github.JiangHu.jframe.content_template.render;
 
 import io.github.JiangHu.jframe.content_template.Template;
-import io.github.JiangHu.jframe.content_template.ast.DynamicLine;
-import io.github.JiangHu.jframe.content_template.ast.EachNode;
+import io.github.JiangHu.jframe.content_template.ast.ConditionalBlock;
 import io.github.JiangHu.jframe.content_template.ast.ExpressionNode;
+import io.github.JiangHu.jframe.content_template.ast.ForNode;
 import io.github.JiangHu.jframe.content_template.ast.IfNode;
 import io.github.JiangHu.jframe.content_template.ast.LineEntry;
+import io.github.JiangHu.jframe.content_template.ast.LoopBlock;
 import io.github.JiangHu.jframe.content_template.ast.StaticLine;
 import io.github.JiangHu.jframe.content_template.ast.TemplateNode;
 import io.github.JiangHu.jframe.content_template.ast.TextNode;
@@ -84,7 +85,7 @@ public class DependencyExtractor {
     }
 
     /**
-     * 从单个行内节点提取依赖（递归处理嵌套的 if/each）。
+     * 从单个行内节点提取依赖（递归处理嵌套的 if/for）。
      */
     private void extractFromNode(TemplateNode node, Set<String> deps) {
         switch (node) {
@@ -101,9 +102,9 @@ public class DependencyExtractor {
                     extractFromNodesInto(ifn.elseNodes(), deps);
                 }
             }
-            case EachNode en -> {
-                extractFromSpelExpression(en.itemsKey(), deps);
-                extractFromNodesInto(en.bodyNodes(), deps);
+            case ForNode fn -> {
+                extractFromSpelExpression(fn.itemsKey(), deps);
+                extractFromNodesInto(fn.bodyNodes(), deps);
             }
         }
     }
@@ -168,33 +169,49 @@ public class DependencyExtractor {
     // ===== 行条目依赖提取 =====
 
     /**
-     * 从行条目（StaticLine / DynamicLine）提取变量依赖。
+     * 从行条目（StaticLine / ConditionalBlock / LoopBlock）提取变量依赖。
      *
-     * <p>对于 {@link StaticLine}：提取 {@code ifCond} 条件 + 行内节点的依赖。
-     * <br>对于 {@link DynamicLine}：提取 {@code itemsKey} 列表键 + 循环体节点的依赖。
+     * <p>对于 {@link StaticLine}：提取行内节点的依赖。
+     * <br>对于 {@link ConditionalBlock}：提取所有分支条件 + 所有子条目的依赖（保守并集，
+     * 因为分支选择依赖运行时数据）。
+     * <br>对于 {@link LoopBlock}：提取 {@code itemsKey} 列表键 + 循环体子条目的依赖
+     * （列表本身变化会影响展开行数）。
      *
      * @param entry 行条目
      * @return 依赖的变量名集合
      */
     public Set<String> extractFromLineEntry(LineEntry entry) {
         Set<String> deps = new HashSet<>();
+        extractFromLineEntryInto(entry, deps);
+        return Collections.unmodifiableSet(deps);
+    }
+
+    /**
+     * 从行条目提取依赖，追加到已有集合（递归处理块级嵌套）。
+     */
+    private void extractFromLineEntryInto(LineEntry entry, Set<String> deps) {
         switch (entry) {
-            case StaticLine sl -> {
-                // 行级条件表达式的依赖
-                if (sl.ifCond() != null && !sl.ifCond().isBlank()) {
-                    extractFromSpelExpression(sl.ifCond(), deps);
+            case StaticLine sl -> extractFromNodesInto(sl.nodes(), deps);
+            case ConditionalBlock cb -> {
+                for (ConditionalBlock.Branch branch : cb.branches()) {
+                    extractFromSpelExpression(branch.condition(), deps);
+                    for (LineEntry sub : branch.entries()) {
+                        extractFromLineEntryInto(sub, deps);
+                    }
                 }
-                // 行内节点的依赖
-                extractFromNodesInto(sl.nodes(), deps);
+                if (cb.elseEntries() != null) {
+                    for (LineEntry sub : cb.elseEntries()) {
+                        extractFromLineEntryInto(sub, deps);
+                    }
+                }
             }
-            case DynamicLine dl -> {
-                // 列表键的依赖（列表本身变化会影响展开行数）
-                extractFromSpelExpression(dl.itemsKey(), deps);
-                // 循环体节点的依赖
-                extractFromNodesInto(dl.bodyNodes(), deps);
+            case LoopBlock lb -> {
+                extractFromSpelExpression(lb.itemsKey(), deps);
+                for (LineEntry sub : lb.bodyEntries()) {
+                    extractFromLineEntryInto(sub, deps);
+                }
             }
         }
-        return Collections.unmodifiableSet(deps);
     }
 
     // ===== 全模板依赖图 =====

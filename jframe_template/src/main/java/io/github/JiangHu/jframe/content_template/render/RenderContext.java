@@ -134,16 +134,21 @@ public class RenderContext {
     }
 
     /**
-     * 创建循环子上下文——注入当前元素（{@code this}）和序号（{@code index}）。
+     * 创建循环子上下文——以自定义变量名注入当前元素和序号。
      *
-     * @param item  当前循环元素
-     * @param index 当前序号（从 0 开始）
-     * @return 新的渲染上下文（包含 this 和 index 变量）
+     * <p>嵌套循环作用域：子上下文复制父变量 Map 后写入——同名变量内层遮蔽外层，
+     * 异名变量共存（外层循环变量在内层可见）。
+     *
+     * @param varName      当前元素变量名（如 {@code var="team"} 指定的 {@code team}，缺省 {@code this}）
+     * @param item         当前循环元素
+     * @param indexVarName 当前序号变量名（如 {@code index="ti"} 指定的 {@code ti}，缺省 {@code index}）
+     * @param index        当前序号（从 0 开始）
+     * @return 新的渲染上下文（包含指定名称的元素和序号变量）
      */
-    public RenderContext withLoopVariable(Object item, int index) {
+    public RenderContext withLoopVariable(String varName, Object item, String indexVarName, int index) {
         Map<String, Object> newVars = new LinkedHashMap<>(variables);
-        newVars.put(TemplateConstants.CTX_THIS, item);
-        newVars.put(TemplateConstants.CTX_INDEX, index);
+        newVars.put(varName != null ? varName : TemplateConstants.CTX_THIS, item);
+        newVars.put(indexVarName != null ? indexVarName : TemplateConstants.CTX_INDEX, index);
         return new RenderContext(parser, newVars);
     }
 

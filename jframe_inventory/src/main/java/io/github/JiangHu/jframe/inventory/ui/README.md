@@ -134,6 +134,13 @@ public class ShopView extends InventoryView {
 inventoryAPI.openView(player, new ShopView());
 ```
 
+如需自定义打开延迟（tick），使用三参重载：
+
+```java
+// 延迟 20 tick（1 秒）后弹出界面
+inventoryAPI.openView(player, new ShopView(), 20);
+```
+
 ---
 
 ## 🎨 格子类型 (SlotType)
@@ -432,7 +439,10 @@ public class ShopView extends InventoryView {
 
 | 方法 | 说明 |
 |------|------|
-| `openView(Player, InventoryView)` | 打开视图（自动关闭旧视图） |
+| `openView(Player, InventoryView)` | 打开视图（自动关闭旧视图，带防抖） |
+| `openView(Player, InventoryView, int)` | 打开视图，自定义打开延迟（tick），防抖窗口按实际延迟联动 |
+| `forceOpenView(Player, InventoryView)` | 强制切换视图（不检查防抖，适合界面内跳转） |
+| `forceOpenView(Player, InventoryView, int)` | 强制切换视图，自定义打开延迟（tick） |
 | `closeView(Player)` | 关闭玩家的视图 |
 | `getView(Player)` | 获取玩家当前视图 |
 | `closeAll()` | 关闭所有视图（插件禁用时调用） |

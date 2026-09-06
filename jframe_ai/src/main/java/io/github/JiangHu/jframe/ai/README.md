@@ -493,16 +493,23 @@ ai.rally(members, rallyPoint, FormationType.WEDGE, 2.0);
 [`AttackExecutor`](core/executor/AttackExecutor.java) 是 [`CombatActions`](core/combat/CombatActions.java) 的链式门面，动作语义全部委托后者：
 
 ```java
-ai.attack(zombie).melee(player, 4.0f).fire();          // 近战
+ai.attack(zombie).melee(player, 4.0f).fire();          // 近战（挥刀动画 + 原版击退）
 ai.attack(skeleton).arrow(player).fire();              // 射箭（默认速度/散布）
 ai.attack(skeleton).arrow(player, 1.5, 0.3).fire();    // 射箭（自定义）
 ai.attack(witch).projectile("Snowball", player, 1.2, 0.2).fire();  // 投掷
 ai.attack(alchemist).useItemOnSelf(potion).fire();     // 对自己使用物品
+
+// 可选：自定义攻击动画（作用于全部动作类型），传 null 关闭动画
+ai.attack(zombie).melee(player, 4.0f)
+   .animation(AnimatePacket.Action.CRITICAL_HIT).fire();
 ```
 
 - `fire()` **仅限主线程**（有 Server 且非主线程抛 `IllegalStateException`）。
 - 配置态对象可复用：`fire()` 后可重新配置。
 - 失败统一返回 `false`（伤害被取消 / 抛射物未生成），不抛异常。
+- 近战伤害走 `EntityDamageByEntityEvent`（携带攻击者），触发 Nukkit 原版击退（knockBack = 0.4，与真人 PVP 一致）。
+- AI 假人无客户端本地动画，动作动画由服务端主动广播 `AnimatePacket`（按实体所在区块发给视野内玩家）；默认动画：近战/射箭/投掷/对目标用物品 = 挥臂（`SWING_ARM`），对自身用物品不播。`animation()` 三态：未配置=默认 / 显式指定 / `null`=关闭；配置新动作时动画配置重置。
+- 独立播放任意实体动画：`combat.playAnimation(entity, AnimatePacket.Action.WAKE_UP)`。
 
 ### 2. 视野感知（see → SeeQuery）
 

@@ -1,6 +1,6 @@
 # jframe_core · data 数据类型
 
-本包提供框架级的通用数据容器，位于 `io.github.JiangHu.jframe.core.data`，按用途划分为两个子包：
+本包提供框架级的通用数据容器，位于 `io.github.JiangHu.jframe.core.data`，按用途划分为三个子包：
 
 ```
 data/
@@ -14,6 +14,8 @@ data/
 │   ├── EntangledChannel.java   # 纠缠通道（协调中枢，一等公民）
 │   ├── EntangledEvent.java     # 纠缠值变化事件
 │   └── Role.java               # 成员收发角色（BOTH/SOURCE/SINK/MUTE）
+├── trigger/    # 按次数触发的数据类型
+│   └── CountdownTrigger.java   # 倒计时触发器（指定次调用后执行绑定函数）
 └── README.md
 ```
 
@@ -38,6 +40,12 @@ data/
 | [`Entangled`](reactive/Entangled.java) | 无类型根接口，使不同 `T` 的值可纠缠到同一通道（异构） |
 | [`EntangledEvent`](reactive/EntangledEvent.java) | 纠缠值变化事件（`source` / `oldValue` / `newValue`） |
 | [`Role`](reactive/Role.java) | 成员在通道内的收发方向：`BOTH` / `SOURCE` / `SINK` / `MUTE` |
+
+### `trigger` —— 按次数触发
+
+| 类型 | 说明 |
+|------|------|
+| [`CountdownTrigger`](trigger/CountdownTrigger.java) | 倒计时触发器：被调用指定次数后执行绑定函数（`RESETTABLE` 可重置 / `RECURRING` 自动循环） |
 
 ---
 
@@ -152,6 +160,43 @@ sensor.set(5);               // display 收到 5；sensor 自己不收（SOURCE�
 
 ---
 
+## CountdownTrigger：倒计时触发器
+
+被调用指定次数后执行绑定函数的计数数据类型。每次 [`tick()`](trigger/CountdownTrigger.java) 计数减一，归零时执行绑定的函数——适合「按次数触发」的场景：连击第 N 次触发暴击、每采集 M 个方块掉落奖励、技能充能 N 层后释放、重试第 K 次后告警。
+
+### 触发模式（Mode）
+
+| 模式 | 触发后行为 | 典型用途 |
+|------|------|------|
+| `RESETTABLE`（默认） | 失效，后续 tick 不再计数；`reset()` 复活重新计数 | 一次性保险丝（不 reset 即一次性）、可复用的计数器 |
+| `RECURRING` | 自动恢复初始计数，立即开始下一轮 | 周期性触发（每 N 次调用触发一次） |
+
+### 快速上手
+
+```java
+// 一次性：第 3 次 tick 时触发，之后失效
+var fuse = CountdownTrigger.of(3, () -> player.sendMessage("三连击达成！"));
+fuse.tick();   // false（剩余 2）
+fuse.tick();   // false（剩余 1）
+fuse.tick();   // true  —— 执行绑定函数
+fuse.tick();   // false（已失效）
+
+// 周期性：每 5 次 tick 触发一次，自动循环
+var loop = CountdownTrigger.of(5, () -> dropReward(), CountdownTrigger.Mode.RECURRING);
+
+// 手动重置：任何模式、任何状态（含已取消）下均可安全调用，恢复到「全新」状态
+fuse.reset();
+```
+
+### 语义要点
+
+- `tick()` 返回**本次调用是否触发**了绑定函数（非剩余次数）。
+- `cancel()` 取消后 `tick()` 永远返回 `false`；`reset()` 可清除取消状态。
+- 绑定函数抛出的 `RuntimeException` 由 `errorHandler` 捕获，**不影响计数状态**，`RECURRING` 下仍继续下一轮。
+- 并发调用下，绑定函数对每次归零**恰好执行一次**（触发权在同步段内判定）。
+
+---
+
 ## API 速览
 
 ### [`EntangledValue`](reactive/EntangledValue.java)
@@ -185,6 +230,18 @@ sensor.set(5);               // display 收到 5；sensor 自己不收（SOURCE�
 | `setName(s)` / `setOwner(o)` | 标识 / 归属（不影响逻辑） |
 | `size()` / `isEmpty()` / `contains(m)` / `members()` | 成员查询 |
 
+### [`CountdownTrigger`](trigger/CountdownTrigger.java)
+
+| 方法 | 说明 |
+|------|------|
+| `of(count, action)` / `of(count, action, mode)` | 工厂方法（默认 `RESETTABLE`） |
+| `tick()` | 调用一次计数；返回本次是否触发绑定函数 |
+| `reset()` | 恢复初始计数并清除取消状态（任何模式 / 状态可用） |
+| `cancel()` | 取消：此后 tick 永不计数、永不触发（reset 可复活） |
+| `getCount()` / `getRemaining()` / `getTriggerCount()` | 设定次数 / 剩余次数 / 历史累计触发次数 |
+| `isTriggered()` / `isExpired()` / `isCancelled()` / `getMode()` | 状态查询 |
+| `setErrorHandler(fn)` | 绑定函数异常处理（默认打印 `System.err`） |
+
 ---
 
 ## 线程安全
@@ -192,6 +249,7 @@ sensor.set(5);               // display 收到 5；sensor 自己不收（SOURCE�
 - 所有结构变更（加入 / 离开 / 角色调整 / 通道合并）与广播快照，通过静态锁 `EntangledChannel.LOCK`（整个纠缠体系共用）串行化。
 - 通道级监听器列表为 `CopyOnWriteArrayList`；监听器回调在**锁外**执行。
 - 单个监听器抛出的 `RuntimeException` 由 `errorHandler` 捕获，**不会**中断其他监听器。
+- `CountdownTrigger`：状态字段 `volatile`，计数 / 取消 / 重置在 `synchronized` 段内串行化；**触发权在同步段内判定**（并发下绑定函数恰好执行一次），绑定函数在**锁外**执行（action 内可安全调用 `tick()` / `reset()` / `cancel()`，不会死锁）。
 
 ## 注意事项
 
@@ -208,6 +266,9 @@ sensor.set(5);               // display 收到 5；sensor 自己不收（SOURCE�
 mvn -pl jframe_core test-compile -am
 java -cp "jframe_core/target/classes;jframe_core/target/test-classes" \
      io.github.JiangHu.jframe.core.data.reactive.EntangledValueTest
+java -cp "jframe_core/target/classes;jframe_core/target/test-classes" \
+     io.github.JiangHu.jframe.core.data.trigger.CountdownTriggerTest
 ```
 
-覆盖 17 类场景、65 个断言：基础读写、通知模式、可传递性、组合并、解纠缠、事件内容、去重、静默更新、异常隔离、监听器增删、关系查询、异构纠缠、容器突变、角色门控（SOURCE/SINK 统一收发）、通道级监听与两阶段广播、收发开关、显式通道 join/add/leave。
+- `EntangledValueTest` 覆盖 17 类场景、65 个断言：基础读写、通知模式、可传递性、组合并、解纠缠、事件内容、去重、静默更新、异常隔离、监听器增删、关系查询、异构纠缠、容器突变、角色门控（SOURCE/SINK 统一收发）、通道级监听与两阶段广播、收发开关、显式通道 join/add/leave。
+- `CountdownTriggerTest` 覆盖 11 类场景、103 个断言：基础计数、参数校验、count=1 边界、RESETTABLE 失效语义、reset 复活（含清除取消状态）、RECURRING 自动循环、cancel 幂等与复活、异常隔离（RECURRING 异常后继续）、锁外执行（action 内 tick/reset/cancel 不死锁）、16 线程 × 50 轮并发恰好触发一次、查询方法。

@@ -1,8 +1,13 @@
 package io.github.JiangHu.jframe.async.flow;
 
+import io.github.JiangHu.jframe.async.release.ReleaseChannel;
+
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /**
@@ -151,6 +156,85 @@ public class FlowContext {
             task.run();
             return null;
         });
+    }
+
+    // ==================== 等待通道批次（缓释集成） ====================
+
+    /**
+     * 等待通道<b>当前批次</b>终结（队列被消费清空 / close 排干 / AUTO 回收），
+     * park 虚拟线程直至恢复。
+     * <p>
+     * <b>快照语义</b>：内部 {@code channel.future().join()}——等待的是调用时刻的批次，
+     * AUTO 通道回收后复活 / 后续新一轮提交不影响已在等待的调用者。
+     * <p>
+     * <b>abort 传播</b>：{@link ReleaseChannel#abort()} 使 future 异常完成，
+     * 本方法抛出的 {@link CompletionException} 的 cause 为
+     * {@code ChannelAbortedException}，可区分「排干完成」与「被中止」。
+     * <p>
+     * <b>主线程死锁防护</b>：future 的完成依赖主线程 drain——主线程调用将永久死锁，
+     * 因此检测到主线程且批次未完成时直接抛 {@link IllegalStateException}
+     * （引导改用 {@link ReleaseChannel#onComplete(Runnable)} 回调）；
+     * 已终结批次（future 已完成）主线程调用无害，立即返回。
+     *
+     * <h3>示例</h3>
+     * <pre>{@code
+     * threadFlow.virtual(ctx -> {
+     *     var ch = release.acquire(ReleasePolicy.deadlineSeconds(20));
+     *     for (Block b : blocks) { ch.submit(() -> setBlock(b, compute(b))); }
+     *     ch.close();
+     *     ctx.awaitChannel(ch);                          // park 等待整批落地
+     *     ctx.awaitMain(() -> broadcast("建造完成"));     // 之后的线性流程
+     * });
+     * }</pre>
+     *
+     * @param channel 要等待的通道
+     * @throws IllegalStateException     当前在主线程且批次未完成时抛出
+     * @throws CompletionException 批次被中止（cause 为 {@code ChannelAbortedException}）
+     *                                     或等待被中断
+     */
+    public void awaitChannel(ReleaseChannel channel) {
+        CompletableFuture<Void> future = requireNotMainThreadIfWaiting(channel);
+        future.join();
+    }
+
+    /**
+     * 带超时的 {@link #awaitChannel(ReleaseChannel)}：批次在 {@code timeout} 内未终结则
+     * 抛出以 {@link TimeoutException} 为 cause 的 {@link CompletionException}。
+     * <p>
+     * 防 MANUAL 通道忘 {@code close()} 或生产者故障导致虚拟线程永久 park；
+     * 超时不影响通道本身继续释放。长流程建议使用本变体。
+     *
+     * @param channel 要等待的通道
+     * @param timeout 超时时长
+     * @param unit    时间单位
+     * @throws IllegalStateException     当前在主线程且批次未完成时抛出
+     * @throws CompletionException 超时（cause 为 {@code TimeoutException}）、批次被中止或等待被中断
+     */
+    public void awaitChannel(ReleaseChannel channel, long timeout, TimeUnit unit) {
+        CompletableFuture<Void> future = requireNotMainThreadIfWaiting(channel);
+        try {
+            future.get(timeout, unit);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new CompletionException("awaitChannel 被中断", e);
+        } catch (ExecutionException e) {
+            throw new CompletionException(e.getCause());
+        } catch (TimeoutException e) {
+            throw new CompletionException("awaitChannel 等待通道批次超时", e);
+        }
+    }
+
+    /**
+     * 主线程死锁防护：future 未完成且当前在主线程 → 抛异常；否则返回 future 快照。
+     */
+    private CompletableFuture<Void> requireNotMainThreadIfWaiting(ReleaseChannel channel) {
+        CompletableFuture<Void> future = channel.future();
+        if (!future.isDone() && isMainThread()) {
+            throw new IllegalStateException(
+                    "禁止在 Nukkit 主线程 awaitChannel——future 完成依赖主线程 drain，等待即死锁；"
+                            + "请改用 channel.onComplete(callback) 回调感知完成");
+        }
+        return future;
     }
 
     // ==================== 非等待型（fire-and-forget） ====================

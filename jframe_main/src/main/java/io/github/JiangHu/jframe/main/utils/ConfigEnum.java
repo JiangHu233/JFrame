@@ -8,6 +8,7 @@ import io.github.JiangHu.jframe.form.config.FormSpringConfig;
 import io.github.JiangHu.jframe.inventory.config.InventorySpringConfig;
 import io.github.JiangHu.jframe.async.config.AsyncSpringConfig;
 import io.github.JiangHu.jframe.scoreboard.config.ScoreboardSpringConfig;
+import io.github.JiangHu.jframe.title.config.TitleSpringConfig;
 import lombok.Getter;
 import io.github.JiangHu.jframe.main.JFrameMain;
 /**
@@ -27,6 +28,7 @@ public enum ConfigEnum {
     INVENTORY(InventorySpringConfig.class),
     AI(AiSpringConfig.class),
     SCOREBOARD(ScoreboardSpringConfig.class),
+    TITLE(TitleSpringConfig.class),
     ;
 
     @Getter

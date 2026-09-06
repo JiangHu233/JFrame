@@ -3,9 +3,12 @@ package io.github.JiangHu.jframe.content_template.render;
 import io.github.JiangHu.jframe.content_template.IncrementalRenderResult;
 import io.github.JiangHu.jframe.content_template.Template;
 import io.github.JiangHu.jframe.content_template.ast.LineEntry;
+import io.github.JiangHu.jframe.content_template.column.ColumnAligner;
+import io.github.JiangHu.jframe.content_template.column.ColumnLayout;
 import io.github.JiangHu.jframe.core.data.reactive.ChangeSet;
 import io.github.JiangHu.jframe.core.data.reactive.DataContext;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -58,9 +61,12 @@ public class IncrementalRenderer {
     // ===== 上次渲染缓存 =====
 
     private String lastTitle;
+    /** 上次渲染的<b>原始行</b>缓存（列化对齐前的行，用于增量逐行比较） */
     private List<String> lastLines;
     /** 上次渲染中，每个行条目产生的行数（用于增量遍历时定位行索引） */
     private int[] lastEntryLineCounts;
+    /** 上次列化后的各列宽度（列宽变化时增量结果需扩为全集；未启用列格式时为 null） */
+    private int[] lastColumnWidths;
 
     /**
      * 使用指定的全量渲染器和依赖提取器构造。
@@ -87,7 +93,7 @@ public class IncrementalRenderer {
      * <ul>
      *   <li>首次渲染（show 计分板时）</li>
      *   <li>模板变更（切换计分板模板时）</li>
-     *   <li>结构变更回退（DynamicLine 展开数变化时）</li>
+     *   <li>结构变更回退（块级 if/for 展开行数变化时）</li>
      * </ul>
      *
      * @param template 编译后的模板
@@ -127,12 +133,21 @@ public class IncrementalRenderer {
             lastEntryLineCounts = new int[0];
         }
 
-        // 更新缓存
+        // 列化：启用时作为产出结果前的最后阶段（标题不参与列化）
+        List<String> outputLines = lines;
+        if (template.isColumnLayoutEnabled()) {
+            lastColumnWidths = ColumnAligner.computeWidths(lines, template.getColumnLayout());
+            outputLines = ColumnAligner.align(lines, template.getColumnLayout());
+        } else {
+            lastColumnWidths = null;
+        }
+
+        // 更新缓存（lastLines 缓存原始行，供下次增量逐行比较）
         this.lastTitle = title;
         this.lastLines = new ArrayList<>(lines);
 
         // 全量渲染标记为结构变更（首次渲染需要全量发送）
-        return new IncrementalRenderResult(title, lines, Set.of(), false, true);
+        return new IncrementalRenderResult(title, outputLines, Set.of(), false, true);
     }
 
     // ===== 增量渲染 =====
@@ -152,9 +167,12 @@ public class IncrementalRenderer {
             throw new IllegalStateException("尚未调用 renderFull 设置模板，无法增量渲染");
         }
 
-        // 无变更 → 返回空结果
+        // 无变更 → 返回空结果（启用列格式时重新对齐原始行缓存，与上次输出一致）
         if (changeSet == null || changeSet.isEmpty()) {
-            return new IncrementalRenderResult(lastTitle, lastLines, Set.of(), false, false);
+            List<String> output = template.isColumnLayoutEnabled()
+                    ? ColumnAligner.align(lastLines, template.getColumnLayout())
+                    : lastLines;
+            return new IncrementalRenderResult(lastTitle, output, Set.of(), false, false);
         }
 
         Set<String> changedKeys = changeSet.changedKeys();
@@ -219,11 +237,31 @@ public class IncrementalRenderer {
             return renderFull(template, data);
         }
 
-        // ===== 4. 更新缓存并返回 =====
+        // ===== 4. 列化与缓存更新 =====
         lastTitle = newTitle;
         lastLines = newLines;
 
-        return new IncrementalRenderResult(newTitle, newLines, changedIndices, titleChanged, false);
+        // 列格式禁用 → 与扩展前语义恒等，直接返回原始行
+        ColumnLayout layout = template.getColumnLayout();
+        if (!layout.isEnabled()) {
+            return new IncrementalRenderResult(newTitle, newLines, changedIndices, titleChanged, false);
+        }
+
+        // 列宽全量重算：与上次列宽比较，任一变化 → 对齐整体移位，变更集扩为全集
+        int[] newWidths = ColumnAligner.computeWidths(newLines, layout);
+        boolean widthsChanged = !Arrays.equals(newWidths, lastColumnWidths);
+        lastColumnWidths = newWidths;
+
+        List<String> outputLines = ColumnAligner.align(newLines, layout);
+        if (widthsChanged) {
+            Set<Integer> allIndices = new LinkedHashSet<>();
+            for (int i = 0; i < outputLines.size(); i++) {
+                allIndices.add(i);
+            }
+            return new IncrementalRenderResult(newTitle, outputLines, allIndices, titleChanged, false);
+        }
+        // 列宽不变 → 对齐填充不变，变更集即原始行直接变化的行
+        return new IncrementalRenderResult(newTitle, outputLines, changedIndices, titleChanged, false);
     }
 
     // ===== 状态查询 =====
@@ -256,5 +294,6 @@ public class IncrementalRenderer {
         lastTitle = null;
         lastLines = null;
         lastEntryLineCounts = null;
+        lastColumnWidths = null;
     }
 }

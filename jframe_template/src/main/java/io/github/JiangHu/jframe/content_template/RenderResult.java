@@ -32,7 +32,7 @@ public class RenderResult {
         return title;
     }
 
-    /** 行渲染结果（line-each 已展开为多行），不可变列表 */
+    /** 行渲染结果（块级 for 已展开为多行），不可变列表 */
     public List<String> getLines() {
         return Collections.unmodifiableList(lines);
     }

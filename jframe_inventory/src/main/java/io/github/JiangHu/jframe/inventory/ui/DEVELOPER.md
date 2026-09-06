@@ -329,7 +329,7 @@ record SlotData(
 | 阶段 | 时机 | 操作 | 发送的数据包 |
 |------|------|------|-------------|
 | 第一阶段 | 立即 | `placeFakeBlock()` 放置真实方块 | `UpdateBlockPacket`（`direct=true` 即时发送） |
-| 第二阶段 | 延迟 `OPEN_DELAY_TICKS`（默认 5 tick） | `player.addWindow()` 注册窗口 | `ContainerOpenPacket` + `sendContents` |
+| 第二阶段 | 延迟 `OPEN_DELAY_TICKS`（默认 10 tick） | `player.addWindow()` 注册窗口 | `ContainerOpenPacket` + `sendContents` |
 
 **为什么需要两阶段？**
 
@@ -337,9 +337,11 @@ record SlotData(
 
 分离式策略使 `UpdateBlockPacket`（第一阶段）**提前于** `ContainerOpenPacket`（第二阶段）发送，确保客户端有充足时间处理方块更新，方块校验通过。相比旧方案（10 tick 统一延迟），总延迟从 500ms 减半至 250ms，且更可靠。
 
-**延迟可配置：** 通过 `InventoryView.OPEN_DELAY_TICKS = N` 调整（默认 5 tick）。
-- 过短（< 3 tick）：客户端可能尚未处理方块更新，校验失败
-- 过长（> 10 tick）：玩家感知明显延迟
+**延迟可配置（两种方式）：**
+- **全局默认**：`InventoryView.OPEN_DELAY_TICKS = N`（默认 10 tick），影响所有未指定延迟的打开
+- **单次自定义**：`inventoryAPI.openView(player, view, delayTicks)` / `forceOpenView(player, view, delayTicks)` 三参重载，仅影响本次打开
+- 过短（< 5 tick）：客户端可能尚未准备好，网易版窗口打不开
+- 过长（> 15 tick）：玩家感知明显延迟
 
 ### 5.4 方块残留保护
 
@@ -501,7 +503,7 @@ unmountTree()            // 卸载（递归，触发 onUnmount）
 | 丢包恢复 | 有活跃视图 + 超过防抖窗口 | **关闭旧视图，重开新视图** |
 | 正常打开 | 无活跃视图 | 直接打开 |
 
-**防抖窗口** = `OPEN_DELAY_TICKS × 50ms + 500ms`（默认约 1 秒），覆盖视图从"开始打开"到"完全弹出"的全过程。
+**防抖窗口** = 当前活跃视图**实际打开延迟** × 50ms + 500ms（默认约 1 秒），覆盖视图从"开始打开"到"完全弹出"的全过程。通过三参重载（`openView(player, view, delayTicks)`）自定义延迟打开的视图，其防抖窗口按自定义延迟计算，长延迟视图不会在弹出前被误判超时而关闭重开。
 
 **为什么需要防抖？**
 
@@ -529,8 +531,14 @@ unmountTree()            // 卸载（递归，触发 onUnmount）
 // 普通打开（带防抖，适合右键/命令触发）
 inventoryAPI.openView(player, new ShopView());
 
+// 普通打开 + 自定义延迟（20 tick 后弹出，防抖窗口按 20 tick 联动）
+inventoryAPI.openView(player, new ShopView(), 20);
+
 // 强制切换（不检查防抖，适合界面内按钮跳转）
 inventoryAPI.forceOpenView(player, new AnotherView());
+
+// 强制切换 + 自定义延迟（配合过渡动画等场景）
+inventoryAPI.forceOpenView(player, new AnotherView(), 20);
 ```
 
 ---
@@ -608,7 +616,9 @@ public class FlowLayout implements Layout {
 
 ### 11.4 分离式两阶段打开延迟
 
-`open()` 采用分离式两阶段策略：第一阶段立即放置假方块（发送 `UpdateBlockPacket`），第二阶段延迟 `OPEN_DELAY_TICKS`（默认 5 tick = 0.25 秒）后注册窗口（发送 `ContainerOpenPacket`）。如果需要调整延迟，设置 `InventoryView.OPEN_DELAY_TICKS = N`（不建议低于 3 tick，可能导致网易客户端方块校验失败）。
+`open()` 采用延迟注册窗口策略：延迟 `OPEN_DELAY_TICKS`（默认 10 tick = 0.5 秒）后调用 `player.addWindow()`，由 `VirtualInventory.onOpen()` 同步发送假方块与 `ContainerOpenPacket`。如果需要调整延迟：
+- **全局默认**：设置 `InventoryView.OPEN_DELAY_TICKS = N`（不建议低于 5 tick，可能导致网易客户端方块校验失败）
+- **单次自定义**：调用 `openView(player, view, delayTicks)` / `forceOpenView(player, view, delayTicks)` 三参重载，仅影响本次打开，防抖窗口按实际延迟联动
 
 ### 11.5 StoreEvent 的 isDeposit/isWithdraw 语义
 
@@ -620,6 +630,7 @@ public class FlowLayout implements Layout {
 
 - **右键/命令触发打开**：直接用 `openView()`，框架自动防抖
 - **界面内按钮跳转**：用 `forceOpenView()` 强制切换（不防抖）
+- **自定义打开延迟**：用三参重载 `openView(player, view, delayTicks)` / `forceOpenView(player, view, delayTicks)`，防抖窗口按实际延迟联动
 
 ---
 

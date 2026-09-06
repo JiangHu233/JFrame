@@ -2,11 +2,13 @@ package io.github.JiangHu.jframe.content_template.render;
 
 import io.github.JiangHu.jframe.content_template.RenderResult;
 import io.github.JiangHu.jframe.content_template.Template;
-import io.github.JiangHu.jframe.content_template.ast.DynamicLine;
-import io.github.JiangHu.jframe.content_template.ast.EachNode;
+import io.github.JiangHu.jframe.content_template.ast.ConditionalBlock;
+import io.github.JiangHu.jframe.content_template.column.ColumnAligner;
 import io.github.JiangHu.jframe.content_template.ast.ExpressionNode;
+import io.github.JiangHu.jframe.content_template.ast.ForNode;
 import io.github.JiangHu.jframe.content_template.ast.IfNode;
 import io.github.JiangHu.jframe.content_template.ast.LineEntry;
+import io.github.JiangHu.jframe.content_template.ast.LoopBlock;
 import io.github.JiangHu.jframe.content_template.ast.StaticLine;
 import io.github.JiangHu.jframe.content_template.ast.TemplateNode;
 import io.github.JiangHu.jframe.content_template.ast.TextNode;
@@ -23,16 +25,24 @@ import java.util.Map;
  * <ol>
  *   <li>从 DataContext 取数据快照，构建 {@link RenderContext}</li>
  *   <li>渲染标题节点列表 → 标题字符串</li>
- *   <li>遍历行条目（StaticLine / DynamicLine）→ 行列表</li>
+ *   <li>遍历行条目（StaticLine / ConditionalBlock / LoopBlock）→ 行列表</li>
+ *   <li>列格式启用时，行列表经 {@link ColumnAligner} 列化对齐（产出结果前的最后阶段）</li>
  *   <li>封装为 RenderResult 返回</li>
  * </ol>
+ *
+ * <p>行条目渲染（{@link #renderLineEntry}）递归处理三种条目：
+ * <ul>
+ *   <li>{@link StaticLine} → 渲染行内节点为一行</li>
+ *   <li>{@link ConditionalBlock} → 遍历分支取首个为真者，递归渲染其子条目；全假走 else</li>
+ *   <li>{@link LoopBlock} → 遍历列表，每元素注入 var/index 变量后递归渲染整组子条目，受 max 限制</li>
+ * </ul>
  *
  * <p>行内节点渲染（{@link #renderNodes}）使用 switch 模式匹配处理四种节点：
  * <ul>
  *   <li>{@link TextNode} → 原样输出</li>
  *   <li>{@link ExpressionNode} → SpEL 求值后 toString</li>
  *   <li>{@link IfNode} → 遍历分支取首个为真者，否则走 else 分支</li>
- *   <li>{@link EachNode} → 遍历列表，每元素注入 this/index 后渲染拼接</li>
+ *   <li>{@link ForNode} → 遍历列表，每元素注入 var/index 变量后渲染拼接（受 max 限制）</li>
  * </ul>
  *
  * <p>该类无状态、线程安全，可作为单例使用。
@@ -61,6 +71,10 @@ public class TemplateRenderer {
                 renderLineEntry(entry, ctx, lines);
             }
         }
+        // 列格式：启用时作为产出结果前的最后阶段（标题不参与列化；禁用时行为与扩展前一致）
+        if (template.isColumnLayoutEnabled()) {
+            lines = new ArrayList<>(ColumnAligner.align(lines, template.getColumnLayout()));
+        }
         return new RenderResult(title, lines);
     }
 
@@ -81,36 +95,45 @@ public class TemplateRenderer {
     }
 
     /**
-     * 渲染单个行条目，将结果追加到 lines 列表。
+     * 渲染单个行条目，将结果追加到 lines 列表（递归入口）。
      * <p>每行渲染后调用 {@link String#strip()} 去除首尾空白（换行/缩进），
      * 避免多行写法的元素内容前后换行符导致基岩版 sidebar 显示异常。
      * <ul>
-     *   <li>{@link StaticLine}：检查 ifCond，为真渲染节点为一行，为假输出 elseText（若配置）</li>
-     *   <li>{@link DynamicLine}：遍历 itemsKey 列表，每元素渲染为一行，受 max 限制</li>
+     *   <li>{@link StaticLine}：渲染行内节点为一行</li>
+     *   <li>{@link ConditionalBlock}：选中首个为真的分支后递归渲染其子条目（0~N 行）</li>
+     *   <li>{@link LoopBlock}：遍历 itemsKey 列表，每元素注入 var/index 变量后
+     *       递归渲染整组子条目（0~N×M 行），受 max 限制</li>
      * </ul>
      */
     private void renderLineEntry(LineEntry entry, RenderContext ctx, List<String> lines) {
         switch (entry) {
-            case StaticLine sl -> {
-                if (sl.ifCond() != null && !sl.ifCond().isBlank()) {
-                    if (ctx.evaluateBoolean(sl.ifCond())) {
-                        lines.add(renderNodes(sl.nodes(), ctx).strip());
-                    } else if (sl.elseText() != null) {
-                        lines.add(sl.elseText().strip());
+            case StaticLine sl -> lines.add(renderNodes(sl.nodes(), ctx).strip());
+            case ConditionalBlock cb -> {
+                for (ConditionalBlock.Branch branch : cb.branches()) {
+                    if (ctx.evaluateBoolean(branch.condition())) {
+                        for (LineEntry sub : branch.entries()) {
+                            renderLineEntry(sub, ctx, lines);
+                        }
+                        return;
                     }
-                } else {
-                    lines.add(renderNodes(sl.nodes(), ctx).strip());
+                }
+                if (cb.elseEntries() != null) {
+                    for (LineEntry sub : cb.elseEntries()) {
+                        renderLineEntry(sub, ctx, lines);
+                    }
                 }
             }
-            case DynamicLine dl -> {
-                Iterable<?> items = ctx.evaluateIterable(dl.itemsKey());
+            case LoopBlock lb -> {
+                Iterable<?> items = ctx.evaluateIterable(lb.itemsKey());
                 int count = 0;
                 for (Object item : items) {
-                    if (dl.max() > 0 && count >= dl.max()) {
+                    if (lb.max() > 0 && count >= lb.max()) {
                         break;
                     }
-                    RenderContext itemCtx = ctx.withLoopVariable(item, count);
-                    lines.add(renderNodes(dl.bodyNodes(), itemCtx).strip());
+                    RenderContext itemCtx = ctx.withLoopVariable(lb.varName(), item, lb.indexVarName(), count);
+                    for (LineEntry sub : lb.bodyEntries()) {
+                        renderLineEntry(sub, itemCtx, lines);
+                    }
                     count++;
                 }
             }
@@ -122,7 +145,7 @@ public class TemplateRenderer {
      *
      * <p>用于增量渲染：只需重新渲染受影响的行条目，而非整个模板。
      *
-     * @param entry 行条目（StaticLine / DynamicLine）
+     * @param entry 行条目（StaticLine / ConditionalBlock / LoopBlock）
      * @param ctx   渲染上下文
      * @return 该条目渲染后的行列表（可能为 0 行、1 行或多行）
      */
@@ -155,12 +178,12 @@ public class TemplateRenderer {
             case TextNode tn -> tn.text();
             case ExpressionNode en -> ctx.evaluateString(en.expression());
             case IfNode ifn -> renderIfNode(ifn, ctx);
-            case EachNode en -> renderEachNode(en, ctx);
+            case ForNode fn -> renderForNode(fn, ctx);
         };
     }
 
     /**
-     * 渲染条件节点：遍历分支取首个为真者，否则走 else 分支。
+     * 渲染行内条件节点：遍历分支取首个为真者，否则走 else 分支。
      */
     private String renderIfNode(IfNode node, RenderContext ctx) {
         for (IfNode.Branch branch : node.branches()) {
@@ -175,14 +198,17 @@ public class TemplateRenderer {
     }
 
     /**
-     * 渲染循环节点：遍历列表，每元素注入 this/index 后渲染拼接。
+     * 渲染行内循环节点：遍历列表，每元素注入 var/index 变量后渲染拼接，受 max 限制。
      */
-    private String renderEachNode(EachNode node, RenderContext ctx) {
+    private String renderForNode(ForNode node, RenderContext ctx) {
         StringBuilder sb = new StringBuilder();
         Iterable<?> items = ctx.evaluateIterable(node.itemsKey());
         int count = 0;
         for (Object item : items) {
-            RenderContext itemCtx = ctx.withLoopVariable(item, count);
+            if (node.max() > 0 && count >= node.max()) {
+                break;
+            }
+            RenderContext itemCtx = ctx.withLoopVariable(node.varName(), item, node.indexVarName(), count);
             sb.append(renderNodes(node.bodyNodes(), itemCtx));
             count++;
         }

@@ -14,9 +14,11 @@ import io.github.JiangHu.jframe.inventory.ui.InventoryAPI;
 import io.github.JiangHu.jframe.main.config.MainSpringConfig;
 import io.github.JiangHu.jframe.main.utils.ConfigEnum;
 import io.github.JiangHu.jframe.async.flow.ThreadFlow;
+import io.github.JiangHu.jframe.async.release.ReleaseAPI;
 import io.github.JiangHu.jframe.async.task.TaskAPI;
 import io.github.JiangHu.jframe.async.thread.ThreadAPI;
 import io.github.JiangHu.jframe.scoreboard.ScoreboardAPI;
+import io.github.JiangHu.jframe.title.TitleAPI;
 import lombok.Getter;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
@@ -176,6 +178,20 @@ public class JFrameMain extends PluginBase {
     }
 
     /**
+     * 主线程缓释调度模块 API。
+     * <p>
+     * 提供异步任务按策略（截止时间 / 固定速率 / 尽力而为）分批释放到 Nukkit 主线程的
+     * 多通道调度：全局每 tick 预算内仲裁，支持背压、完成回调与虚拟线程
+     * {@code awaitChannel} 等待整批落地。
+     *
+     * @return 缓释调度服务
+     * @see ReleaseAPI
+     */
+    public ReleaseAPI getReleaseAPI() {
+        return getApi(ReleaseAPI.class);
+    }
+
+    /**
      * 命令模块 API。
      *
      * @return 命令服务
@@ -234,6 +250,21 @@ public class JFrameMain extends PluginBase {
     }
 
     /**
+     * 标题模块 API。
+     * <p>
+     * 提供基于模板的标题（Title/Subtitle）与动作栏（ActionBar）显示：
+     * 注册 XML 模板 → 给指定/条件/全体玩家显示 → 更新数据自动刷新；
+     * 支持瞬时（TRANSIENT，淡入停留淡出后自动清除）与常驻（PERSISTENT，KeepAlive 保活）双模式，
+     * 以及 title/subtitle/actionbar 双槽位通道。
+     *
+     * @return 标题服务
+     * @see TitleAPI
+     */
+    public TitleAPI getTitleAPI() {
+        return getApi(TitleAPI.class);
+    }
+
+    /**
      * 按类型从容器获取模块 API。
      *
      * @param apiType API 类型
@@ -260,11 +291,13 @@ public class JFrameMain extends PluginBase {
         server.getServiceManager().register(ThreadAPI.class, getThreadAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(TaskAPI.class, getTaskAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(ThreadFlow.class, getThreadFlow(), this, ServicePriority.NORMAL);
+        server.getServiceManager().register(ReleaseAPI.class, getReleaseAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(CommandAPI.class, getCommandAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(InventoryAPI.class, getInventoryAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(AiAPI.class, getAiAPI(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(DataSaver.class, getDataSaver(), this, ServicePriority.NORMAL);
         server.getServiceManager().register(ScoreboardAPI.class, getScoreboardAPI(), this, ServicePriority.NORMAL);
+        server.getServiceManager().register(TitleAPI.class, getTitleAPI(), this, ServicePriority.NORMAL);
     }
 
     @Override
@@ -308,10 +341,24 @@ public class JFrameMain extends PluginBase {
         }
         try {
             if (applicationContext != null && applicationContext.isActive()) {
+                applicationContext.getBean(ReleaseAPI.class).close();
+            }
+        } catch (Exception e) {
+            getLogger().error("关闭主线程缓释调度器失败", e);
+        }
+        try {
+            if (applicationContext != null && applicationContext.isActive()) {
                 applicationContext.getBean(ScoreboardAPI.class).hideAll();
             }
         } catch (Exception e) {
             getLogger().error("关闭计分板失败", e);
+        }
+        try {
+            if (applicationContext != null && applicationContext.isActive()) {
+                applicationContext.getBean(TitleAPI.class).disposeAll();
+            }
+        } catch (Exception e) {
+            getLogger().error("关闭标题视图失败", e);
         }
         if (this.applicationContext != null) {
             this.applicationContext.close();

@@ -31,7 +31,7 @@
 
 1. **数据与展示分离**：模板（`.xml`）只描述「长什么样」，数据由 [`DataContext`](../../../../../../../../core/data/reactive/DataContext.java) 提供。
 2. **SpEL 表达式**：`{{ }}` 内可写变量、属性、算术、三元、方法调用，由 Spring Expression Language 求值。
-3. **条件 / 循环**：`<if>/<elif>/<else>`、`<each>`、`<line-each>` 满足动态展示需求。
+3. **条件 / 循环**：块级 `<if>/<elif>/<else>` 与 `<for>` 控制行组显隐与展开，行内 `<if>/<for>` 拼接单行内容，循环变量名可自定义。
 4. **热重载**：文件系统模板改完即时生效，无需重启。
 5. **增量渲染**：配合 [`DataContext`](../../../../../../../../core/data/reactive/DataContext.java) 的变更集，只重渲染受影响的行（详见 [DEVELOPER.md](DEVELOPER.md)）。
 
@@ -56,10 +56,11 @@ content_template/
 │   ├── LineEntry.java           #   行级别条目基类（sealed）
 │   ├── TextNode.java            #   纯文本
 │   ├── ExpressionNode.java      #   {{ }} 表达式
-│   ├── IfNode.java              #   <if>/<elif>/<else>
-│   ├── EachNode.java            #   <each> 行内循环
-│   ├── StaticLine.java          #   <line> 静态行
-│   └── DynamicLine.java         #   <line-each> 动态行展开
+│   ├── IfNode.java              #   行内 <if>/<elif>/<else>
+│   ├── ForNode.java             #   行内 <for> 循环拼接
+│   ├── StaticLine.java          #   <line> 单行
+│   ├── ConditionalBlock.java    #   块级 <if>/<elif>/<else>（行组显隐）
+│   └── LoopBlock.java           #   块级 <for>（每元素展开一组行）
 ├── parser/
 │   ├── TemplateParser.java      # XML / 纯文本 → AST
 │   └── TemplateParseException.java
@@ -68,11 +69,18 @@ content_template/
 │   ├── ClasspathTemplateLoader.java  # 从 jar 内加载
 │   ├── FileTemplateLoader.java       # 从磁盘加载（支持热重载）
 │   └── CompositeTemplateLoader.java  # 组合多个 loader
-└── render/                      # 渲染
-    ├── TemplateRenderer.java    #   全量渲染器
-    ├── RenderContext.java       #   SpEL 求值上下文
-    ├── DependencyExtractor.java #   变量依赖提取（增量基础）
-    └── IncrementalRenderer.java #   增量渲染器
+├── render/                      # 渲染
+│   ├── TemplateRenderer.java    #   全量渲染器
+│   ├── RenderContext.java       #   SpEL 求值上下文
+│   ├── DependencyExtractor.java #   变量依赖提取（增量基础）
+│   └── IncrementalRenderer.java #   增量渲染器
+└── column/                      # 列格式（渲染后对齐阶段）
+    ├── ColumnLayout.java        #   列布局配置（分隔符 + 逐列策略，不可变）
+    ├── ColumnSpec.java          #   单列策略（对齐方向 + 宽度策略）
+    ├── ColumnAlign.java         #   对齐方向枚举（LEFT / CENTER / RIGHT）
+    ├── ColumnWidth.java         #   宽度策略（AUTO / FIXED(n)）
+    ├── TextWidth.java           #   显示宽度计算（CJK 2 宽、颜色码 0 宽）
+    └── ColumnAligner.java       #   列化算法（拆列 → 算宽 → 对齐/截断 → 重组）
 ```
 
 ---
@@ -99,65 +107,98 @@ content_template/
 
 > `{{ }}` 之外的所有文本原样输出（包括 `§` 颜色代码）。
 
-### 3.2 `<line>` 静态行
+### 3.2 `<line>` 行与裸文本行
 
-渲染为单行文本，支持行级条件：
+`<line>` 渲染为单行文本，行内可混排文本、`{{ }}` 表达式、行内 `<if>`、行内 `<for>`：
 
 ```xml
-<!-- 无条件：始终显示 -->
 <line>§e玩家: §f{{player.name}}</line>
-
-<!-- 条件行：if 为真才显示 -->
-<line if="vip">§6⭐ VIP 会员</line>
-
-<!-- 条件行带 else：为真/假显示不同文本 -->
-<line if="vip" else="§7普通玩家">§6⭐ VIP 会员</line>
+<line>暴击率: {{critRate * 100}}%</line>
 ```
 
-### 3.3 `<line-each>` 动态行展开
-
-遍历列表，**每个元素生成一个独立行**（如排行榜每人一行）：
+`<template>` 行区域中的**非空白裸文本**（未被任何标签包裹）也按一行渲染，等价于 `<line>`：
 
 ```xml
-<line-each items="inventory" max="5">
-    §f{{index + 1}}. {{this.name}} §7x{{this.count}}
-</line-each>
+<template>
+    <title>§e标题</title>
+    §7这是一行裸文本
+    <line>§f这是 line 标签行</line>
+</template>
+```
+
+### 3.3 块级 `<if>` / `<elif>` / `<else>` —— 条件控制行组
+
+出现在 `<template>` 直接子级（或块内）的 `<if>` 是**块级条件**：条件为真的分支内**所有行整组渲染**，否则整组隐藏。分支内可放任意行条目（`<line>`、裸文本、嵌套块级 `<if>/<for>`），可任意嵌套：
+
+```xml
+<!-- if 包裹多行：vip 为真时两行都显示，为假时一行都不显示 -->
+<if cond="vip">
+    <line>§6⭐ VIP 会员</line>
+    <line>§7到期: {{vipExpire}}</line>
+</if>
+
+<!-- if / elif / else 链：首个为真的分支渲染 -->
+<if cond="level >= 100">
+    <line>§c大师段位</line>
+</if>
+<elif cond="level >= 50">
+    <line>§e高手段位</line>
+</elif>
+<else>
+    <line>§7新手段位</line>
+</else>
 ```
 
 | 属性 | 说明 |
 |------|------|
-| `items` | 数据列表的键名（SpEL 表达式） |
-| `max` | 最大展开行数，省略表示无限制 |
+| `cond` | SpEL 条件表达式（`<if>`/`<elif>` 必填，`<else>` 无属性） |
 
-循环体内可用两个上下文变量：
+### 3.4 块级 `<for>` —— 循环展开行组
 
-| 变量 | 含义 |
-|------|------|
-| `{{this}}` | 当前元素（`{{this.name}}` 取属性） |
-| `{{index}}` | 当前序号（从 0 开始） |
-
-### 3.4 `<if>` / `<elif>` / `<else>` 行内条件
-
-写在 `<line>` 内部，按顺序检查条件，渲染首个为真者：
+块级 `<for>` 遍历列表，**每个元素展开循环体内所有行**（如排行榜每人多行）：
 
 ```xml
+<!-- 每个元素两行：名字行 + 分数行 -->
+<for items="rankings" var="p" index="i" max="10">
+    <line>§e#{{i + 1}} §f{{p.name}}</line>
+    <line>§7分数: {{p.score}}</line>
+</for>
+```
+
+| 属性 | 说明 |
+|------|------|
+| `items` | 数据列表的键名（DataContext 中的 List/数组，必填） |
+| `var` | 元素变量名（缺省 `this`，嵌套 for 用不同名字互访） |
+| `index` | 序号变量名（缺省 `index`，从 0 开始） |
+| `max` | 最大迭代元素数（省略或 ≤0 表示不限，受限行数环境如 sidebar 有用） |
+
+**嵌套作用域**：内层变量遮蔽同名外层变量，异名变量内外层互相可见：
+
+```xml
+<for items="teams" var="t">
+    <for items="t.members" var="m">
+        <line>§f{{t.name}} - {{m}}</line>   <!-- 内层访问外层 t -->
+    </for>
+</for>
+```
+
+### 3.5 行内 `<if>` 与行内 `<for>` —— 拼接单行
+
+写在 `<line>`（或 `<title>`）**内部**的 `<if>`/`<for>` 是行内节点，只影响一行内的文本片段：
+
+```xml
+<!-- 行内 if 链：按顺序检查，渲染首个为真者 -->
 <line>
     <if cond="level >= 100">§c[大师]</if>
     <elif cond="level >= 50">§e[高手]</elif>
-    <elif cond="level >= 10">§a[进阶]</elif>
     <else>§7[新手]</else>
 </line>
+
+<!-- 行内 for：遍历拼接成一行（好友列表空格分隔） -->
+<line>好友: <for items="friends" var="f">{{f}} </for></line>
 ```
 
-### 3.5 `<each>` 行内循环
-
-遍历列表，结果**拼接成一行**（如好友列表用空格分隔）：
-
-```xml
-<line>好友: <each items="friends">{{this}} </each></line>
-```
-
-> `<each>` 与 `<line-each>` 的区别：`<each>` 拼接成**一行**，`<line-each>` 每个元素生成**一个独立行**。
+> **块级 vs 行内**：同一个标签按**出现位置**区分语义——行区域（`<template>` 直接子级或块内）= 块级（控制行组显隐/展开）；`<line>`/`<title>` 内 = 行内（拼接一行文本）。行内 `<for>` 属性与块级相同（`items`/`var`/`index`/`max`）。
 
 ### 3.6 完整模板示例
 
@@ -167,13 +208,128 @@ content_template/
     <line>§8═══════════════</line>
     <line>§c生命: {{hp}}/{{maxHp}}</line>
     <line>§a攻击: {{attack}}</line>
-    <line>
-        <if cond="buff != null">§d增益: {{buff}}</if>
-        <else>§7无增益效果</else>
-    </line>
-    <line-each items="kills">§6#{{index + 1}} §f{{this.target}} §7×{{this.count}}</line-each>
+
+    <!-- 块级 if：增益信息整组显隐 -->
+    <if cond="buff != null">
+        <line>§d增益: {{buff.name}}</line>
+        <line>§7剩余: {{buff.seconds}}s</line>
+    </if>
+    <else>
+        §7无增益效果
+    </else>
+
+    <!-- 块级 for：每个击杀目标一行 -->
+    <for items="kills" var="k" index="i">
+        <line>§6#{{i + 1}} §f{{k.target}} §7×{{k.count}}</line>
+    </for>
 </template>
 ```
+
+### 3.7 列格式 `<template columns>` / `<columns>`
+
+排行榜、经济面板这类**多列文本**在等宽字体下想对齐，手补空格在含中文（显示宽度 2 格）时几乎无法对齐。列格式让引擎在**渲染完成后自动列化对齐**：行内容按分隔符拆列 → 计算各列显示宽度 → 按对齐方向补空格 → 重组。
+
+两种启用方式（可单独使用，也可组合）：
+
+```xml
+<!-- 方式一：根属性 columns 指定分隔符，全列默认 左对齐 + AUTO 宽 -->
+<template columns="|">
+    <line>金币|{{coins}}</line>
+    <line>等级|{{level}}</line>
+</template>
+
+<!-- 方式二：<columns> 配置块（隐式启用，默认分隔符 |），逐列声明策略 -->
+<template>
+    <columns>
+        <column align="left"/>
+        <column align="right" width="10"/>
+    </columns>
+    <line>金币|{{coins}}</line>
+    <line>等级|{{level}}</line>
+</template>
+
+<!-- 组合：根属性定分隔符（可多字符）+ <columns> 定列策略 -->
+<template columns="§7|§f">
+    <columns>
+        <column/>
+        <column align="right" width="12"/>
+    </columns>
+    <line>玩家 {{player.name}} §7|§f {{coins}}</line>
+</template>
+```
+
+#### 规则要点
+
+| 规则 | 说明 |
+|------|------|
+| 分隔符 | 可为多字符；根属性值为空串 → 编译报错 |
+| `<columns>` 块 | 最多一个（重复 → 编译报错）；分隔符优先取根属性值，根属性未启用时用默认 `\|` |
+| `<column>` 属性 | `align`（`left` / `center` / `right`，默认 `left`）、`width`（`auto` 或正整数，默认 `auto`）；非法值 → 编译报错 |
+| 列数 | 声明了 `<column>` 取声明数，否则取各行最大单元格数；某行单元格缺失补空串、多余并入最后一列 |
+| 转义 | `\ + 分隔符` 表示字面分隔符（不拆列） |
+| 空行 | 空串行不参与列宽统计，原样直通（可做面板分隔行） |
+| 重组 | 对齐后的单元格以 `" 分隔符 "`（两侧各一空格）重新拼接 |
+| 标题 | `<title>` **不参与列化** |
+
+#### 显示宽度（[`TextWidth`](column/TextWidth.java)）
+
+- 颜色/格式代码 `§x`、`&x` 计 **0 宽**（含码文本与纯文本同宽对齐）
+- CJK 字符（中文、日文假名、韩文、中文标点、全角形式）计 **2 宽**；其他计 1 宽
+- **AUTO** 列宽 = 该列全部单元格最大显示宽度；**FIXED(n)** 固定 n，超宽截断加 `...`（省略号宽度计入 n，并延续最后一个颜色代码）
+- 对齐补空格：LEFT 右补 / RIGHT 左补 / CENTER 居中（左 `⌊pad/2⌋`、右 `⌈pad/2⌉`）
+
+#### API（[`Template`](Template.java) 上）
+
+| 方法 | 说明 |
+|------|------|
+| [`getColumnLayout()`](Template.java:116) | 列布局配置（未启用时为 [`ColumnLayout.DISABLED`](column/ColumnLayout.java:21)） |
+| [`isColumnLayoutEnabled()`](Template.java:121) | 是否启用列格式 |
+| [`ColumnLayout.isEnabled() / getSeparator() / getColumns()`](column/ColumnLayout.java) | 启用判断 / 分隔符 / 逐列策略列表 |
+
+#### 增量渲染语义
+
+启用列格式时 [`IncrementalRenderer`](render/IncrementalRenderer.java) 每次增量渲染**全量重算列宽**，与上次列宽比较：
+
+- **列宽变化**（如某格变长）→ 对齐整体移位 → 变更集自动扩为**全集**（所有行视为变更，避免漏更新）
+- **列宽不变** → 仅内容变化的行标记变更，其余行复用缓存
+
+#### 向后兼容
+
+不写 `columns` 属性与 `<columns>` 块 → [`ColumnLayout.DISABLED`](column/ColumnLayout.java:21)，渲染行为与扩展前**完全一致**；旧构造器 `new Template(titleNodes, lineEntries, source)` 等价于禁用列格式 + 空元数据。
+
+### 3.8 元数据标签 `<meta>`
+
+在模板内声明键值对，编译期收集为**不可变 Map**，引擎不校验其语义，仅供业务模块读取（如 [jframe_title](../../../../../../../../jframe_title/src/main/java/io/github/JiangHu/jframe/title/README.md) 定义了 9 个 `title.*` 标签控制通道映射、时序与模式）。
+
+```xml
+<template>
+    <meta key="module" value="title"/>
+    <meta key="title.mode" value="transient"/>
+    <meta key="title.timing.stay" value="60"/>
+    <title>§e公告</title>
+    <line>欢迎 {{player.name}}</line>
+</template>
+```
+
+#### 规则要点
+
+| 规则 | 说明 |
+|------|------|
+| `key` | 必填非空（缺失/为空 → 编译报错） |
+| `value` | 缺省为空串 |
+| 数量 | 可写多个；重复 `key` 后者覆盖（不报错） |
+| 位置 | `<template>` 下与 `<title>` / `<line>` 平级，顺序不限 |
+
+#### API（[`Template`](Template.java) 上）
+
+| 方法 | 说明 |
+|------|------|
+| [`getMetadata()`](Template.java:126) | 全部元数据（不可变 Map，无 `<meta>` 时为空 Map） |
+| [`getMetadata(key)`](Template.java:131) | 按 key 读取，不存在返回 `Optional.empty()` |
+
+#### 向后兼容
+
+无 `<meta>` 标签时 `getMetadata()` 返回空 Map，渲染产物与扩展前完全一致；引擎对元数据只收集、不消费，不影响渲染结果。
 
 ---
 
@@ -452,8 +608,15 @@ if (delta.isStructureChanged()) {
     <title>§e{{serverName}} - 联机大厅</title>
     <line>§7玩家: §f{{player.name}}</line>
     <line>§7金币: §6{{coins}}</line>
-    <line if="vip" else="§7身份: 普通玩家">§6身份: ⭐VIP</line>
-    <line-each items="rankings" max="10">§e#{{index + 1}} §f{{this.name}}</line-each>
+    <if cond="vip">
+        §6身份: ⭐VIP
+    </if>
+    <else>
+        §7身份: 普通玩家
+    </else>
+    <for items="rankings" var="r" index="i" max="10">
+        <line>§e#{{i + 1}} §f{{r.name}}</line>
+    </for>
 </template>
 ```
 
@@ -492,7 +655,7 @@ RenderResult after = engine.render(template, data);    // 金币: 5000
 |------|------|------|
 | **展示与逻辑** | 耦合（业务类里写 `§e` 颜色码） | 分离（模板文件 + 数据） |
 | **热更新** | 改文本要重新编译重启 | 文件模板改完即时生效 |
-| **条件 / 循环** | 手写 `if` / `for` 拼字符串 | `<if>` / `<line-each>` 声明式 |
+| **条件 / 循环** | 手写 `if` / `for` 拼字符串 | `<if>` / `<for>` 声明式 |
 | **表达式求值** | 手写取值、算术 | SpEL 一行搞定 |
 | **高频刷新性能** | 每次全量重算 | 增量渲染只算变化的行 |
 | **跨功能复用** | 每个功能各写一套 | 统一 [`RenderResult`](RenderResult.java)，各模块映射 |

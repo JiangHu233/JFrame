@@ -13,15 +13,16 @@
         <module>jframe_async</module>
         <module>jframe_form</module>
         <module>jframe_main</module>
-        <module>jframe_event</module>
+        <module>jframe_listener</module>
         <module>jframe_example</module>
         <module>jframe_command</module>
         <module>jframe_inventory</module>
         <module>jframe_data</module>
         <module>jframe_ai</module>
-        <module>jframe_title</module>
+        <module>jframe_title_depend_template</module>
         <module>jframe_scoreboard_depend_template</module>
         <module>jframe_template</module>
+        <module>jframe_nbt</module>
     </modules>
 
     <properties>

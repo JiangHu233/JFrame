@@ -364,10 +364,11 @@ t = distance / projectileSpeed     // 预估飞行时间，补偿目标线性移
 散布   = 基础散布 × 距离衰减        // arrow(target, speed, spread)
 ```
 
-- 近战：`EntityAttackEvent` 走事件总线，被取消返回 false。
-- 射箭 / 投掷：构造 `EntityArrow` / `EntityProjectile` 子类，设置速度向量后 spawn。
+- 近战：先广播挥刀动画（`AnimatePacket`，按实体所在区块发给视野内玩家——AI 假人无客户端本地动画，必须服务端主动广播），再施加 `EntityDamageByEntityEvent`（damager 在前的四参构造器）——普通 `EntityDamageEvent` 会被 Nukkit `EntityLiving.attack()` 的 `instanceof` 守卫跳过击退分支；四参构造默认 knockBack = 0.4，与真人 PVP（`Item.useOn` 同走四参构造）完全对齐。事件被取消时"挥空刀"动画照播（先动画后结算）。
+- 射箭 / 投掷：先广播挥臂动画，再构造 `EntityArrow` / `EntityProjectile` 子类，设置速度向量后 spawn。
+- 动画可配置：每个动作方法均有带 `AnimatePacket.Action` 的重载（`null` = 关闭动画）；默认动画近战/射箭/投掷/对目标用物品为 `SWING_ARM`（`DEFAULT_COMBAT_ANIMATION`），对自身用物品不播（原版吃喝动画由客户端本地播放）。`playAnimation(entity, action)` 可独立播放任意实体动画。
 - 全部动作 null / 非法参数防御返回 false / null，不抛异常。
-- [`AttackExecutor`](core/executor/AttackExecutor.java) 是其链式门面：配置态对象可复用，`fire()` 校验主线程后按 `Kind` 分派。
+- [`AttackExecutor`](core/executor/AttackExecutor.java) 是其链式门面：配置态对象可复用，`fire()` 校验主线程后按 `Kind` 分派；`animation(action)` 可选修饰作用于全部动作类型（未配置=默认 / 显式指定 / `null`=关闭），配置新动作时重置。
 
 ---
 

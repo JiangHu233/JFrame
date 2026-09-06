@@ -50,7 +50,7 @@
 |------|------|
 | **模板驱动** | 用 XML 定义计分板内容结构（标题 + 行），一次编写，反复渲染 |
 | **响应式更新** | 数据变化自动触发重新渲染，无需手动刷新 |
-| **SpEL 表达式** | `{{ }}` 插值 + `<if>` 条件 + `<each>` 循环，SpEL 语法全覆盖 |
+| **SpEL 表达式** | `{{ }}` 插值 + `<if>` 条件 + `<for>` 循环，SpEL 语法全覆盖 |
 | **三种发送模式** | 指定玩家 / 条件筛选 / 全体广播 |
 | **四层数据粒度** | 引擎全局 / 玩家全局(Session) / 计分板局部(Request)，像前端状态管理一样分层管理数据 |
 | **KeepAlive 缓存** | 切换计分板时保留数据和渲染状态，切回时秒恢复，不丢数据 |
@@ -190,15 +190,15 @@ scoreboard.hide(player);
 </line>
 ```
 
-### `<each>` 循环渲染
+### `<for>` 循环渲染
 
 ```xml
-<each items="topPlayers" var="p" index="i">
+<for items="topPlayers" var="p" index="i">
     <line>§e#{{i + 1}} §f{{p.name}} §7- {{p.score}}</line>
-</each>
+</for>
 ```
 
-> `items` 是 DataContext 中的 List/数组，`var` 是循环变量名，`index` 是可选的索引变量名。
+> `items` 是 DataContext 中的 List/数组，`var` 是循环变量名（缺省 `this`），`index` 是可选的索引变量名（缺省 `index`），还可用 `max` 限制最大迭代数。
 
 ### 完整模板示例
 
@@ -225,9 +225,9 @@ scoreboard.hide(player);
     </line>
 
     <!-- 循环行（排行榜） -->
-    <each items="kills" var="entry" index="i">
+    <for items="kills" var="entry" index="i">
         <line>§6#{{i + 1}} §f{{entry.target}} §7×{{entry.count}}</line>
-    </each>
+    </for>
 </template>
 ```
 
@@ -558,9 +558,9 @@ scoreboard.loadTemplate("admin", """
         <line>§7TPS: {{tps}}</line>
         <line>§7在线: {{online}}/{{max}}</line>
         <line>§7内存: {{memory}}%</line>
-        <each items="warnings" var="w">
+        <for items="warnings" var="w">
             <line>§c⚠ {{w}}</line>
-        </each>
+        </for>
     </template>
     """);
 

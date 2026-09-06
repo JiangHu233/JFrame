@@ -54,12 +54,14 @@ core/
 │   │   ├── AbstractFunctionalMap.java   # 功能可插拔 Map 基类
 │   │   ├── LruCacheMap.java             # 线程安全 LRU 缓存
 │   │   └── PlayerDataMap.java           # 玩家维度映射（退服自动清理）
-│   └── reactive/                 # 响应式纠缠值
-│       ├── EntangledValue.java          # 可纠缠的响应式值容器
-│       ├── EntangledChannel.java        # 纠缠通道（协调中枢）
-│       ├── Entangled.java               # 无类型根接口（异构纠缠）
-│       ├── EntangledEvent.java          # 值变化事件
-│       └── Role.java                    # 成员收发角色
+│   ├── reactive/                 # 响应式纠缠值
+│   │   ├── EntangledValue.java          # 可纠缠的响应式值容器
+│   │   ├── EntangledChannel.java        # 纠缠通道（协调中枢）
+│   │   ├── Entangled.java               # 无类型根接口（异构纠缠）
+│   │   ├── EntangledEvent.java          # 值变化事件
+│   │   └── Role.java                    # 成员收发角色
+│   └── trigger/                  # 按次数触发
+│       └── CountdownTrigger.java        # 倒计时触发器（指定次调用后执行绑定函数）
 └── config/
     └── CoreSpringConfig.java     # Spring 装配入口
 ```
@@ -226,7 +228,7 @@ Set<Class<?>> classes = scanner.scan(pluginClassLoader, "com.myplugin.event");
 
 ## 七、data：通用数据容器
 
-`data` 包提供两类高频数据结构，**详细用法请阅读 [data/README.md](data/README.md)**。此处仅作概览。
+`data` 包提供三类高频数据结构，**详细用法请阅读 [data/README.md](data/README.md)**。此处仅作概览。
 
 ### reactive —— 响应式纠缠值
 
@@ -256,6 +258,14 @@ Set<Class<?>> classes = scanner.scan(pluginClassLoader, "com.myplugin.event");
 | [`AbstractFunctionalMap`](data/map/AbstractFunctionalMap.java) | 基类：键提取 / 加载 / 过期 / 淘汰回调可插拔 |
 | [`LruCacheMap`](data/map/LruCacheMap.java) | 线程安全 LRU 缓存（`S=K`） |
 | [`PlayerDataMap`](data/map/PlayerDataMap.java) | 玩家维度映射，退服自动清理（`S=Player`） |
+
+### trigger —— 按次数触发
+
+[`CountdownTrigger`](data/trigger/CountdownTrigger.java)：被调用指定次数后执行绑定函数的计数数据类型。`tick()` 计数减一，归零时执行绑定的函数；`RESETTABLE`（默认）触发后失效可 `reset()` 复活，`RECURRING` 自动循环周期触发。
+
+| 类型 | 作用 |
+|------|------|
+| [`CountdownTrigger`](data/trigger/CountdownTrigger.java) | 倒计时触发器：指定次调用后执行绑定函数（可重置 / 自动循环） |
 
 ---
 
@@ -397,6 +407,19 @@ display.joinAsSink(ch);     // 只听不发
 sensor.set(50);   // display 收到；display.set 不会回流给 sensor
 ```
 
+### 倒计时触发器：连击 / 充能
+
+```java
+// 三连击达成触发（一次性保险丝）
+var combo = CountdownTrigger.of(3, () -> player.sendMessage("三连击！"));
+combo.tick();   // false
+combo.tick();   // false
+combo.tick();   // true —— 触发
+
+// 每 5 次采集掉落一次奖励（自动循环）
+var gather = CountdownTrigger.of(5, () -> dropReward(), CountdownTrigger.Mode.RECURRING);
+```
+
 ### 跨插件扫描命令控制器
 
 ```java
@@ -404,7 +427,7 @@ sensor.set(50);   // display 收到；display.set 不会回流给 sensor
 commandAPI.forPlugin(this).scan("com.myplugin.command");
 ```
 
-> 更多场景（异构纠缠、去重、容器突变、通道级监听）见 [data/README.md](data/README.md)。
+> 更多场景（异构纠缠、去重、容器突变、通道级监听、触发模式）见 [data/README.md](data/README.md)。
 
 ---
 

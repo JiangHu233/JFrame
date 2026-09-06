@@ -15,4 +15,7 @@
         <constructor-arg ref="threadAPI"/>
     </bean>
 
+    <!-- 主线程多通道缓释调度器：异步任务按策略分批释放到主线程 -->
+    <bean class="io.github.JiangHu.jframe.async.release.ReleaseAPI" id="releaseAPI"/>
+
 </beans>

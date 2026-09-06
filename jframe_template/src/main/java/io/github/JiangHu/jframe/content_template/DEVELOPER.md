@@ -16,6 +16,7 @@
 - [七、Loader 链与热重载](#七loader-链与热重载)
 - [八、线程安全](#八线程安全)
 - [九、扩展指南](#九扩展指南)
+- [十、列格式与元数据：引擎扩展](#十列格式与元数据引擎扩展)
 
 ---
 
@@ -23,14 +24,15 @@
 
 `jframe_dependency_template` 是纯工具层，**只依赖 [`jframe_core`](../../../../../../../../core/README.md)**（提供 [`DataContext`](../../../../../../../../core/data/reactive/DataContext.java) 与 [`ChangeSet`](../../../../../../../../core/data/reactive/ChangeSet.java)）和 Spring（SpEL 求值、`ClassPathResource`）。它不理解任何游戏概念，产出的是与游戏无关的 [`RenderResult`](RenderResult.java) / [`IncrementalRenderResult`](IncrementalRenderResult.java)，由 scoreboard / title 等上层模块消费映射。
 
-四个子包职责单一、互不交叉：
+五个子包职责单一、互不交叉：
 
 | 子包 | 职责 |
 |------|------|
 | [`ast/`](ast/TemplateNode.java) | 纯数据节点（record），描述模板结构 |
-| [`parser/`](parser/TemplateParser.java) | 源码 → AST（编译） |
+| [`parser/`](parser/TemplateParser.java) | 源码 → AST（编译），含列布局与元数据收集 |
 | [`loader/`](loader/TemplateLoader.java) | 从不同来源加载源码 |
 | [`render/`](render/TemplateRenderer.java) | AST + 数据 → 文本（渲染） |
+| [`column/`](column/ColumnAligner.java) | 列化对齐（渲染后独立阶段：拆列 → 算宽 → 对齐/截断 → 重组） |
 
 [`TemplateEngine`](TemplateEngine.java) 是门面，把上述四者与缓存机制整合成一站式 API。
 
@@ -55,30 +57,32 @@
 
 ### 编译期：[`TemplateParser`](parser/TemplateParser.java)
 
-1. **XML 模板**（[`parseXml`](parser/TemplateParser.java:80)）：用 JDK DOM 解析字符串 → `Document`，遍历 `<template>` 子元素：
-   - `<title>` → [`parseInlineNodes`](parser/TemplateParser.java:153) 解析为行内节点列表
-   - `<line>` → [`parseStaticLine`](parser/TemplateParser.java:129)（提取 `if`/`else` 属性）
-   - `<line-each>` → [`parseDynamicLine`](parser/TemplateParser.java:139)（提取 `items`/`max`）
-2. **纯文本模板**（[`parseText`](parser/TemplateParser.java:120)）：直接 [`parseInlineText`](parser/TemplateParser.java:244) 拆分 `{{ }}`。
+1. **XML 模板**（[`parseXml`](parser/TemplateParser.java:115)）：用 JDK DOM 解析字符串 → `Document`，遍历 `<template>` 子元素，`<title>`/`<meta>`/`<columns>` 顶层处理，其余（line / if / for / 裸文本）进入行区域由 [`parseLineEntries`](parser/TemplateParser.java:190) 递归解析：
+   - `<line>` / 非空白裸文本 → [`StaticLine`](ast/StaticLine.java)
+   - `<if>` 链 → [`parseBlockIfChain`](parser/TemplateParser.java:241) 合并为 [`ConditionalBlock`](ast/ConditionalBlock.java)
+   - `<for>` → [`parseLoopBlock`](parser/TemplateParser.java:286)（提取 `items`/`var`/`index`/`max`）
+2. **纯文本模板**（[`parseText`](parser/TemplateParser.java:168)）：直接 [`parseInlineText`](parser/TemplateParser.java:406) 拆分 `{{ }}`。
 
 ### 行内节点解析
 
-[`parseInlineNodes`](parser/TemplateParser.java:153) 递归处理 DOM 子节点，是编译期的核心：
+[`parseInlineNodes`](parser/TemplateParser.java:306) 递归处理 DOM 子节点，是编译期的核心：
 
-- **文本节点** → [`parseInlineText`](parser/TemplateParser.java:244) 按 `{{ }}` 拆分为 [`TextNode`](ast/TextNode.java) / [`ExpressionNode`](ast/ExpressionNode.java)
-- **`<if>`** → [`parseIfChain`](parser/TemplateParser.java:188) 消费后续连续的 `<elif>`/`<else>`，合并为单个 [`IfNode`](ast/IfNode.java)
-- **`<each>`** → [`parseEachElement`](parser/TemplateParser.java:230) 生成 [`EachNode`](ast/EachNode.java)
+- **文本节点** → [`parseInlineText`](parser/TemplateParser.java:406) 按 `{{ }}` 拆分为 [`TextNode`](ast/TextNode.java) / [`ExpressionNode`](ast/ExpressionNode.java)
+- **`<if>`** → [`parseIfChain`](parser/TemplateParser.java:344) 消费后续连续的 `<elif>`/`<else>`，合并为单个 [`IfNode`](ast/IfNode.java)
+- **`<for>`** → [`parseForNode`](parser/TemplateParser.java:389) 生成 [`ForNode`](ast/ForNode.java)
 
-**关键设计——if 链合并**：DOM 中 `<if>`/`<elif>`/`<else>` 是平级兄弟节点，[`parseIfChain`](parser/TemplateParser.java:188) 把它们「贪心」地合并成一个 [`IfNode`](ast/IfNode.java)，返回下一个待处理索引，避免渲染时重复扫描。孤立的 `<elif>`/`<else>`（无前置 `<if>`）会被跳过。
+**关键设计——if 链合并**：DOM 中 `<if>`/`<elif>`/`<else>` 是平级兄弟节点，[`parseIfChain`](parser/TemplateParser.java:344)（行内）与 [`parseBlockIfChain`](parser/TemplateParser.java:241)（块级）把它们「贪心」地合并成一个节点，返回下一个待处理索引，避免渲染时重复扫描。孤立的 `<elif>`/`<else>`（无前置 `<if>`）会被跳过。
+
+**位置区分语义**：`<if>`/`<for>` 在行区域（`<template>` 直接子级或块内）解析为块级节点（`ConditionalBlock`/`LoopBlock`），在 `<line>`/`<title>` 内解析为行内节点（`IfNode`/`ForNode`）——同一个标签，两种产出。
 
 ### 渲染期：[`TemplateRenderer`](render/TemplateRenderer.java)
 
 1. 从 [`DataContext.asMap()`](../../../../../../../../core/data/reactive/DataContext.java) 取**数据快照**，构建 [`RenderContext`](render/RenderContext.java)。
 2. 渲染标题节点列表 → 标题字符串。
-3. 遍历行条目（[`StaticLine`](ast/StaticLine.java) / [`DynamicLine`](ast/DynamicLine.java)）→ 行列表。
+3. 遍历行条目（[`StaticLine`](ast/StaticLine.java) / [`ConditionalBlock`](ast/ConditionalBlock.java) / [`LoopBlock`](ast/LoopBlock.java)）→ 行列表。
 4. 封装为 [`RenderResult`](RenderResult.java)。
 
-行内节点渲染（[`renderNode`](render/TemplateRenderer.java:151)）用 `switch` 模式匹配处理四种节点类型，节点本身是纯数据，渲染逻辑集中在渲染器。
+行条目渲染（[`renderLineEntry`](render/TemplateRenderer.java:108)）与行内节点渲染（[`renderNode`](render/TemplateRenderer.java:176)）均用 `switch` 模式匹配穷尽处理各节点类型，节点本身是纯数据，渲染逻辑集中在渲染器。
 
 > **为什么编译期与渲染期分离**：编译结果（AST）不可变、可缓存、可并发渲染。同一模板编译一次，配合不同数据可渲染无数次，是缓存与增量渲染的基础。
 
@@ -89,13 +93,16 @@
 AST 用 Java 的 **sealed 接口 + record** 表达，编译期即可保证穷尽性：
 
 ```
-行级别（LineEntry，sealed）            行内（TemplateNode，sealed）
-┌──────────────────────┐             ┌──────────────────────┐
-│  StaticLine          │  nodes →    │  TextNode            │  纯文本
-│  (<line>)            │ ──────────→ │  ExpressionNode      │  {{ }}
-│                      │             │  IfNode              │  <if>/<elif>/<else>
-│  DynamicLine         │  bodyNodes →│  EachNode            │  <each>
-│  (<line-each>)       │ ──────────→ └──────────────────────┘
+行级别（LineEntry，sealed）             行内（TemplateNode，sealed）
+┌──────────────────────┐              ┌──────────────────────┐
+│  StaticLine          │  nodes →     │  TextNode            │  纯文本
+│  (<line>/裸文本)     │ ───────────→ │  ExpressionNode      │  {{ }}
+│                      │              │  IfNode              │  行内 <if>/<elif>/<else>
+│  ConditionalBlock    │  entries →   │  ForNode             │  行内 <for>
+│  (块级 <if> 链)      │ ──┐          └──────────────────────┘
+│                      │   │ 递归包含 LineEntry（可嵌套块）
+│  LoopBlock           │ ──┘
+│  (块级 <for>)        │
 └──────────────────────┘
 ```
 
@@ -103,17 +110,17 @@ AST 用 Java 的 **sealed 接口 + record** 表达，编译期即可保证穷尽
 
 | 维度 | 接口 | 实现 | 含义 |
 |------|------|------|------|
-| **行级别** | [`LineEntry`](ast/LineEntry.java) | [`StaticLine`](ast/StaticLine.java) / [`DynamicLine`](ast/DynamicLine.java) | 决定「产生几行」 |
-| **行内** | [`TemplateNode`](ast/TemplateNode.java) | [`TextNode`](ast/TextNode.java) / [`ExpressionNode`](ast/ExpressionNode.java) / [`IfNode`](ast/IfNode.java) / [`EachNode`](ast/EachNode.java) | 决定「一行内拼什么」 |
+| **行级别** | [`LineEntry`](ast/LineEntry.java) | [`StaticLine`](ast/StaticLine.java) / [`ConditionalBlock`](ast/ConditionalBlock.java) / [`LoopBlock`](ast/LoopBlock.java) | 决定「产生几行」 |
+| **行内** | [`TemplateNode`](ast/TemplateNode.java) | [`TextNode`](ast/TextNode.java) / [`ExpressionNode`](ast/ExpressionNode.java) / [`IfNode`](ast/IfNode.java) / [`ForNode`](ast/ForNode.java) | 决定「一行内拼什么」 |
 
-### 关键区分：`<each>` vs `<line-each>`
+### 关键区分：块级 vs 行内
 
-二者容易混淆，是设计上的有意区分：
+`<if>`/`<for>` 同名标签按**出现位置**区分语义，是设计上的有意选择（比 `<each>`/`<line-each>` 两套标签更直觉）：
 
-| 标签 | AST 类型 | 产出 |
-|------|----------|------|
-| `<each>` | [`EachNode`](ast/EachNode.java)（行内节点） | 拼接成**一行**（如好友列表用空格分隔） |
-| `<line-each>` | [`DynamicLine`](ast/DynamicLine.java)（行级别条目） | 每个元素生成**一个独立行**（如排行榜每人一行） |
+| 位置 | `<if>` 产出 | `<for>` 产出 | 语义 |
+|------|-------------|--------------|------|
+| 行区域（template 直接子级或块内） | [`ConditionalBlock`](ast/ConditionalBlock.java) | [`LoopBlock`](ast/LoopBlock.java) | 控制行组显隐 / 每元素展开整组行 |
+| `<line>`/`<title>` 内 | [`IfNode`](ast/IfNode.java) | [`ForNode`](ast/ForNode.java) | 单行内条件片段 / 拼接成一行 |
 
 ### 保留字集中管理
 
@@ -201,7 +208,7 @@ SpEL AST: PropertyOrFieldReference("name") ← 子节点
 
 ### Layer 2：[`IncrementalRenderer`](render/IncrementalRenderer.java)
 
-运行时依据 [`ChangeSet`](../../../../../../../../core/data/reactive/ChangeSet.java) 做增量渲染。核心算法（[`renderIncremental`](render/IncrementalRenderer.java:149)）：
+运行时依据 [`ChangeSet`](../../../../../../../../core/data/reactive/ChangeSet.java) 做增量渲染。核心算法（[`renderIncremental`](render/IncrementalRenderer.java:164)）：
 
 1. **标题增量**：若 `titleDependencies ∩ changedKeys ≠ ∅` → 重新渲染标题，否则复用缓存。
 2. **逐行增量**：遍历行条目，仅当 `entry.deps ∩ changedKeys ≠ ∅` 时重新渲染该条目：
@@ -222,7 +229,7 @@ SpEL AST: PropertyOrFieldReference("name") ← 子节点
 
 ### 结构变更回退
 
-当 [`DynamicLine`](ast/DynamicLine.java) 展开数变化（列表增删元素）或 [`StaticLine`](ast/StaticLine.java) 条件显隐切换导致行数变化时，逐行更新无意义，[`IncrementalRenderer`](render/IncrementalRenderer.java:218) 直接回退到 [`renderFull`](render/IncrementalRenderer.java:97) 全量渲染。这是「增量优先、全量兜底」的策略。
+当 [`LoopBlock`](ast/LoopBlock.java) 展开数变化（列表增删元素或 `max` 截断变化）或 [`ConditionalBlock`](ast/ConditionalBlock.java) 分支切换导致行数变化时，逐行更新无意义，[`IncrementalRenderer`](render/IncrementalRenderer.java:236) 直接回退到 [`renderFull`](render/IncrementalRenderer.java:103) 全量渲染。这是「增量优先、全量兜底」的策略。
 
 > **状态性**：[`IncrementalRenderer`](render/IncrementalRenderer.java) **有状态**（缓存上次渲染结果），每个视图（如每个玩家的计分板）应持有独立实例，不可跨视图共享。
 
@@ -324,9 +331,9 @@ Resource resource = classLoader != null
 
 1. **常量**：在 [`TemplateConstants`](TemplateConstants.java) 添加 `TAG_SWITCH = "switch"`。
 2. **AST 节点**：在 [`ast/`](ast/TemplateNode.java) 新增 `SwitchNode` record，并加入 `sealed` 的 `permits` 列表。
-3. **解析**：在 [`TemplateParser.parseInlineNodes`](parser/TemplateParser.java:153) 的 switch 中增加 `case TAG_SWITCH` 分支。
-4. **渲染**：在 [`TemplateRenderer.renderNode`](render/TemplateRenderer.java:151) 的 switch 中增加 `case SwitchNode` 分支。
-5. **依赖提取**：在 [`DependencyExtractor.extractFromNode`](render/DependencyExtractor.java:89) 的 switch 中增加分支，提取条件与各分支节点的依赖。
+3. **解析**：在 [`TemplateParser.parseLineEntries`](parser/TemplateParser.java:190)（块级）与 [`parseInlineNodes`](parser/TemplateParser.java:306)（行内）的 switch 中增加 `case TAG_SWITCH` 分支。
+4. **渲染**：在 [`TemplateRenderer.renderLineEntry`](render/TemplateRenderer.java:108)（行级）与 [`renderNode`](render/TemplateRenderer.java:176)（行内）的 switch 中增加 `case SwitchNode` 分支。
+5. **依赖提取**：在 [`DependencyExtractor.extractFromLineEntryInto`](render/DependencyExtractor.java:192) 与 [`extractFromNode`](render/DependencyExtractor.java:90) 的 switch 中增加分支，提取条件与各分支节点的依赖。
 6. **测试**：在 [`TemplateDemoTest`](../../../../../../../../../test/java/io/github/JiangHu/jframe/content_template/TemplateDemoTest.java) 增加用例。
 
 > 因为 AST 用 sealed 接口，编译器会在第 3、4、5 步强制你处理新节点类型，不会遗漏。
@@ -357,3 +364,83 @@ public class DatabaseTemplateLoader implements TemplateLoader {
 当前 [`IncrementalRenderer`](render/IncrementalRenderer.java) 采用「内容变更逐行比较、结构变更全量回退」。若需更细粒度的增量（如结构变更时也做行插入/删除 diff 而非全量重建），需改造 [`renderIncremental`](render/IncrementalRenderer.java:149) 的结构变更分支，并扩展 [`IncrementalRenderResult`](IncrementalRenderResult.java) 携带插入/删除操作信息。
 
 > 任何修改请同步更新 [README.md](README.md) 的语法说明与测试覆盖（[`TemplateDemoTest`](../../../../../../../../../test/java/io/github/JiangHu/jframe/content_template/TemplateDemoTest.java) 覆盖插值 / SpEL / 条件 / 循环 / 响应式 / 缓存，[`IncrementalRendererTest`](../../../../../../../../../test/java/io/github/JiangHu/jframe/content_template/render/IncrementalRendererTest.java) 覆盖增量场景）。
+
+---
+
+## 十、列格式与元数据：引擎扩展
+
+引擎在保持「与游戏内容无关」原则下扩展了两项能力：**列格式**（渲染后自动对齐多列文本）与**元数据标签**（模板内声明键值对供上层模块读取）。二者均为**编译期收集、不可变持有**，对未使用的模板零影响。
+
+### 编译期收集：[`TemplateParser`](parser/TemplateParser.java)
+
+| 语法 | 收集逻辑 | 错误处理 |
+|------|----------|----------|
+| 根属性 `columns="分隔符"` | [`parseRootColumnsAttr`](parser/TemplateParser.java:443)：属性不存在返回 [`DISABLED`](column/ColumnLayout.java:21)；存在则构建 `ColumnLayout.enabled(separator, List.of())`（全列默认策略） | 空串 → `TemplateParseException` |
+| `<columns>` 配置块（最多一个） | [`mergeColumnLayout`](parser/TemplateParser.java:459)：分隔符优先取根属性值，根属性未启用时用默认 `\|`；块内逐个解析 `<column>` 为 [`ColumnSpec`](column/ColumnSpec.java) | 重复块 → 异常；`align`/`width` 非法值 → 异常 |
+| `<meta key value/>` | [`collectMeta`](parser/TemplateParser.java:520)：写入 `LinkedHashMap`（保持声明顺序） | `key` 缺失/空白 → 异常；重复 `key` 后者覆盖 |
+
+产物随 [`Template`](Template.java) 不可变持有：`columnLayout`（默认 `DISABLED`）与 `metadata`（构造时包 `unmodifiableMap`，默认空 Map）。**旧构造器委托全参构造**并填默认值，已有调用方零改动。
+
+### 渲染接入点：列化是「产出结果前的最后阶段」
+
+```
+TemplateRenderer.render:  行条目渲染 → lines → [ColumnAligner.align] → RenderResult
+                                          （仅 isColumnLayoutEnabled() 时；标题不参与列化）
+
+IncrementalRenderer:      renderFull        记录 lastColumnWidths = computeWidths(lines) → 输出列化行
+                          renderIncremental 列宽全量重算 → 与 lastColumnWidths 比较：
+                                            ├─ 列宽变化 → 对齐整体移位 → 变更集扩为全集（所有行视为变更）
+                                            └─ 列宽不变 → 仅内容变化的行标记变更
+```
+
+**为什么列宽变化要扩为全集**：AUTO 列宽 = 该列最大单元格宽度，任一单元格变长会使**该列所有行**的补空格数量变化（对齐整体移位），逐行 diff 会漏掉这些行，因此 [`IncrementalRenderer`](render/IncrementalRenderer.java:250) 用 [`computeWidths`](column/ColumnAligner.java:87)（与对齐同一算法的纯宽度计算）做整体比较，任一列宽变化即扩为全集。这是「正确性优先」的保守策略。
+
+### [`ColumnAligner`](column/ColumnAligner.java) 算法（纯函数、无状态、线程安全）
+
+```
+align(lines, layout):
+  1. 拆列    每行按 separator 拆单元格；"\ + 分隔符" 转义序列原样保留
+  2. 规整    列数 = 声明数（>0）否则各行最大单元格数
+             缺失补空串；多余单元格原样（以分隔符）拼接进最后一列
+             空串行以 null 占位直通（不参与列宽统计）
+  3. 算宽    AUTO 列 = 该列全部单元格最大显示宽度（空列 0）
+             FIXED(n) 列 = n
+  4. 对齐    LEFT 右补 / RIGHT 左补 / CENTER 左 ⌊pad/2⌋ 右 ⌈pad/2⌉
+             FIXED 超宽先截断加 "..."（省略号宽度计入 n；固定宽容不下省略号时硬截断）
+  5. 重组    单元格以 " 分隔符 "（两侧各一空格）拼接
+```
+
+策略覆盖：第 k 列用第 k 个 `<column>` 声明，**列数超出声明数时回退最后一个声明**（[`specAt`](column/ColumnAligner.java:245)）；未声明时全列默认 LEFT + AUTO。
+
+### [`TextWidth`](column/TextWidth.java) 显示宽度规则
+
+| 字符类别 | 宽度 | 判定依据 |
+|----------|:----:|----------|
+| 颜色/格式代码 `§x` / `&x` | 0 | 前缀字符 + 合法代码字符（0-9 a-f k-o r，大小写等价） |
+| CJK（中文/假名/韩文） | 2 | `Character.UnicodeScript`（HAN/HIRAGANA/KATAKANA/HANGUL） |
+| CJK 标点 U+3000–U+303F、全角 U+FF01–U+FF60、U+FFE0–U+FFE6 | 2 | 区段判定 |
+| 半角片假名 U+FF61–U+FF9F | 1 | 先于 script 判定（该区段脚本归属 KATAKANA，会被误判为宽） |
+| 其他（ASCII / 半角） | 1 | 兜底 |
+
+截断 [`truncateToWidth`](column/TextWidth.java:76)：按显示宽度保留前 `keepWidth`，追加省略号；**颜色代码不计宽且原样保留**，发生截断时在省略号前重复**最后一个**颜色代码以延续样式（避免省略号继承错误颜色）。
+
+### 元数据的消费边界
+
+引擎对 metadata **只收集、不消费**——不校验 key 语义、不影响渲染结果。消费方是上层模块（如 [jframe_title](../../../../../../../../jframe_title/src/main/java/io/github/JiangHu/jframe/title/README.md) 的 `title.*` 标签在 `TitleMetaResolver` 中解析为通道映射与时序配置）。这保证引擎扩展的通用性：任何模块都可定义自己的 meta key 约定。
+
+### 向后兼容设计
+
+| 手段 | 效果 |
+|------|------|
+| [`ColumnLayout.DISABLED`](column/ColumnLayout.java:21) 单例 | 未启用列格式的模板共用同一实例，渲染路径与扩展前恒等 |
+| 旧构造器委托 | `new Template(titleNodes, lineEntries, source)` = 禁用列格式 + 空 metadata |
+| 渲染器守卫 | `isColumnLayoutEnabled()` 为 false 时完全跳过列化分支，零开销 |
+| metadata 默认空 Map | `getMetadata()` 恒非 null，调用方无需判空 |
+
+### 扩展点
+
+- **新增宽度策略**（如按百分比）：扩展 [`ColumnWidth`](column/ColumnWidth.java)（当前 AUTO/FIXED 二值，`fixedWidth = -1` 哨兵区分），同步 [`ColumnAligner.computeColumnWidths`](column/ColumnAligner.java:187) 与解析器的 `width` 属性文法。
+- **新增对齐方向**（如小数点对齐）：扩展 [`ColumnAlign`](column/ColumnAlign.java) 枚举与 [`padCell`](column/ColumnAligner.java:229) 的 switch（无默认分支，编译器强制穷尽）。
+- **新增 meta 语义**：无需改引擎——上层模块自定义 key 约定即可；若需类型化读取，在上层做 `String → 类型` 解析（参照 `TitleMetaResolver`）。
+
+> 测试覆盖：[`TemplateParserColumnMetaTest`](../../../../../../../../../test/java/io/github/JiangHu/jframe/content_template/parser/TemplateParserColumnMetaTest.java)（语法/错误/合并语义）、[`ColumnAlignerLogicTest`](../../../../../../../../../test/java/io/github/JiangHu/jframe/content_template/column/ColumnAlignerLogicTest.java) + [`TextWidthLogicTest`](../../../../../../../../../test/java/io/github/JiangHu/jframe/content_template/column/TextWidthLogicTest.java)（算法）、[`TemplateRendererColumnTest`](../../../../../../../../../test/java/io/github/JiangHu/jframe/content_template/render/TemplateRendererColumnTest.java) + [`IncrementalRendererColumnTest`](../../../../../../../../../test/java/io/github/JiangHu/jframe/content_template/render/IncrementalRendererColumnTest.java)（渲染/增量接入）。

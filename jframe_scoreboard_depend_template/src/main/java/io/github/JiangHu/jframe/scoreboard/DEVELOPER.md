@@ -317,12 +317,14 @@ AST（抽象语法树）
     ├→ TemplateNode（根节点）
     │    ├→ title: String
     │    └→ lines: List<LineEntry>
-    │         ├→ StaticLine（纯文本行）
-    │         └→ DynamicLine（含表达式/条件/循环的行）
-    │              ├→ TextNode（静态文本片段）
-    │              ├→ ExpressionNode（{{ }} SpEL 表达式）
-    │              ├→ IfNode（条件分支）
-    │              └→ EachNode（循环）
+    │         ├→ StaticLine（一行，bodyNodes 拼成一行文本）
+    │         ├→ ConditionalBlock（块级 <if>/<elif>/<else>，控制行组显隐）
+    │         └→ LoopBlock（块级 <for>，每个元素展开一组行）
+    │              └→ 行内 TemplateNode：
+    │                   ├→ TextNode（静态文本片段）
+    │                   ├→ ExpressionNode（{{ }} SpEL 表达式）
+    │                   ├→ IfNode（行内条件分支）
+    │                   └→ ForNode（行内循环拼接）
     ↓ 缓存到 TemplateEngine
 Template 对象（可重复渲染）
     ↓ TemplateRenderer（SpEL 求值）
@@ -334,11 +336,12 @@ RenderResult(title, lines)
 | 节点 | 对应 XML | 职责 |
 |------|----------|------|
 | [`TemplateNode`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/TemplateNode.java) | `<template>` | 根节点，持有 title + lines |
-| [`StaticLine`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/StaticLine.java) | `<line>纯文本</line>` | 不含表达式的行 |
-| [`DynamicLine`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/DynamicLine.java) | `<line>含 {{}} 或 <if></line>` | 含动态内容的行 |
+| [`StaticLine`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/StaticLine.java) | `<line>...</line>` | 一行，行内节点拼接为一行文本 |
+| [`ConditionalBlock`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/ConditionalBlock.java) | 块级 `<if>/<elif>/<else>` | 条件为真的分支整组显示，否则整组隐藏 |
+| [`LoopBlock`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/LoopBlock.java) | 块级 `<for>` | 遍历列表，每个元素展开一组行 |
 | [`ExpressionNode`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/ExpressionNode.java) | `{{expr}}` | SpEL 表达式 |
-| [`IfNode`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/IfNode.java) | `<if>/<elif>/<else>` | 条件分支 |
-| [`EachNode`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/EachNode.java) | `<each>` | 循环遍历 |
+| [`IfNode`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/IfNode.java) | 行内 `<if>/<elif>/<else>` | 行内条件片段 |
+| [`ForNode`](../../jframe_dependency_template/src/main/java/io/github/JiangHu/jframe/content_template/ast/ForNode.java) | 行内 `<for>` | 行内循环拼接 |
 
 ### 渲染流程
 
@@ -348,23 +351,17 @@ RenderResult(title, lines)
 // 简化伪代码
 for (LineEntry line : template.getLines()) {
     if (line instanceof StaticLine sl) {
-        result.add(sl.getText());
-    } else if (line instanceof DynamicLine dl) {
-        StringBuilder sb = new StringBuilder();
-        for (Fragment frag : dl.getFragments()) {
-            if (frag instanceof TextNode tn) {
-                sb.append(tn.getText());
-            } else if (frag instanceof ExpressionNode en) {
-                Object value = spelParser.parseExpression(en.getExpression())
-                                        .getValue(context);
-                sb.append(value);
-            } else if (frag instanceof IfNode ifn) {
-                // 递归求值条件分支
-            } else if (frag instanceof EachNode en) {
-                // 遍历集合并递归渲染子节点
-            }
+        // 行内节点（文本/表达式/行内 if/行内 for）拼接为一行
+        result.add(renderNodes(sl.nodes(), context).strip());
+    } else if (line instanceof ConditionalBlock cb) {
+        // 首个条件为真的分支，其子条目整组递归渲染；全假走 elseEntries
+        result.addAll(renderLineEntries(firstTrueBranch(cb, context), context));
+    } else if (line instanceof LoopBlock lb) {
+        // 遍历 items，注入 var/index 变量后循环体整组递归渲染
+        for (item : takeUpTo(context.get(lb.itemsKey()), lb.max())) {
+            result.addAll(renderLineEntries(lb.bodyEntries(),
+                    context.withLoopVariable(lb.varName(), item, lb.indexVarName(), i)));
         }
-        result.add(sb.toString());
     }
 }
 ```

@@ -3,6 +3,7 @@ package io.github.JiangHu.jframe.ai.core.executor;
 import cn.nukkit.Server;
 import cn.nukkit.entity.Entity;
 import cn.nukkit.item.Item;
+import cn.nukkit.network.protocol.AnimatePacket;
 import io.github.JiangHu.jframe.ai.core.combat.CombatActions;
 
 /**
@@ -21,12 +22,19 @@ import io.github.JiangHu.jframe.ai.core.combat.CombatActions;
  *       无 Server 环境(单元测试)跳过校验。</li>
  *   <li>动作参数在 {@code fire()} 时读取,配置阶段不校验(委托 CombatActions 的
  *       null/越界防御,失败统一返回 {@code false})。</li>
+ *   <li><b>动画配置</b>:{@link #animation} 为可选修饰,作用于全部动作类型,
+ *       三态语义:未配置=各动作默认动画(近战/射箭/投掷/对目标用物品为挥臂,
+ *       对自身用物品不播);显式指定=覆盖默认;{@code animation(null)}=关闭动画。
+ *       每次配置新动作时动画配置重置,故 {@code animation()} 应在动作方法之后调用。</li>
  * </ul>
  *
  * <h3>典型用法</h3>
  * <pre>{@code
- * // 近战
+ * // 近战(默认挥刀动画 + 原版击退)
  * ai.attack(zombie).melee(player, 4.0f).fire();
+ * // 近战自定义动画(如暴击表现)
+ * ai.attack(zombie).melee(player, 4.0f)
+ *     .animation(AnimatePacket.Action.CRITICAL_HIT).fire();
  * // 射箭(速度 1.5,散布 0.3)
  * ai.attack(skeleton).arrow(player, 1.5, 0.3).fire();
  * // 投掷雪球
@@ -50,6 +58,11 @@ public final class AttackExecutor {
     private double speed;
     private double inaccuracy;
     private Item item;
+
+    /** 显式配置的动画;仅当 {@link #animationExplicit} 为 true 时生效,可为 null(=关闭动画) */
+    private AnimatePacket.Action animation;
+    /** 是否显式配置过动画(区分"未配置=默认"与"显式配置为 null=关闭") */
+    private boolean animationExplicit;
 
     private enum Kind {
         NONE, MELEE, ARROW, PROJECTILE, USE_ITEM_ON, USE_ITEM_SELF
@@ -77,7 +90,31 @@ public final class AttackExecutor {
         this.kind = Kind.MELEE;
         this.target = target;
         this.damage = damage;
+        resetAnimation();
         return this;
+    }
+
+    /**
+     * 可选修饰:配置当前动作的动画,作用于全部动作类型(近战/射箭/投掷/使用物品)。
+     * <p>
+     * 三态语义:未调用本方法=各动作默认动画;传入具体动作(如
+     * {@code AnimatePacket.Action.CRITICAL_HIT})=覆盖默认;传入 {@code null}=关闭动画
+     * (适配自带动画逻辑的自定义实体)。应在动作方法(melee/arrow/projectile/useItemOn/
+     * useItemOnSelf)之后调用,配置新动作时动画配置会被重置。
+     *
+     * @param action 动画动作;{@code null} 表示关闭动画
+     * @return this
+     */
+    public AttackExecutor animation(AnimatePacket.Action action) {
+        this.animation = action;
+        this.animationExplicit = true;
+        return this;
+    }
+
+    /** 配置新动作时重置动画配置(回到"各动作默认动画") */
+    private void resetAnimation() {
+        this.animation = null;
+        this.animationExplicit = false;
     }
 
     /**
@@ -106,6 +143,7 @@ public final class AttackExecutor {
         this.target = target;
         this.speed = speed;
         this.inaccuracy = inaccuracy;
+        resetAnimation();
         return this;
     }
 
@@ -124,6 +162,7 @@ public final class AttackExecutor {
         this.target = target;
         this.speed = speed;
         this.inaccuracy = inaccuracy;
+        resetAnimation();
         return this;
     }
 
@@ -138,6 +177,7 @@ public final class AttackExecutor {
         this.kind = Kind.USE_ITEM_ON;
         this.target = target;
         this.item = item;
+        resetAnimation();
         return this;
     }
 
@@ -150,6 +190,7 @@ public final class AttackExecutor {
     public AttackExecutor useItemOnSelf(Item item) {
         this.kind = Kind.USE_ITEM_SELF;
         this.item = item;
+        resetAnimation();
         return this;
     }
 
@@ -170,15 +211,25 @@ public final class AttackExecutor {
         }
         switch (kind) {
             case MELEE:
-                return combat.meleeAttack(self, target, damage);
+                return animationExplicit
+                        ? combat.meleeAttack(self, target, damage, animation)
+                        : combat.meleeAttack(self, target, damage);
             case ARROW:
-                return combat.shootArrow(self, target, speed, inaccuracy) != null;
+                return animationExplicit
+                        ? combat.shootArrow(self, target, speed, inaccuracy, animation) != null
+                        : combat.shootArrow(self, target, speed, inaccuracy) != null;
             case PROJECTILE:
-                return combat.throwProjectile(self, projectileType, target, speed, inaccuracy) != null;
+                return animationExplicit
+                        ? combat.throwProjectile(self, projectileType, target, speed, inaccuracy, animation) != null
+                        : combat.throwProjectile(self, projectileType, target, speed, inaccuracy) != null;
             case USE_ITEM_ON:
-                return combat.useItemOn(self, target, item);
+                return animationExplicit
+                        ? combat.useItemOn(self, target, item, animation)
+                        : combat.useItemOn(self, target, item);
             case USE_ITEM_SELF:
-                return combat.useItemOnSelf(self, item);
+                return animationExplicit
+                        ? combat.useItemOnSelf(self, item, animation)
+                        : combat.useItemOnSelf(self, item);
             default:
                 return false;
         }
