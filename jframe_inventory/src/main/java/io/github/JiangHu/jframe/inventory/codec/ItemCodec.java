@@ -314,7 +314,7 @@ public final class ItemCodec {
      * @param item 物品
      * @return namespace ID（如 "minecraft:stone"），或 null（不可用时）
      */
-    private static String safeGetNamespaceId(Item item) {
+    public static String safeGetNamespaceId(Item item) {
         try {
             return item.getNamespaceId();
         } catch (Exception e) {

@@ -1,47 +1,43 @@
 package io.github.JiangHu.jframe.example;
 
-import cn.nukkit.Player;
-import cn.nukkit.command.Command;
-import cn.nukkit.command.CommandSender;
-import cn.nukkit.entity.Entity;
-import cn.nukkit.item.Item;
 import cn.nukkit.plugin.Plugin;
 import cn.nukkit.plugin.PluginBase;
-import io.github.JiangHu.jframe.ai.AiAPI;
 import io.github.JiangHu.jframe.command.CommandAPI;
-import io.github.JiangHu.jframe.event.EventAPI;
-import io.github.JiangHu.jframe.example.command.AiController;
-import io.github.JiangHu.jframe.example.entity.TestNpcEntity;
-import io.github.JiangHu.jframe.example.inventory.InventoryTestView;
-import io.github.JiangHu.jframe.example.inventory.ShopInventoryView;
-import io.github.JiangHu.jframe.example.wrapper.ThunderSwordWrapper;
-import io.github.JiangHu.jframe.form.ViewAPI;
-import io.github.JiangHu.jframe.inventory.ui.InventoryAPI;
+import io.github.JiangHu.jframe.engine.ecs.EcsAPI;
+import io.github.JiangHu.jframe.example.ecs.command.EcsTestController;
+import io.github.JiangHu.jframe.example.logger.LogDemoController;
 import io.github.JiangHu.jframe.main.JFrameMain;
-import io.github.JiangHu.jframe.async.thread.ThreadAPI;
 
 /**
- * JFrame 示例插件主类。
- * <p>
- * 本类演示如何「作为业务插件依赖前置 JFrame」搭建一个完整的 Nukkit 插件：
- * <ol>
- *   <li>获取前置插件 {@link JFrameMain} 的单例</li>
- *   <li>直接复用 JFrame 已创建好的 Spring 容器中的各模块 API（EventAPI / ViewAPI / CommandAPI / AiAPI 等）</li>
- *   <li>用本插件类加载器扫描自身 jar 内的 {@code @Wrapper} / {@code @CommandController}，注册到框架共享容器</li>
- *   <li>通过 {@code /jframe} 命令打开表单菜单，{@code /ai} 命令测试 AI 功能</li>
- * </ol>
+ * JFrame ECS 示例插件主类 —— jframe_ecs 模块的<b>实机测试入口</b>。
  *
- * <h3>为什么不自己创建 Spring 容器？</h3>
- * <p>
- * {@link JFrameMain} 在其 {@code onEnable} 时已用 {@code AnnotationConfigApplicationContext}
- * 创建好完整的 Spring 容器（基于 {@code MainSpringConfig}，非 XML），并完成了：
+ * <h3>本插件演示什么</h3>
  * <ul>
- *   <li>加载全部模块 Bean（event / form / thread / command / inventory / ai / data）</li>
- *   <li>绑定 {@code PluginAware} Bean（EventEngine / CommandEngine 等已绑定 JFrame 插件实例）</li>
- *   <li>将各 API 注册到 Nukkit {@code ServiceManager}</li>
+ *   <li><b>接入姿势</b>：业务插件依赖前置 JFrame 后，四行代码接入 ECS 引擎
+ *       （注解扫描 → classpath 定义加载 → 命令手动启动）</li>
+ *   <li><b>五组演示场景</b>（定义文件 {@code resources/gameobjects/example.yml}）：
+ *     <ol>
+ *       <li>魔法箱 —— 内置 blockentity-class 选择器 + 事件桥双通道（when SpEL / 自定义解析器）</li>
+ *       <li>精英僵尸 —— 内置 entity-class 选择器 + 系统 query 名牌显血 + 方法内首行守卫</li>
+ *       <li>守卫区 —— 自定义 near-spawn 参数化选择器 + 多定义并集</li>
+ *       <li>幽灵波次 —— 自定义生成器 + 纯虚拟 gameobject + 波次系统</li>
+ *       <li>竞技场 —— POJO 产物代理 + spawn/despawn 文件 IO 对（创建写 marker / 销毁删 marker）</li>
+ *     </ol>
+ *   </li>
  * </ul>
- * 业务插件只需调用 {@link JFrameMain#getInstance()} 的门面方法（{@code getAiAPI()} 等）即可获取现成的 Bean，
- * 无需重复加载 {@code *-spring.xml}，也无需处理 Nukkit 多插件类加载器的资源加载问题。
+ *
+ * <h3>启动流程（手动 start）</h3>
+ * <p>
+ * {@code onEnable} 只完成<b>注册</b>（扫描五类注解 + 加载 YAML 定义），<b>不启动引擎</b>；
+ * 由 {@code /ecs start} 手动启动——这样可以在启动前先观察服务器裸跑状态，
+ * 启动瞬间又能直观看到"存量回溯"（已有的箱子/僵尸立即挂载）。
+ *
+ * <h3>为什么不自己搭建模块容器？</h3>
+ * <p>
+ * {@link JFrameMain} 已持有共享的模块容器并登记全部内置模块；业务插件首次调用
+ * {@code getEcsAPI()} 时 engine 模块才真正初始化（懒加载），取门面调用即可，
+ * 详见旧版示例的说明（模式不变）。需要私有 Bean 注册表的插件也可以
+ * {@code new ModuleManager(this)} 自建隔离容器（见 README）。
  *
  * <h3>部署方式</h3>
  * <ul>
@@ -50,128 +46,56 @@ import io.github.JiangHu.jframe.async.thread.ThreadAPI;
  *   <li>服务器 {@code plugins/} 目录先放 {@code jframe_main.jar}，再放 {@code jframe_example.jar}</li>
  * </ul>
  *
- * <h3>箱子界面对比演示</h3>
- * 通过 {@code /inv <jframe|fake>} 命令可对比两种打开虚拟箱子的方式：
- * <ul>
- *   <li>{@code /inv jframe} —— 使用本框架 {@code jframe_inventory}（声明式组件 + 假方块延迟打开）</li>
- *   <li>{@code /inv fake} —— 使用第三方 {@code com.nukkitx:fakeinventories} 库（原生假方块 API）</li>
- * </ul>
+ * @see EcsAPI
+ * @see EcsTestController
  */
 public class ExamplePlugin extends PluginBase {
 
-    private EventAPI eventAPI;
-    private ViewAPI viewAPI;
-    private ThreadAPI threadAPI;
-    private CommandAPI commandAPI;
-    private InventoryAPI inventoryAPI;
-    /** AI 服务（jframe_ai 模块门面） */
-    private AiAPI aiAPI;
+    /** 本插件实例（ArenaTemplateSpawner 等无状态处理器取数据目录用） */
+    private static ExamplePlugin instance;
 
+    /**
+     * 取本插件实例（onEnable 后可用）。
+     *
+     * @return 插件实例
+     */
+    public static ExamplePlugin getInstance() {
+        return instance;
+    }
 
     @Override
     public void onEnable() {
-        // 1. 获取前置插件 JFrame 的单例（其 onEnable 时已创建好 Spring 容器）
+        instance = this;
+        // 1. 获取前置插件 JFrame 的单例（首次 getEcsAPI() 触发 engine 模块懒加载）
         Plugin jframePlugin = getServer().getPluginManager().getPlugin("JFrame");
         if (!(jframePlugin instanceof JFrameMain jframeMain)) {
             throw new IllegalStateException(
                     "前置插件 JFrame 未找到或类型不匹配，请确认已部署 jframe_main.jar 并在 plugin.yml 声明 depend: [JFrame]");
         }
 
-        // 2. 直接复用 JFrame 已创建好的 Spring 容器中的各模块 API
-        //    JFrameMain 在 onEnable 时已完成：创建容器、绑定 PluginAware、注册 ServiceManager
-        eventAPI = jframeMain.getEventAPI();
-        viewAPI = jframeMain.getViewAPI();
-        threadAPI = jframeMain.getThreadAPI();
-        commandAPI = jframeMain.getCommandAPI();
-        inventoryAPI = jframeMain.getInventoryAPI();
-        aiAPI = jframeMain.getAiAPI();
+        EcsAPI ecs = jframeMain.getEcsAPI();
+        CommandAPI commandAPI = jframeMain.getCommandAPI();
 
-        // 3. 包扫描注册：用本插件类加载器扫描 example 包下的 @Wrapper 类
-        //    （显式传入 getClass().getClassLoader()，因为要扫描的是 jframe_example.jar 内的类）
-        eventAPI.scan(getClass().getClassLoader(), "io.github.JiangHu.jframe.example.wrapper");
+        // 2. 命令先行：静态注入 EcsAPI（jframe_command 仅支持无参构造），再扫描命令控制器
+        EcsTestController.setEcs(ecs);
+        commandAPI.forPlugin(this).scan("io.github.JiangHu.jframe.example.ecs.command");
 
-        // 4. 命令模块：注入 AiAPI + 扫描 command 包下的 @CommandController 类
-        //    CommandEngine 已由 JFrameMain 绑定 JFrame 插件实例，
-        //    因此注册的根命令（如 /ai）会立即同步到 Nukkit，无需在 plugin.yml 声明。
-        //    AiController 用静态字段持有 AiAPI（jframe_command 仅支持无参构造），需在 scan 前注入。
-        // 注册 AI 测试用 NPC 实体类型（EntityHuman 子类，无怪物默认 AI）。
-        // 必须在 /ai spawn 之前完成注册，否则 Entity.createEntity("TestNpc", ...) 无法识别；
-        // TestNpcEntity.spawnAt 直接 new 构造不依赖注册，但注册后两种生成方式都可用。
-        Entity.registerEntity(TestNpcEntity.NETWORK_NAME, TestNpcEntity.class);
+        // 2b. 统一日志演示：/logdemo 写各级别统一日志（默认静默，/jlog start 后网页查看）
+        LogDemoController.setLogger(jframeMain.getLoggerAPI().forPlugin(this));
+        commandAPI.forPlugin(this).scan("io.github.JiangHu.jframe.example.logger");
 
-        AiController.setAi(aiAPI);
-        commandAPI.scan(getClass().getClassLoader(), "io.github.JiangHu.jframe.example.command");
+        // 3. ECS 注册：扫描本插件 jar 内五类注解（组件/选择器/生成器/解析器/系统）
+        ecs.forPlugin(this).scan("io.github.JiangHu.jframe.example.ecs");
 
-        // 5. 创建一个名为 "example" 的串行任务队列，供表单中的异步任务使用
-        threadAPI.createThreadTask("example");
+        // 4. 加载 GameObject 定义：扫描本插件 jar resources/gameobjects/ 下全部 *.yml
+        //    （加载即对存量实体回溯挂载的语义在 start 时统一生效，见 /ecs start）
+        ecs.forPlugin(this).loadGameObjects("gameobjects");
 
-        getLogger().info("JFrame 示例插件已启用：/jframe 菜单 | /shop 商店 | /inv <jframe|fake> 箱子对比 | /invtest 全特性测试 | /ai AI测试");
+        // 5. 不启动引擎 —— 由 /ecs start 手动启动（实机测试"存量回溯"最直观的方式）
+        getLogger().info("ECS 示例插件已启用：已注册 " + ecs.definitions().size()
+                + " 条定义但引擎未启动，输入 /ecs 查看帮助，/ecs start 启动");
     }
 
-    @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        String name = command.getName();
-
-        if (name.equalsIgnoreCase("sword")) {
-            if (!(sender instanceof Player player)) {
-                sender.sendMessage("§c该命令只能由玩家在游戏内执行");
-                return true;
-            }
-            // 发放一把名为 aaa 的闪电钻石剑
-            Item sword = ThunderSwordWrapper.createSword();
-            player.getInventory().addItem(sword);
-            player.sendMessage("§b⚡ 你获得了一把 §f[aaa] §b闪电钻石剑！拿在手上右键方块即可召唤闪电。");
-            return true;
-        }
-
-        // /shop：快捷打开 jframe_inventory 商店界面（等价于 /inv jframe）
-        if (name.equalsIgnoreCase("shop")) {
-            if (!(sender instanceof Player player)) {
-                sender.sendMessage("§c该命令只能由玩家在游戏内执行");
-                return true;
-            }
-            inventoryAPI.openView(player, new ShopInventoryView());
-            return true;
-        }
-
-        // /invtest：打开 jframe_inventory 全特性测试界面
-        // 集中测试所有组件(Button/StorageBox/Filler/IconLabel/Panel)、布局(Manual/Border/Grid)、
-        // 事件(Click/Store)、外观(六字段)、图层、可见性、动态更新、组件导航、生命周期回调。
-        // 每个测试点点击后会在聊天栏输出反馈，方便对照预期行为查找 bug。
-        if (name.equalsIgnoreCase("invtest")) {
-            if (!(sender instanceof Player player)) {
-                sender.sendMessage("§c该命令只能由玩家在游戏内执行");
-                return true;
-            }
-            inventoryAPI.openView(player, new InventoryTestView());
-            return true;
-        }
-
-        // /inv <jframe|fake>：对比两种虚拟箱子实现
-        if (name.equalsIgnoreCase("inv")) {
-            if (!(sender instanceof Player player)) {
-                sender.sendMessage("§c该命令只能由玩家在游戏内执行");
-                return true;
-            }
-            String mode = args.length > 0 ? args[0].toLowerCase() : "";
-            switch (mode) {
-                case "jframe" -> {
-                    // 方式一：jframe_inventory 框架
-                    // 声明式组件（Button/StorageBox/Filler）+ 自动布局 + 假方块延迟打开
-                    inventoryAPI.openView(player, new ShopInventoryView());
-                    player.sendMessage("§a已用 §bjframe_inventory§a 框架打开箱子（声明式组件）");
-                }
-            }
-            return true;
-        }
-
-        return false;
-    }
-
-    @Override
-    public void onDisable() {
-        // 仅清理本插件创建的 AI 测试实体。
-        // 注意：不关闭 Spring 容器 / 线程池 / 箱子视图 —— 这些由前置插件 JFrameMain 统一管理生命周期。
-        AiController.clearAll();
-    }
+    // onDisable 留空：引擎 stop 由 JFrameMain.onDisable 最先统一执行（未 start 时亦安全），
+    // 命令随本插件卸载由命令模块处理。
 }

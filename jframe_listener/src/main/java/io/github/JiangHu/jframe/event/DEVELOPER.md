@@ -52,7 +52,7 @@ public class PlayerListener implements Listener {
 | 实例模型 | 单例 Listener 处理所有事件 | 每个身份独立实例 |
 | 身份提取 | 每次事件手动 `event.getPlayer()` | `@KeyExtractor` 声明一次，框架自动调用 |
 | 状态管理 | 手动维护 `Map<Player, Data>` + 自行处理并发 | 框架内置 `ConcurrentHashMap` 缓存 |
-| 条件过滤 | 方法内 `if` 判断（散落各处） | `@EventRoute(condition/filter)` 声明式集中管理 |
+| 条件过滤 | 方法内 `if` 判断（散落各处） | `@EventRoute(filter)` 声明式集中管理 |
 | 独占控制 | `setCancelled()` + `ignoreCancelled`（约定式，依赖其他监听器配合） | `exclusive = true`（确定性，跨优先级强制阻断） |
 | 多身份路由 | 手动判断事件中包含哪个对象 | 多 `@KeyExtractor` 槽位（OR 语义自动路由） |
 
@@ -139,19 +139,21 @@ HandlerRegistry ──→ EventAPI ──→ Nukkit PluginManager
 
 ## 3. 运行时数据流（完整调用链）
 
-### 3.1 启动阶段（Spring 容器初始化）
+### 3.1 启动阶段（模块容器初始化）
 
 ```
-Spring 容器启动
+EventModule 加载（首次 getEventAPI() 触发）
     │
-    ├── 创建 EventAPI Bean
-    │     └── plugin == null，所有 subscribe 会暂存到 pendingRegistrations
+    ├── new EventEngine() → ctx.bind（PluginAware，绑定前订阅暂存 pendingRegistrations）
     │
-    └── 创建 HandlerRegistry Bean
-          └── 构造注入 EventAPI
+    ├── new HandlerRegistry(engine)
+    │
+    └── new EventAPI(registry, engine) → ctx.register（公开服务）
+          └── 绑定 plugin 时一次性刷新暂存的 Nukkit 监听注册
 ```
 
-> **注意：** 框架不再自动扫描 Spring Bean。所有处理器都必须通过 `eventAPI.register(Class)` 手动注册。
+> **注意：** 框架不自动扫描处理器。所有处理器都必须通过 `eventAPI.register(Class)`
+> 或 `eventAPI.forPlugin(plugin).scan(包名)` 注册。
 
 ### 3.2 对象级注册阶段（手动调用 register(Class)）
 
@@ -228,8 +230,7 @@ Nukkit 触发 PlayerMoveEvent（玩家A移动）
                 │   └── 是 → break，停止所有低优先级
                 └── 调用 template.handle(instance, event)
                     ├── passesCondition(instance, event)
-                    │   ├── filterHandle != null → filterHandle.invoke(instance, event)  ← MethodHandle
-                    │   └── conditionExpression != null → SpEL 求值
+                    │   └── filterHandle != null → filterHandle.invoke(instance, event)  ← MethodHandle
                     ├── methodHandle.invoke(instance, event)  ← MethodHandle 调用（替代反射）
                     └── 返回 exclusive 标记
 ```
@@ -242,7 +243,7 @@ Nukkit 触发 PlayerMoveEvent（玩家A移动）
 
 **文件：** [`EventAPI.java`](EventAPI.java)
 **角色：** **面向用户的统一入口**。对接 Nukkit 底层事件系统，按事件类型精准注册和分发；同时将 register/unregister/evict 委托给内部 [`HandlerRegistry`](routing/HandlerRegistry.java)。
-**Spring 配置：** 由 `event-spring.xml` 声明（setter 注入 HandlerRegistry），实现 `cn.nukkit.event.Listener`
+**装配：** 由 [`EventModule`](EventModule.java) 工厂创建（构造注入 HandlerRegistry），实现 `cn.nukkit.event.Listener`
 
 #### 关键设计：固定 LOWEST 优先级
 
@@ -258,7 +259,7 @@ public static final EventPriority REGISTER_PRIORITY = EventPriority.LOWEST;
 |------|------|----------|------|
 | `consumers` | `ConcurrentHashMap<Class<? extends Event>, List<EventConsumer<?>>>` | 线程安全 | 消费者注册表。内层 List 用 `CopyOnWriteArrayList` 保证遍历安全 |
 | `registered` | `Set<Class<? extends Event>>`（`ConcurrentHashMap.newKeySet()`） | 线程安全 | 已向 Nukkit 注册的事件类型集合，防止重复注册 |
-| `pendingRegistrations` | `List<Class<? extends Event>>` | **非线程安全** | 延迟注册队列。仅在 Spring 初始化阶段使用 |
+| `pendingRegistrations` | `List<Class<? extends Event>>` | **非线程安全** | 延迟注册队列。仅在模块加载阶段使用 |
 | `plugin` | `Plugin` | volatile 语义 | 关联的插件实例 |
 | `handlerRegistry` | `HandlerRegistry` | 初始化后不变 | 内部路由引擎，register/unregister/evict 委托给它 |
 
@@ -305,12 +306,11 @@ public interface EventConsumer<T extends Event> {
 | 属性 | 类型 | 默认值 | 语义 |
 |------|------|--------|------|
 | `value` | `Class<? extends Event>` | `Event.class` | 事件类型。`Event.class` = 哨兵，触发自动推断 |
-| `condition` | `String` | `""` | SpEL 表达式。空 = 无条件 |
 | `filter` | `String` | `""` | 类中筛选方法名。空 = 无 filter |
 
 **关键决策：**
 - `value` 默认 `Event.class` 而非 `null`：Java 注解属性不能是 `null`
-- `condition` 和 `filter` 互斥：在 `HandlerTemplate` 构造函数中检查
+- 条件过滤只保留 `filter` 方法引用一种方式（旧版 SpEL `condition` 参数已移除）
 
 ---
 
@@ -369,12 +369,10 @@ public interface EventConsumer<T extends Event> {
 
 | 字段 | 类型 | 可变性 | 用途 |
 |------|------|--------|------|
-| `SPEL_PARSER` | `SpelExpressionParser`（static final） | 不可变 | 全局共享的 SpEL 解析器 |
 | `declaringClass` | `Class<?>` | final | 声明此方法的类（用于 filter 查找） |
 | `method` | `Method` | final | 要调用的方法（已 `setAccessible`，保留用于日志/调试） |
 | `methodHandle` | `MethodHandle` | final | 方法的 MethodHandle（高效调用，替代反射） |
 | `eventType` | `Class<? extends Event>` | final | 解析后的事件类型 |
-| `conditionExpression` | `Expression` | final | 预编译 SpEL，null = 无 SpEL |
 | `filterMethod` | `Method` | final | filter 方法（保留用于日志），null = 无 filter |
 | `filterHandle` | `MethodHandle` | final | filter 方法的 MethodHandle，null = 无 filter |
 | `priority` | `EventPriority` | final | 优先级 |
@@ -563,7 +561,7 @@ getOrCreateInstance(reg, identity)
 
 ### 5.3 非线程安全的部分
 
-- `pendingRegistrations`（EventAPI）：仅在 Spring 初始化阶段（单线程）使用
+- `pendingRegistrations`（EventAPI）：仅在模块加载阶段（单线程）使用
 - `scanHandlers` 等扫描方法：仅在注册时调用，注册通常在启动阶段
 
 ---

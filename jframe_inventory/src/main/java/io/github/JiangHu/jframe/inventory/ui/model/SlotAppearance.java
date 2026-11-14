@@ -2,6 +2,7 @@ package io.github.JiangHu.jframe.inventory.ui.model;
 
 import cn.nukkit.item.Item;
 import cn.nukkit.item.enchantment.Enchantment;
+import io.github.JiangHu.jframe.inventory.codec.ItemCodec;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -17,7 +18,8 @@ import java.util.List;
  * <h3>外观与展示信息字段</h3>
  * <table border="1">
  * <tr><th>维度</th><th>字段</th><th>说明</th></tr>
- * <tr><td>外观</td><td>{@code itemId}</td><td>物品种类（决定图标外观）</td></tr>
+ * <tr><td>外观</td><td>{@code namespace}</td><td>命名空间串（1.21+ 新物品，如 "minecraft:copper_chestplate"；<b>优先于 itemId</b>）</td></tr>
+ * <tr><td></td><td>{@code itemId}</td><td>物品种类数字 ID（老物品；仅 namespace 未设置时生效）</td></tr>
  * <tr><td></td><td>{@code meta}</td><td>数据值/损伤值（同种物品的不同变体）</td></tr>
  * <tr><td></td><td>{@code count}</td><td>显示数量</td></tr>
  * <tr><td>展示信息</td><td>{@code name}</td><td>自定义名称（支持 § 颜色代码与格式）</td></tr>
@@ -25,14 +27,26 @@ import java.util.List;
  * <tr><td>视觉特效</td><td>{@code glowing}</td><td>附魔光效（无需真实附魔）</td></tr>
  * </table>
  *
+ * <h3>1.21+ 新物品（namespace 物品）</h3>
+ * 基岩版 1.21+ 新物品（铜系装备等）<b>仅有 namespace 无固定数字 ID</b>——
+ * 数字 ID 路径对这类物品会渲染未知方块。构建外观时经 {@link #fromItem} 或
+ * {@link Builder#namespace(String)} 提供命名空间串，{@link #toItem()} 将优先
+ * 按 namespace 构造物品（与 ItemCodec 的 namespace 编解码路径同源同构）。
+ *
  * <h3>Builder 构建模式</h3>
  * <pre>{@code
  * SlotAppearance appearance = SlotAppearance.builder()
- *     .type(Item.DIAMOND_SWORD)         // 外观：钻石剑图标
+ *     .type(Item.DIAMOND_SWORD)         // 外观：钻石剑图标（老物品，数字 ID）
  *     .name("§b§l购买武器")              // 名称：蓝色加粗
  *     .lore("§7点击购买一把武器",         // 子内容：多行描述
  *           "§e价格: §f100 金币")
  *     .glowing(true)                     // 发光特效
+ *     .build();
+ *
+ * // 1.21+ 新物品（namespace 形式）
+ * SlotAppearance copper = SlotAppearance.builder()
+ *     .namespace("minecraft:copper_chestplate")
+ *     .name("§6铜胸甲")
  *     .build();
  * }</pre>
  *
@@ -40,7 +54,9 @@ import java.util.List;
  */
 public class SlotAppearance {
 
-    /** 物品种类 ID（决定图标外观），默认空气 */
+    /** 物品命名空间串（1.21+ 新物品，如 "minecraft:copper_chestplate"）；null = 走数字 ID 路径 */
+    private final String namespace;
+    /** 物品种类 ID（决定图标外观，仅 namespace 为 null 时生效），默认空气 */
     private final int itemId;
     /** 数据值/损伤值，null 表示默认 */
     private final Integer meta;
@@ -54,6 +70,7 @@ public class SlotAppearance {
     private final boolean glowing;
 
     private SlotAppearance(Builder builder) {
+        this.namespace = builder.namespace;
         this.itemId = builder.itemId;
         this.meta = builder.meta;
         this.count = builder.count;
@@ -74,8 +91,9 @@ public class SlotAppearance {
     /**
      * 从原生 {@link Item} 对象创建外观（便捷工厂方法）。
      * <p>
-     * 提取物品的 ID、数据值、数量、自定义名称，构造对应的 {@code SlotAppearance}。
-     * 空气物品（{@link Item#AIR}）或 null 返回 null。
+     * 提取物品的 namespace（可用时，1.21+ 新物品路径）、数字 ID、数据值、数量、
+     * 自定义名称，构造对应的 {@code SlotAppearance}。空气物品（{@link Item#AIR}）
+     * 或 null 返回 null。
      *
      * @param item 原生物品
      * @return 对应的 SlotAppearance，空气或 null 物品返回 null
@@ -85,6 +103,7 @@ public class SlotAppearance {
             return null;
         }
         return builder()
+                .namespace(ItemCodec.safeGetNamespaceId(item))
                 .type(item.getId())
                 .meta(item.getDamage())
                 .count(item.getCount())
@@ -95,12 +114,22 @@ public class SlotAppearance {
     /**
      * 将外观转换为原生 {@link Item} 对象。
      * <p>
+     * namespace 非空时优先按命名空间串构造（1.21+ 新物品路径，与
+     * {@code ItemCodec} 的 namespace 解码同法），否则走数字 ID 路径。
      * 供框架内部渲染时使用，开发者一般无需直接调用。
      *
      * @return 对应的 Nukkit 物品
      */
     public Item toItem() {
-        Item item = Item.get(itemId, meta == null ? 0 : meta, count);
+        Item item;
+        if (namespace != null && !namespace.isEmpty()) {
+            // 1.21+ 新物品：namespace 优先（无固定数字 ID），fromString 构造
+            item = Item.fromString(namespace);
+            item.setDamage(meta == null ? 0 : meta);
+            item.setCount(count);
+        } else {
+            item = Item.get(itemId, meta == null ? 0 : meta, count);
+        }
         if (name != null) {
             item.setCustomName(name);
         }
@@ -120,7 +149,12 @@ public class SlotAppearance {
 
     // -------------------- Getter --------------------
 
-    /** 物品种类 ID */
+    /** 命名空间串（1.21+ 新物品）；null 表示走数字 ID 路径 */
+    public String namespace() {
+        return namespace;
+    }
+
+    /** 物品种类 ID（仅 namespace 为 null 时生效） */
     public int itemId() {
         return itemId;
     }
@@ -156,6 +190,7 @@ public class SlotAppearance {
      * SlotAppearance 构建器，支持链式调用。
      */
     public static class Builder {
+        private String namespace = null;
         private int itemId = Item.AIR;
         private Integer meta = null;
         private int count = 1;
@@ -167,7 +202,22 @@ public class SlotAppearance {
         }
 
         /**
-         * 设置物品种类（决定图标外观）。
+         * 设置物品命名空间串（1.21+ 新物品，如 "minecraft:copper_chestplate"）。
+         * <p>
+         * 设置后 {@link #toItem()} 优先按 namespace 构造物品，数字 ID 不生效
+         * （1.21+ 新物品无固定数字 ID，数字路径对这类物品渲染未知方块）。
+         * null/空串表示清除，回落数字 ID 路径。
+         *
+         * @param namespace 命名空间串
+         * @return 当前 Builder
+         */
+        public Builder namespace(String namespace) {
+            this.namespace = (namespace == null || namespace.isEmpty()) ? null : namespace;
+            return this;
+        }
+
+        /**
+         * 设置物品种类（决定图标外观；仅未设置 namespace 时生效）。
          *
          * @param itemId 物品 ID（如 {@link Item#DIAMOND_SWORD}）
          * @return 当前 Builder

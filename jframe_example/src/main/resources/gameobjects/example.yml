@@ -1,0 +1,57 @@
+# ============================================================
+# ECS 示例定义（六条，覆盖引擎全部特性）
+# 打进插件 jar，由 ExamplePlugin 经 classpath 扫描加载
+# ============================================================
+
+# 场景 A：所有箱子（存量 + 后放）→ 魔法箱
+# 内置类型选择器零自定义类；右键/打开箱子出提示（when SpEL / 自定义解析器）
+all-chests:
+  selector: { use: blockentity-class, params: { type: BlockEntityChest } }
+  tags: [chest]
+  components:
+    - id: magic-chest
+      params: { sound: "random.orb", radius: 8.0 }
+
+# 场景 B：所有僵尸 → 精英（名牌显血 + 重击反馈）
+# hitThreshold 0 = 任何一击（含空手）即触发（守卫为严格 >，阈值 1 会拦下空手伤害 1）
+# ⚠ MOT 类体系陷阱：EntityHusk（尸壳）/ EntityDrowned（溺尸）不继承 EntityZombie
+#   （直接继承 EntityWalkingMob），用这些蛋生成不会命中本定义——
+#   测试请用普通僵尸蛋或僵尸村民蛋（EntityZombieVillager 继承 EntityZombie，可命中）
+elite-zombies:
+  selector: { use: entity-class, params: { type: EntitySkeleton } }
+  components:
+    - id: elite
+      params: { hitThreshold: 0 }
+
+# 场景 C：出生点 64 格内的箱子 → 追加守卫光环（多定义并集）
+# ⚠ 顺序硬约束：必须声明在 all-chests 之后——near-spawn 依赖 tag "chest"，
+#   而 tag 由 all-chests 挂载时打上（enter 管线与回溯管线均按本文件声明序遍历定义）
+guardian-chests:
+  selector: { use: near-spawn, params: { distance: 64.0, tag: chest } }
+  components:
+    - id: guard-aura
+
+# 场景 D：现场生成幽灵（/ecs wave 循环 2 次单生成）
+# ⚠ type 用 Skeleton 而非 Zombie：僵尸会被 elite-zombies 同时命中
+#   （名牌互相覆盖、重击消息串台）；Skeleton 与 EntityZombie 无继承关系
+# 多数量由调用方多次 spawn（主流引擎语义：一次调用 = 一个实体）
+night-ghosts:
+  spawn: { use: ghost-pack, params: { type: Skeleton } }
+  tags: [wave]
+  components:
+    - id: ghost-mark
+
+# 场景 E：纯虚拟波次管理器（不占世界实体；/ecs wave 自动补建）
+wave-manager:
+  spawn: { use: virtual }
+  components:
+    - id: wave-state
+      params: { wave: 1, mobsLeft: 0 }
+
+# 场景 F：竞技场（POJO 产物代理 + spawn/despawn 文件 IO 对）
+# /ecs arena → 写 marker 文件并生成实体；/ecs arenaoff → destroy 触发 despawn 删文件 + 广播
+# 演示"创建与回收 level 需要文件 IO"的通用形态：产物可为任意对象（Level/Server/POJO）
+arena:
+  spawn: { use: arena-template, params: { name: "wall-arena" } }
+  despawn: { use: arena-recycle, params: { broadcast: true } }
+  tags: [arena]

@@ -1,0 +1,60 @@
+# ================================ JFrame 框架配置 ================================
+
+# 模块预加载列表（可选）
+#
+# JFrame 各模块默认【懒加载】：业务插件首次调用对应 getXxxAPI() 时才初始化，
+# 未用到的模块不创建任何对象，启动零成本。
+#
+# 如需在启动时立即加载某些模块（例如让其他插件在 JFrame onEnable 后即可通过
+# ServiceManager 直取服务），在下方列出模块 id：
+#
+#   event        事件系统
+#   command      命令系统
+#   async        异步任务（ThreadAPI / TaskAPI / ThreadFlow / ReleaseAPI）
+#   form         表单界面
+#   inventory    箱子界面
+#   data         数据持久化
+#   ai           实体 AI
+#   scoreboard   计分板
+#   title        标题
+#   engine       游戏引擎（ECS + 行为树）
+#   floatingtext 浮空字
+#   logger       统一日志（LoggerAPI；/jlog 指令首次执行亦会触发加载，无需预加载）
+#
+# 示例：modules: [form, event]
+# ==================================================================================
+
+modules: []
+
+# ================================ 统一日志（logger 模块） ================================
+#
+# 依赖 JFrame 的插件通过 getLoggerAPI().forPlugin(插件) 写入统一日志库：
+# 默认静默（不进控制台/MCSM 面板，可按插件 setConsoleMirror(true) 镜像），
+# 用 /jlog start 手动开启 Web 展示、/jlog stop 关闭（不开启时无端口占用、零线程）。
+#
+# 同 IP 多面板（一台机器多个 Nukkit 实例）：后来者 /jlog start 探测到端口已被
+# 本机其它 JFrame logger 占用时自动挂靠（不重复开端），host 根路由汇总全部子服，
+# /s/<server-id> 分面板查看；host 死亡后挂靠实例自动接管端口。
+#
+# logger:
+#   buffer:
+#     per-source: 5000   # 每来源（每子服×每插件）内存条数上限
+#     global: 20000      # 全局内存条数上限（聚合视图收集范围）
+#   persist: false       # true 时按天/按插件落盘到本目录 logs/（仅本 JVM 自身日志）
+#   web:
+#     bind: "0.0.0.0"    # host 对外绑定；挂靠探测/推送固定走 127.0.0.1
+#     port: 18080        # 默认端口；/jlog start 不带参数时使用
+#     server-id: ""      # 子服标识，默认 server-<本服端口>；同机多实例重复会被拒绝，需各自配置
+#     token: ""          # 非空则 Web 访问需带 ?token=（明文基础防护；agent 需与 host 配置相同 token）
+# ==========================================================================================
+
+logger:
+  buffer:
+    per-source: 5000
+    global: 20000
+  persist: false
+  web:
+    bind: "0.0.0.0"
+    port: 18080
+    server-id: ""
+    token: ""

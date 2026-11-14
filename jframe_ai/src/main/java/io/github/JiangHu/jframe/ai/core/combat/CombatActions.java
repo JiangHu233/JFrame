@@ -8,6 +8,7 @@ import cn.nukkit.math.Vector3;
 import cn.nukkit.network.protocol.AnimatePacket;
 
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Consumer;
 
 /**
  * 战斗行为执行器：封装游戏 AI 常见的战斗动作。
@@ -16,7 +17,9 @@ import java.util.concurrent.ThreadLocalRandom;
  * <ul>
  *   <li>{@link #meleeAttack} —— 近战攻击：广播挥刀动画并对目标施加
  *       {@link EntityDamageByEntityEvent} 伤害（携带攻击者，触发原版击退）</li>
- *   <li>{@link #shootArrow} —— 射箭：创建箭抛射物并赋予朝向目标的速度（含重力补偿与散布）</li>
+ *   <li>{@link #shootArrow} —— 射箭：创建箭抛射物并赋予朝向目标的速度（含重力补偿与散布）；
+ *       最全参重载可指定<b>自定义箭实体类型</b>（如宿主插件注册的 "GameArrow"）与
+ *       生成后自定义钩子（写来源标识 NBT 等）</li>
  *   <li>{@link #throwProjectile} —— 投掷抛射物：通用版，支持雪球/药水/经验瓶等任意已注册抛射物</li>
  *   <li>{@link #useItemOn} / {@link #useItemOnSelf} —— 使用物品：对目标或自身使用物品（药水、命名牌等）</li>
  * </ul>
@@ -43,7 +46,9 @@ import java.util.concurrent.ThreadLocalRandom;
  *   <li>射箭与投掷采用<b>经验性重力补偿</b>：根据距离给方向向量一个向上分量，使远距离
  *       也能大致命中；{@code inaccuracy} 参数控制散布程度，模拟 AI 的不精确瞄准。</li>
  *   <li>抛射物通过 {@link Entity#createEntity(String, cn.nukkit.level.Position, Object...)}
- *       创建，自动处理区块与 NBT 初始化，兼容所有已注册的抛射物类型。</li>
+ *       创建，自动处理区块与 NBT 初始化，兼容所有已注册的抛射物类型；
+ *       自定义箭经最全参 {@code shootArrow/throwProjectile} 的 {@code customizer}
+ *       钩子在生成后、起爆（setMotion/spawnToAll）前注入 NBT 等属性。</li>
  * </ul>
  *
  * <h3>典型用法</h3>
@@ -54,6 +59,9 @@ import java.util.concurrent.ThreadLocalRandom;
  * combat.meleeAttack(zombie, player, 4.0f, AnimatePacket.Action.CRITICAL_HIT);
  * // 射箭（速度 1.5，散布 0.3）
  * combat.shootArrow(skeleton, player, 1.5, 0.3);
+ * // 射自定义箭（宿主已 Entity.registerEntity 注册的类型），生成后写来源标识 NBT
+ * combat.shootArrow(guard, player, 2.0, 0.3, null, "GameArrow",
+ *         arrow -> arrow.namedTag.putString("ammo_id", "ammo.alpha"));
  * // 投掷药水
  * combat.throwProjectile(witch, "SplashPotion", player, 1.2, 0.2);
  * // 对友军使用治疗物品
@@ -70,7 +78,7 @@ public class CombatActions {
     public static final double DEFAULT_ARROW_SPEED = 1.5;
     /** 默认散布（不精确度） */
     public static final double DEFAULT_INACCURACY = 0.2;
-    /** 箭实体注册名 */
+    /** 箭实体注册名（默认原版箭；自定义箭经最全参重载的 arrowType 替换） */
     public static final String ARROW_TYPE = "Arrow";
     /** 抛射物重力（Nukkit 箭/雪球约 0.05/tick），用于物理弹道补偿 */
     static final double PROJECTILE_GRAVITY = 0.05;
@@ -194,7 +202,29 @@ public class CombatActions {
      */
     public Entity shootArrow(Entity shooter, Entity target, double speed, double inaccuracy,
                              AnimatePacket.Action action) {
-        return throwProjectile(shooter, ARROW_TYPE, target, speed, inaccuracy, action);
+        return shootArrow(shooter, target, speed, inaccuracy, action, ARROW_TYPE, null);
+    }
+
+    /**
+     * 射箭（自定义箭实体）：向 {@code target} 射出指定类型的箭，可指定生成后自定义钩子。
+     * <p>
+     * 箭类型须已 {@code Entity.registerEntity} 注册（如宿主插件的 "GameArrow"）；
+     * 弹道语义（重力补偿/散布/朝向对齐）与原版箭完全一致。{@code customizer} 在
+     * 抛射物生成后、赋予速度与广播生成<b>之前</b>调用——用于写来源标识 NBT、
+     * 覆盖默认参数等（{@code arrow.namedTag.putString(...)}），传 {@code null} 跳过。
+     *
+     * @param shooter    射手
+     * @param target     目标
+     * @param speed      初速度（方块/tick）
+     * @param inaccuracy 散布程度（0=精准，越大越偏）
+     * @param action     射击动画；{@code null} 表示不广播动画
+     * @param arrowType  箭实体注册名（如 {@code "Arrow"}、{@code "GameArrow"}）
+     * @param customizer 生成后自定义钩子；{@code null} 表示不定制
+     * @return 生成的箭实体；失败返回 {@code null}
+     */
+    public Entity shootArrow(Entity shooter, Entity target, double speed, double inaccuracy,
+                             AnimatePacket.Action action, String arrowType, Consumer<Entity> customizer) {
+        return throwProjectile(shooter, arrowType, target, speed, inaccuracy, action, customizer);
     }
 
     /**
@@ -214,6 +244,24 @@ public class CombatActions {
     }
 
     /**
+     * 投掷抛射物：向 {@code target} 发射指定类型的抛射物，可指定生成后自定义钩子。
+     *
+     * @param shooter        投掷者
+     * @param projectileType 抛射物注册名（如 {@code "Arrow"}、{@code "Snowball"}、
+     *                       {@code "SplashPotion"}、{@code "ThrownExpBottle"} 等）
+     * @param target         目标
+     * @param speed          初速度（方块/tick）
+     * @param inaccuracy     散布程度（0=精准，越大越偏）
+     * @param customizer     生成后自定义钩子（写 NBT 等）；{@code null} 表示不定制
+     * @return 生成的抛射物实体；失败返回 {@code null}
+     */
+    public Entity throwProjectile(Entity shooter, String projectileType, Entity target,
+                                  double speed, double inaccuracy, Consumer<Entity> customizer) {
+        return throwProjectile(shooter, projectileType, target, speed, inaccuracy,
+                DEFAULT_COMBAT_ANIMATION, customizer);
+    }
+
+    /**
      * 投掷抛射物：向 {@code target} 发射指定类型的抛射物，可指定动画。
      * <p>
      * 时序为先广播动画、后生成抛射物（先挥臂后出箭，符合原版观感）。
@@ -229,6 +277,29 @@ public class CombatActions {
      */
     public Entity throwProjectile(Entity shooter, String projectileType, Entity target,
                                   double speed, double inaccuracy, AnimatePacket.Action action) {
+        return throwProjectile(shooter, projectileType, target, speed, inaccuracy, action, null);
+    }
+
+    /**
+     * 投掷抛射物（最全参）：向 {@code target} 发射指定类型的抛射物，可指定动画与生成后自定义钩子。
+     * <p>
+     * 时序：先广播动画 → 生成抛射物 → {@code customizer} 定制（写 NBT 等）→
+     * 赋予速度与朝向 → 广播生成。customizer 在 {@code spawnToAll} 之前调用，
+     * 此阶段写入的 NBT 随实体持久化（存档恢复按注册名实例化）。
+     *
+     * @param shooter        投掷者
+     * @param projectileType 抛射物注册名（如 {@code "Arrow"}、{@code "Snowball"}、
+     *                       {@code "GameArrow"} 等宿主自定义实体）
+     * @param target         目标
+     * @param speed          初速度（方块/tick）
+     * @param inaccuracy     散布程度（0=精准，越大越偏）
+     * @param action         投掷动画；{@code null} 表示不广播动画
+     * @param customizer     生成后自定义钩子；{@code null} 表示不定制
+     * @return 生成的抛射物实体；失败返回 {@code null}
+     */
+    public Entity throwProjectile(Entity shooter, String projectileType, Entity target,
+                                  double speed, double inaccuracy, AnimatePacket.Action action,
+                                  Consumer<Entity> customizer) {
         if (shooter == null || target == null || shooter.closed || target.closed) {
             return null;
         }
@@ -247,6 +318,10 @@ public class CombatActions {
         Entity projectile = Entity.createEntity(projectileType, launchPos, shooter);
         if (projectile == null) {
             return null;
+        }
+        // 自定义钩子：生成后、起爆前（写来源标识 NBT 等；setMotion 在其后保持权威）
+        if (customizer != null) {
+            customizer.accept(projectile);
         }
         projectile.setMotion(motion);
         // 同步抛射物朝向为飞行方向，避免箭头初始指向错误（"朝向不自然"）。

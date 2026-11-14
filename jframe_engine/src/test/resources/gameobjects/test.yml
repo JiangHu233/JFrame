@@ -1,0 +1,5 @@
+classpath-root:
+  selector: { use: tag, params: { tag: chest } }
+  components:
+    - id: counter
+      params: { value: 1, name: "root" }

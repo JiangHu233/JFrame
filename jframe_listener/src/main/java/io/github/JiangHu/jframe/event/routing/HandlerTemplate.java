@@ -6,10 +6,6 @@ import cn.nukkit.event.EventPriority;
 import io.github.JiangHu.jframe.core.JFrameLog;
 import io.github.JiangHu.jframe.event.annotation.EventHandler;
 import io.github.JiangHu.jframe.event.annotation.EventRoute;
-import org.springframework.expression.EvaluationContext;
-import org.springframework.expression.Expression;
-import org.springframework.expression.spel.standard.SpelExpressionParser;
-import org.springframework.expression.spel.support.StandardEvaluationContext;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -22,7 +18,8 @@ import java.lang.reflect.Modifier;
  * 与旧版 {@code AnnotatedHandler} 的关键区别：
  * <ul>
  *   <li><b>不存储 target</b> — target 在 {@link #handle(Object, Event)} 时传入</li>
- *   <li>从 {@link EventRoute} 读取事件类型/条件，从 {@link EventHandler} 读取优先级/独占</li>
+ *   <li>从 {@link EventRoute} 读取事件类型，从 {@link EventHandler} 读取优先级/独占；
+ *       条件过滤通过 {@code filter} 方法引用实现（{@link EventRoute#filter()}）</li>
  *   <li>{@link #handle(Object, Event)} 返回 {@code boolean}：true = 声明独占</li>
  * </ul>
  *
@@ -31,8 +28,6 @@ import java.lang.reflect.Modifier;
  * 同一个 HandlerTemplate 可被多个实例共享（每次 dispatch 绑定不同的 target）。
  */
 public class HandlerTemplate {
-
-    private static final SpelExpressionParser SPEL_PARSER = new SpelExpressionParser();
 
     /** 声明此处理器的包装类（用于 filter 方法查找） */
     private final Class<?> declaringClass;
@@ -48,9 +43,6 @@ public class HandlerTemplate {
 
     /** 处理的事件类型 */
     private final Class<? extends Event> eventType;
-
-    /** 预编译的 SpEL 条件表达式，null 表示无 SpEL 条件 */
-    private final Expression conditionExpression;
 
     /** filter 筛选方法（已设置 accessible，保留用于日志），null 表示无 filter */
     private final Method filterMethod;
@@ -74,7 +66,7 @@ public class HandlerTemplate {
      * @param method         标注了 {@link EventHandler} 的方法
      * @param route          {@link EventRoute} 注解实例
      * @param handler        {@link EventHandler} 注解实例
-     * @throws IllegalArgumentException 如果事件类型无法确定、condition 与 filter 同时指定、
+     * @throws IllegalArgumentException 如果事件类型无法确定、
      *                                  或 filter 方法不存在/签名不匹配
      */
     @SuppressWarnings("unchecked")
@@ -95,26 +87,9 @@ public class HandlerTemplate {
         }
         this.eventType = type;
 
-        // ② 解析条件过滤（condition 和 filter 互斥）
-        String condition = route.condition();
+        // ② 解析 filter 方法引用（空字符串表示无过滤）
         String filter = route.filter();
-
-        if (!condition.isEmpty() && !filter.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "@EventRoute 的 condition 和 filter 不能同时使用（方法: "
-                            + declaringClass.getName() + "." + method.getName() + "）");
-        }
-
-        if (!condition.isEmpty()) {
-            this.conditionExpression = SPEL_PARSER.parseExpression(condition);
-            this.filterMethod = null;
-        } else if (!filter.isEmpty()) {
-            this.conditionExpression = null;
-            this.filterMethod = resolveFilterMethod(declaringClass, filter, type);
-        } else {
-            this.conditionExpression = null;
-            this.filterMethod = null;
-        }
+        this.filterMethod = filter.isEmpty() ? null : resolveFilterMethod(declaringClass, filter, type);
 
         // 预编译 filter 的 MethodHandle（filterMethod 已在 resolveFilterMethod 中 setAccessible）
         this.filterHandle = this.filterMethod != null ? createMethodHandle(this.filterMethod) : null;
@@ -137,7 +112,7 @@ public class HandlerTemplate {
     /**
      * 在给定实例上处理事件。
      * <p>
-     * 先检查条件（SpEL 或 filter），通过后反射调用方法。
+     * 先检查条件（filter 方法引用），通过后反射调用方法。
      *
      * @param target 目标实例（运行时由 HandlerRegistry 通过工厂方法获取）
      * @param event  事件对象
@@ -169,7 +144,7 @@ public class HandlerTemplate {
     /**
      * 检查事件是否满足过滤条件。
      * <p>
-     * filter 方法优先（直接 Java 调用），其次 SpEL 求值。
+     * 通过 filter 方法引用过滤（直接 Java 调用）。
      * filter 异常时返回 false（安全降级，不中断事件管线）。
      */
     private boolean passesCondition(Object target, Event event) {
@@ -189,15 +164,6 @@ public class HandlerTemplate {
                         "filter 方法执行失败: " + filterMethod.getName(), e);
                 return false;
             }
-        }
-
-        // SpEL 条件
-        if (conditionExpression != null) {
-            EvaluationContext ctx = new StandardEvaluationContext();
-            ctx.setVariable("event", event);
-            ctx.setVariable("target", target);
-            Boolean result = conditionExpression.getValue(ctx, Boolean.class);
-            return result != null && result;
         }
 
         // 无条件

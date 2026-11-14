@@ -71,7 +71,8 @@ public class RenderContext {
     }
 
     /**
-     * 在相对位置放置原生物品（便捷方法，内部转为 SlotAppearance）。
+     * 在相对位置放置原生物品（便捷方法，内部转为 SlotAppearance；
+     * 自动携带 namespace——1.21+ 新物品无数字 ID，缺失 namespace 会渲染未知方块）。
      *
      * @param relRow 相对行
      * @param relCol 相对列
@@ -79,13 +80,7 @@ public class RenderContext {
      * @param type   格子类型
      */
     public void slot(int relRow, int relCol, Item item, SlotType type) {
-        SlotAppearance appearance = SlotAppearance.builder()
-                .type(item.getId())
-                .meta(item.getDamage())
-                .count(item.getCount())
-                .name(item.hasCustomName() ? item.getCustomName() : null)
-                .build();
-        slot(relRow, relCol, appearance, type);
+        slot(relRow, relCol, SlotAppearance.fromItem(item), type);
     }
 
     /**

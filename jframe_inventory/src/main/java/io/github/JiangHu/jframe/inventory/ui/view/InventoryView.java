@@ -10,6 +10,7 @@ import io.github.JiangHu.jframe.inventory.ui.component.StorageBox;
 import io.github.JiangHu.jframe.inventory.ui.manager.InventoryManager;
 import io.github.JiangHu.jframe.inventory.ui.model.SlotAppearance;
 import io.github.JiangHu.jframe.inventory.ui.model.SlotType;
+import io.github.JiangHu.jframe.inventory.ui.model.event.BeforeStoreEvent;
 
 import java.util.Arrays;
 
@@ -358,6 +359,22 @@ public abstract class InventoryView {
         InventoryComponent owner = slotOwner(slot);
         if (owner != null) {
             owner.dispatchStore(slot, player, sourceItem, targetItem);
+        }
+    }
+
+    /**
+     * 分发存取前置事件（存取守卫，交易提交前询问格子拥有者）。
+     * <p>
+     * 由 {@link InventoryManager} 在放行 STORAGE 交易前调用：
+     * 事件被取消则整笔交易取消。拥有者为 null 的格子视为放行。
+     *
+     * @param slot  格子序号
+     * @param event 存取前置事件（可取消）
+     */
+    public void handleBeforeStore(int slot, BeforeStoreEvent event) {
+        InventoryComponent owner = slotOwner(slot);
+        if (owner != null) {
+            owner.dispatchBeforeStore(event);
         }
     }
 

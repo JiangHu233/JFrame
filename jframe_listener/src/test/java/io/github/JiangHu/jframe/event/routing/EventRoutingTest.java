@@ -5,14 +5,12 @@ import io.github.JiangHu.jframe.event.EventAPI;
 import io.github.JiangHu.jframe.event.EventConsumer;
 import io.github.JiangHu.jframe.event.EventEngine;
 import io.github.JiangHu.jframe.event.test.NukkitTestBootstrap;
-import io.github.JiangHu.jframe.event.test.fixture.ConditionWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.ExclusiveWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.FactoryWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.FilterWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.StaticFilterWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.MultiSlotWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.MixedStaticSingletonWrapper;
-import io.github.JiangHu.jframe.event.test.fixture.MutualExclusionWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.NoExtractorWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.PartialExtractorWrapper;
 import io.github.JiangHu.jframe.event.test.fixture.PriorityWrapper;
@@ -46,13 +44,11 @@ import java.util.Map;
  *   <li>evict 驱逐实例</li>
  *   <li>优先级排序（HIGHEST → LOWEST）</li>
  *   <li>跨优先级独占（exclusive）</li>
- *   <li>SpEL condition 条件</li>
  *   <li>filter 方法引用</li>
  *   <li>多槽位 @KeyExtractor（OR 语义）+ null 跳过</li>
  *   <li>@InstanceProvider 工厂 + 显式事件类型 + 工厂返回 null 跳过</li>
  *   <li>register / unregister</li>
  *   <li>无 @KeyExtractor 注册被拒绝</li>
- *   <li>condition 与 filter 互斥（抛异常）</li>
  *   <li>@Wrapper 包扫描注册</li>
  *   <li>EventEngine subscribe / unsubscribe / unsubscribeAll</li>
  * </ol>
@@ -72,7 +68,6 @@ public final class EventRoutingTest {
         testEvict();
         testPriorityOrdering();
         testExclusive();
-        testSpelCondition();
         testFilterMethod();
         testStaticFilterMethod();
         testMultiSlotOrSemantics();
@@ -85,7 +80,6 @@ public final class EventRoutingTest {
         testMixedStaticAndInstance();
         testSingletonDedup();
         testMissingExtractorWarning();
-        testConditionFilterMutualExclusion();
         testWrapperScan();
         testEventEngineSubscribeUnsubscribe();
 
@@ -159,22 +153,7 @@ public final class EventRoutingTest {
                 ExclusiveWrapper.getOrder().equals(List.of("HIGH-EXCL")));
     }
 
-    /** 5. SpEL condition 条件 */
-    private static void testSpelCondition() {
-        HandlerRegistry reg = newRegistry();
-        reg.register(ConditionWrapper.class);
-        ConditionWrapper.reset();
-
-        // 包含 "spam" → 条件成立 → 执行
-        reg.dispatch(ChatEvent.class, new ChatEvent("C", "this is spam"));
-        // 不含 "spam" → 条件不成立 → 不执行
-        reg.dispatch(ChatEvent.class, new ChatEvent("C", "hello"));
-
-        check("5. SpEL 条件仅匹配 spam 消息",
-                ConditionWrapper.getMatched().equals(List.of("C:this is spam")));
-    }
-
-    /** 6. filter 方法引用 */
+    /** 5. filter 方法引用 */
     private static void testFilterMethod() {
         HandlerRegistry reg = newRegistry();
         reg.register(FilterWrapper.class);
@@ -408,18 +387,6 @@ public final class EventRoutingTest {
         reg.dispatch(ChatEvent.class, new ChatEvent("Alice", "hi"));
         check("18b. 缺少 extractor 的事件类型静默跳过（handler 不执行）",
                 !PartialExtractorWrapper.isChatInvoked());
-    }
-
-    /** 11. condition 与 filter 互斥（抛 IllegalArgumentException） */
-    private static void testConditionFilterMutualExclusion() {
-        HandlerRegistry reg = newRegistry();
-        boolean threw = false;
-        try {
-            reg.register(MutualExclusionWrapper.class);
-        } catch (IllegalArgumentException e) {
-            threw = true;
-        }
-        check("11. condition 与 filter 同时指定时注册抛 IllegalArgumentException", threw);
     }
 
     /** 12. @Wrapper 包扫描注册 */

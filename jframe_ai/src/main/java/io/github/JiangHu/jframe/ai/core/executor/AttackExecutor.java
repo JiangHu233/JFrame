@@ -6,6 +6,8 @@ import cn.nukkit.item.Item;
 import cn.nukkit.network.protocol.AnimatePacket;
 import io.github.JiangHu.jframe.ai.core.combat.CombatActions;
 
+import java.util.function.Consumer;
+
 /**
  * 战斗动作执行器:链式配置一次战斗动作,{@link #fire()} 在主线程执行。
  * <p>
@@ -37,6 +39,9 @@ import io.github.JiangHu.jframe.ai.core.combat.CombatActions;
  *     .animation(AnimatePacket.Action.CRITICAL_HIT).fire();
  * // 射箭(速度 1.5,散布 0.3)
  * ai.attack(skeleton).arrow(player, 1.5, 0.3).fire();
+ * // 射自定义箭(宿主注册的实体类型),生成后写来源标识 NBT
+ * ai.attack(guard).arrow(player, 2.0, 0.3, "GameArrow",
+ *         arrow -> arrow.namedTag.putString("ammo_id", "ammo.alpha")).fire();
  * // 投掷雪球
  * ai.attack(witch).projectile("Snowball", player, 1.2, 0.2).fire();
  * // 对自己使用药水
@@ -58,6 +63,8 @@ public final class AttackExecutor {
     private double speed;
     private double inaccuracy;
     private Item item;
+    /** 抛射物生成后自定义钩子（ARROW/PROJECTILE 共用；生成后、起爆前写 NBT 等），null=不定制 */
+    private Consumer<Entity> projectileCustomizer;
 
     /** 显式配置的动画;仅当 {@link #animationExplicit} 为 true 时生效,可为 null(=关闭动画) */
     private AnimatePacket.Action animation;
@@ -118,7 +125,7 @@ public final class AttackExecutor {
     }
 
     /**
-     * 配置射箭:默认速度 {@link io.github.JiangHu.jframe.ai.core.combat.CombatActions#DEFAULT_ARROW_SPEED}
+     * 配置射箭：默认速度 {@link io.github.JiangHu.jframe.ai.core.combat.CombatActions#DEFAULT_ARROW_SPEED}
      * 与散布 {@link io.github.JiangHu.jframe.ai.core.combat.CombatActions#DEFAULT_INACCURACY}。
      *
      * @param target 射击目标
@@ -131,7 +138,7 @@ public final class AttackExecutor {
     }
 
     /**
-     * 配置射箭:指定初速度与散布。
+     * 配置射箭：指定初速度与散布（原版箭 {@link io.github.JiangHu.jframe.ai.core.combat.CombatActions#ARROW_TYPE}）。
      *
      * @param target      射击目标
      * @param speed       初速度(方块/tick)
@@ -143,6 +150,49 @@ public final class AttackExecutor {
         this.target = target;
         this.speed = speed;
         this.inaccuracy = inaccuracy;
+        this.projectileType = null;
+        this.projectileCustomizer = null;
+        resetAnimation();
+        return this;
+    }
+
+    /**
+     * 配置射箭（自定义箭实体）：指定箭实体注册名，弹道语义（重力补偿/散布）与原版箭一致。
+     * <p>
+     * 箭类型须已 {@code Entity.registerEntity} 注册（如宿主插件的 "GameArrow"）。
+     *
+     * @param target      射击目标
+     * @param speed       初速度(方块/tick)
+     * @param inaccuracy  散布程度(0=精准)
+     * @param arrowType   箭实体注册名（null/空 回退 {@link CombatActions#ARROW_TYPE}）
+     * @return this
+     */
+    public AttackExecutor arrow(Entity target, double speed, double inaccuracy, String arrowType) {
+        return arrow(target, speed, inaccuracy, arrowType, null);
+    }
+
+    /**
+     * 配置射箭（自定义箭实体 + 生成后定制）：最全参形态。
+     * <p>
+     * {@code customizer} 在抛射物生成后、赋予速度与广播生成之前调用——用于写来源
+     * 标识 NBT 等自定义属性（{@code projectile.namedTag.putString(...)}），
+     * 传 {@code null} 跳过。
+     *
+     * @param target      射击目标
+     * @param speed       初速度(方块/tick)
+     * @param inaccuracy  散布程度(0=精准)
+     * @param arrowType   箭实体注册名（null/空 回退 {@link CombatActions#ARROW_TYPE}）
+     * @param customizer  生成后自定义钩子；{@code null} 表示不定制
+     * @return this
+     */
+    public AttackExecutor arrow(Entity target, double speed, double inaccuracy,
+                                String arrowType, Consumer<Entity> customizer) {
+        this.kind = Kind.ARROW;
+        this.target = target;
+        this.speed = speed;
+        this.inaccuracy = inaccuracy;
+        this.projectileType = arrowType;
+        this.projectileCustomizer = customizer;
         resetAnimation();
         return this;
     }
@@ -159,6 +209,7 @@ public final class AttackExecutor {
     public AttackExecutor projectile(String projectileType, Entity target, double speed, double inaccuracy) {
         this.kind = Kind.PROJECTILE;
         this.projectileType = projectileType;
+        this.projectileCustomizer = null;
         this.target = target;
         this.speed = speed;
         this.inaccuracy = inaccuracy;
@@ -214,14 +265,21 @@ public final class AttackExecutor {
                 return animationExplicit
                         ? combat.meleeAttack(self, target, damage, animation)
                         : combat.meleeAttack(self, target, damage);
-            case ARROW:
-                return animationExplicit
-                        ? combat.shootArrow(self, target, speed, inaccuracy, animation) != null
-                        : combat.shootArrow(self, target, speed, inaccuracy) != null;
-            case PROJECTILE:
-                return animationExplicit
-                        ? combat.throwProjectile(self, projectileType, target, speed, inaccuracy, animation) != null
-                        : combat.throwProjectile(self, projectileType, target, speed, inaccuracy) != null;
+            case ARROW: {
+                // 自定义箭类型：未指定（默认箭路径已置 null）回退原版 Arrow
+                String arrowType = projectileType != null && !projectileType.isEmpty()
+                        ? projectileType : CombatActions.ARROW_TYPE;
+                AnimatePacket.Action anim = animationExplicit
+                        ? animation : CombatActions.DEFAULT_COMBAT_ANIMATION;
+                return combat.shootArrow(self, target, speed, inaccuracy, anim, arrowType,
+                        projectileCustomizer) != null;
+            }
+            case PROJECTILE: {
+                AnimatePacket.Action anim = animationExplicit
+                        ? animation : CombatActions.DEFAULT_COMBAT_ANIMATION;
+                return combat.throwProjectile(self, projectileType, target, speed, inaccuracy,
+                        anim, projectileCustomizer) != null;
+            }
             case USE_ITEM_ON:
                 return animationExplicit
                         ? combat.useItemOn(self, target, item, animation)

@@ -1,49 +1,63 @@
 package io.github.JiangHu.jframe.main.utils;
 
-import io.github.JiangHu.jframe.ai.config.AiSpringConfig;
-import io.github.JiangHu.jframe.command.config.CommandSpringConfig;
-import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
-import io.github.JiangHu.jframe.event.config.EventSpringConfig;
-import io.github.JiangHu.jframe.form.config.FormSpringConfig;
-import io.github.JiangHu.jframe.inventory.config.InventorySpringConfig;
-import io.github.JiangHu.jframe.async.config.AsyncSpringConfig;
-import io.github.JiangHu.jframe.scoreboard.config.ScoreboardSpringConfig;
-import io.github.JiangHu.jframe.title.config.TitleSpringConfig;
-import lombok.Getter;
-import io.github.JiangHu.jframe.main.JFrameMain;
 /**
- * JFrame 模块枚举。
+ * JFrame 模块 id 枚举 — 与各 {@code XxxModule#id()} 一致的常量表。
  * <p>
- * 用于声明需要动态导入的模块，{@link JFrameMain} 会读取该枚举数组，
- * 并将 core/thread/form 对应的 SpringConfig 动态导入到当前容器中。
+ * 用途：{@code config.yml} 预加载列表的可读参考与日志；实际注册以
+ * {@code JFrameMain} 构造时登记的 {@code JFrameModule} 为准。
  *
- * @see JFrameMain
+ * @see io.github.JiangHu.jframe.main.JFrameMain
  */
 public enum ConfigEnum {
-    CORE(CoreSpringConfig.class),
-    THREAD(AsyncSpringConfig.class),
-    FORM(FormSpringConfig.class),
-    EVENT(EventSpringConfig.class),
-    COMMAND(CommandSpringConfig.class),
-    INVENTORY(InventorySpringConfig.class),
-    AI(AiSpringConfig.class),
-    SCOREBOARD(ScoreboardSpringConfig.class),
-    TITLE(TitleSpringConfig.class),
-    ;
 
-    @Getter
-    private final Class<?> springConfigClass;
+    /** 事件系统（jframe_listener）：EventAPI */
+    EVENT("event"),
 
-    ConfigEnum(Class<?> springConfigClass) {
-        this.springConfigClass = springConfigClass;
+    /** 命令系统（jframe_command）：CommandAPI */
+    COMMAND("command"),
+
+    /** 异步任务（jframe_async）：ThreadAPI / TaskAPI / ThreadFlow / ReleaseAPI */
+    ASYNC("async"),
+
+    /** 表单（jframe_form）：ViewAPI */
+    FORM("form"),
+
+    /** 箱子界面（jframe_inventory）：InventoryAPI */
+    INVENTORY("inventory"),
+
+    /** 数据持久化（jframe_data）：DataSaver */
+    DATA("data"),
+
+    /** 实体 AI（jframe_ai）：AiAPI */
+    AI("ai"),
+
+    /** 计分板（jframe_scoreboard_depend_template）：ScoreboardAPI */
+    SCOREBOARD("scoreboard"),
+
+    /** 标题（jframe_title_depend_template）：TitleAPI */
+    TITLE("title"),
+
+    /** 游戏引擎 ECS + 行为树（jframe_engine）：EcsAPI / BtAPI */
+    ENGINE("engine"),
+
+    /** 浮空字（jframe_floatingtext）：FloatingTextAPI */
+    FLOATING_TEXT("floatingtext"),
+
+    /** 统一日志（logger）：LoggerAPI + /jlog 指令 */
+    LOGGER("logger");
+
+    private final String moduleId;
+
+    ConfigEnum(String moduleId) {
+        this.moduleId = moduleId;
     }
 
     /**
-     * 返回该模块对应的 SpringConfig 全限定类名，供 {@link org.springframework.context.annotation.ImportSelector} 使用。
+     * 模块 id（与 {@code JFrameModule#id()} 一致，用于 preload 配置与日志）。
      *
-     * @return SpringConfig 的全限定类名
+     * @return 模块 id
      */
-    public String getClassName() {
-        return springConfigClass.getName();
+    public String getModuleId() {
+        return moduleId;
     }
 }

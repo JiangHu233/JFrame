@@ -4,6 +4,7 @@ import cn.nukkit.Player;
 import cn.nukkit.item.Item;
 import io.github.JiangHu.jframe.inventory.ui.model.SlotAppearance;
 import io.github.JiangHu.jframe.inventory.ui.model.SlotType;
+import io.github.JiangHu.jframe.inventory.ui.model.event.BeforeStoreEvent;
 import io.github.JiangHu.jframe.inventory.ui.model.event.StoreEvent;
 import io.github.JiangHu.jframe.inventory.ui.view.InventoryView;
 import io.github.JiangHu.jframe.inventory.ui.view.RenderContext;
@@ -12,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 /**
  * 存储格组件。
@@ -43,6 +45,39 @@ import java.util.function.Consumer;
  * Item[] snapshot = box.exportItems();
  * }</pre>
  *
+ * <h3>存取守卫（继承自 InventoryComponent 的 BeforeStoreEvent 便捷层）</h3>
+ * <p>
+ * StorageBox 在基类 {@code onBeforeStore} 钩子之上提供三层便捷 API，
+ * 按执行顺序：
+ * <ol>
+ *   <li>{@code filter(Predicate<Item> [, denyMessage])} — 放入校验：
+ *       有物品进入本格时测试进入的物品（放入/换入/并入堆叠）</li>
+ *   <li>{@code withdrawFilter(Predicate<Item> [, denyMessage])} — 取出校验：
+ *       有物品离开本格时测试离开的物品（取出/换出/右键拿一半）</li>
+ *   <li>{@code beforeStore(Consumer<BeforeStoreEvent>)} — 高级守卫：兜底一切场景
+ *       （限量放入、条件禁取等复杂策略）</li>
+ * </ol>
+ * 任一层否决（{@code cancel}）则整笔交易取消，客户端物品弹回，可选发送提示消息；
+ * 未设置任何守卫时行为与无守卫完全一致。
+ *
+ * <pre>{@code
+ * // 白名单回收槽：只收钻石，其他物品弹回并提示
+ * box.filter(item -> item.getId() == Item.DIAMOND, "§c此处仅回收钻石");
+ *
+ * // 押金槽：付款前禁止取出
+ * box.withdrawFilter(item -> paid, "§e需先完成付款");
+ *
+ * // 限量放入（合计不超过 64 个）
+ * box.beforeStore(e -> {
+ *     if (e.isEntering()) {
+ *         int total = Arrays.stream(box.exportItems()).mapToInt(Item::getCount).sum();
+ *         if (total + e.targetItem().getCount() > 64) {
+ *             e.cancel("§c押金槽最多存放 64 个");
+ *         }
+ *     }
+ * });
+ * }</pre>
+ *
  * <p><strong>时序要求</strong>：{@code loadItems} / {@code exportItems} 必须在视图
  * 已打开（{@link InventoryView#onOpen} 之后）时调用，此时底层库存已就绪。
  * 视图未打开时 {@code exportItems} 返回全空气数组，{@code loadItems} 不执行任何操作。
@@ -71,6 +106,21 @@ public class StorageBox extends InventoryComponent {
     /** 存取回调（可选） */
     private Consumer<StoreEvent> storeHandler;
 
+    /** 放入校验过滤器（可选）：有物品进入本格（放入/换入/并入堆叠）时测试进入的物品，未通过则否决 */
+    private Predicate<Item> depositFilter;
+
+    /** 放入校验拒绝提示（可选） */
+    private String filterDenyMessage;
+
+    /** 取出校验过滤器（可选）：有物品离开本格（取出/换出/右键拿一半）时测试离开的物品，未通过则否决 */
+    private Predicate<Item> withdrawFilter;
+
+    /** 取出校验拒绝提示（可选） */
+    private String withdrawDenyMessage;
+
+    /** 高级存取守卫回调（可选，在 filter / withdrawFilter 之后执行，可覆盖一切场景） */
+    private Consumer<BeforeStoreEvent> beforeStoreHandler;
+
     /** 关闭界面时是否自动退还物品到玩家背包 */
     private boolean returnOnClose = false;
 
@@ -98,6 +148,74 @@ public class StorageBox extends InventoryComponent {
      */
     public StorageBox onStore(Consumer<StoreEvent> handler) {
         this.storeHandler = handler;
+        return this;
+    }
+
+    // -------------------- 存取守卫（BeforeStoreEvent 便捷层） --------------------
+
+    /**
+     * 设置放入校验过滤器（无提示）。
+     * <p>
+     * 有物品进入本格（放入 / 换入 / 并入堆叠）时测试<b>进入的物品</b>（targetItem），
+     * 未通过则否决整笔交易，物品弹回。取出不受影响。
+     *
+     * @param filter 过滤器（物品是否允许放入），传 {@code null} 清除
+     * @return 当前组件（链式调用）
+     */
+    public StorageBox filter(Predicate<Item> filter) {
+        return filter(filter, null);
+    }
+
+    /**
+     * 设置放入校验过滤器（带拒绝提示）。
+     *
+     * @param filter      过滤器（物品是否允许放入），传 {@code null} 清除
+     * @param denyMessage 否决时发送给玩家的提示消息
+     * @return 当前组件（链式调用）
+     */
+    public StorageBox filter(Predicate<Item> filter, String denyMessage) {
+        this.depositFilter = filter;
+        this.filterDenyMessage = denyMessage;
+        return this;
+    }
+
+    /**
+     * 设置取出校验过滤器（无提示）。
+     * <p>
+     * 有物品离开本格（取出 / 换出 / 右键拿一半）时测试<b>离开的物品</b>（sourceItem），
+     * 未通过则否决整笔交易，物品弹回。放入不受影响。
+     *
+     * @param filter 过滤器（物品是否允许取出），传 {@code null} 清除
+     * @return 当前组件（链式调用）
+     */
+    public StorageBox withdrawFilter(Predicate<Item> filter) {
+        return withdrawFilter(filter, null);
+    }
+
+    /**
+     * 设置取出校验过滤器（带拒绝提示）。
+     *
+     * @param filter      过滤器（物品是否允许取出），传 {@code null} 清除
+     * @param denyMessage 否决时发送给玩家的提示消息
+     * @return 当前组件（链式调用）
+     */
+    public StorageBox withdrawFilter(Predicate<Item> filter, String denyMessage) {
+        this.withdrawFilter = filter;
+        this.withdrawDenyMessage = denyMessage;
+        return this;
+    }
+
+    /**
+     * 设置高级存取守卫回调。
+     * <p>
+     * 在 filter / withdrawFilter 之后执行，可覆盖一切存取场景
+     * （包括交换、数量变化等），适合实现限量放入、条件禁取等复杂策略。
+     *
+     * @param handler 守卫回调（收到 {@link BeforeStoreEvent}，可取消）
+     * @return 当前组件（链式调用）
+     */
+    public StorageBox beforeStore(Consumer<BeforeStoreEvent> handler) {
+        this.beforeStoreHandler = handler;
         return this;
     }
 
@@ -245,6 +363,32 @@ public class StorageBox extends InventoryComponent {
     protected void onStore(StoreEvent event) {
         if (storeHandler != null) {
             storeHandler.accept(event);
+        }
+    }
+
+    /**
+     * 存取守卫默认实现：① 放入校验（filter）→ ② 取出校验（withdrawFilter）→ ③ 高级守卫（beforeStore）。
+     * <p>
+     * 交换动作同时触发 ①② 双向校验（换入过 filter、换出过 withdrawFilter），第一个失败即否决。
+     * 子类重写时须调用 {@code super.onBeforeStore(event)} 以保留上述行为。
+     */
+    @Override
+    protected void onBeforeStore(BeforeStoreEvent event) {
+        // 1. 放入校验：有物品进入本格（放入/换入/并入堆叠）
+        if (depositFilter != null && event.isEntering()
+                && !depositFilter.test(event.targetItem())) {
+            event.cancel(filterDenyMessage);
+            return;
+        }
+        // 2. 取出校验：有物品离开本格（取出/换出/右键拿一半）
+        if (withdrawFilter != null && event.isLeaving()
+                && !withdrawFilter.test(event.sourceItem())) {
+            event.cancel(withdrawDenyMessage);
+            return;
+        }
+        // 3. 高级守卫
+        if (beforeStoreHandler != null) {
+            beforeStoreHandler.accept(event);
         }
     }
 
