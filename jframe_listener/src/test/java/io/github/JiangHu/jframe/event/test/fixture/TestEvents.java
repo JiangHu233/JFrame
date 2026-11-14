@@ -6,7 +6,7 @@ import cn.nukkit.event.Event;
  * 测试用事件集合（3 个轻量级 {@link Event} 子类）。
  * <p>
  * 不依赖 Nukkit 玩家 / 物品等重型对象，仅用 {@code String} 身份标识和简单数值字段，
- * 便于在纯 JVM 单元测试中构造与断言。SpEL 条件和 filter 方法可直接访问其 getter。
+ * 便于在纯 JVM 单元测试中构造与断言。filter 方法可直接访问其 getter。
  */
 public final class TestEvents {
 
@@ -38,7 +38,7 @@ public final class TestEvents {
         }
     }
 
-    /** 聊天事件：用于 SpEL condition 和 filter 方法测试。 */
+    /** 聊天事件：用于 filter 方法测试。 */
     public static class ChatEvent extends Event {
         private final String playerName;
         private final String message;

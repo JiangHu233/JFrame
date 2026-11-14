@@ -1,8 +1,8 @@
 # JFrame
 
-> 基于 **Nukkit**（我的世界基岩版服务端）+ **Spring** 的插件开发框架。
+> 基于 **Nukkit**（我的世界基岩版服务端）的插件开发框架，自研轻量模块容器（无 Spring IoC）。
 >
-> 用「声明式注解 + 模块化前置插件」的方式，快速搭建结构清晰、可维护的服务端插件。
+> 用「声明式注解 + 模块化前置插件 + 按需加载」的方式，快速搭建结构清晰、可维护的服务端插件。
 
 ## 📑 导航
 
@@ -11,30 +11,29 @@
 - [技术栈](#-技术栈)
 - [模块总览](#-模块总览)
 - [快速开始](#-快速开始)
-- [各模块速览](#-各模块速览)
+- [业务插件自建模块容器](#-业务插件自建模块容器)
 - [构建与部署](#️-构建与部署)
-- [目录结构](#-目录结构)
-- [文档导航](#-文档导航)
 - [已知限制与注意事项](#️-已知限制与注意事项)
 
 ---
 
 ## 📖 这是什么？
 
-JFrame 是一套面向 Nukkit 插件开发的**模块化框架**。它把服务端插件开发中常见的能力——事件处理、命令路由、表单界面、箱子 GUI、异步任务、数据持久化、实体 AI——拆分成独立模块，用 Spring 容器统一装配。
+JFrame 是一套面向 Nukkit 插件开发的**模块化框架**。它把服务端插件开发中常见的能力——事件处理、命令路由、表单界面、箱子 GUI、异步任务、数据持久化、实体 AI、ECS 引擎、行为树、浮空字——拆分成独立模块，由自研的**模块容器** [`ModuleManager`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/module/ModuleManager.java) 统一管理。
 
-框架自身以**前置插件**形式部署：[`JFrameMain`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 在启动时创建完整的 Spring 容器并加载全部模块，业务插件只需在 `plugin.yml` 声明 `depend: [JFrame]`，即可共享容器、复用现成的各模块 API，无需各自打包框架代码。
+框架自身以**前置插件**形式部署：[`JFrameMain`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 启动时登记全部内置模块（零实例化），业务插件只需在 `plugin.yml` 声明 `depend: [JFrame]`，首次调用 `getXxxAPI()` 时对应模块才真正初始化——**未用到的模块不创建任何对象，启动零成本**。
 
 核心亮点：
 
-- **声明式事件系统**：用注解（[`@EventHandler`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/EventHandler.java) / [`@EventRoute`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/EventRoute.java) / [`@KeyExtractor`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/KeyExtractor.java) / [`@InstanceProvider`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/InstanceProvider.java)）声明事件处理器，框架自动完成类型过滤、身份提取、实例创建和优先级分发。
-- **声明式命令路由**：把 Spring MVC 的 `@Controller` / `@RequestMapping` 体验搬到 Minecraft 命令处理——[`@CommandController`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/annotation/CommandController.java) + [`@CommandMapping`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/annotation/CommandMapping.java) 自动完成路径匹配、参数解析与类型转换，无需手写 `if/else if` 分支。
-- **栈式表单导航**：基于 [`FormView`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/FormView.java) 的视图栈，原生支持「进入子菜单 / 返回上一级」。
-- **组件化箱子 GUI**：[`jframe_inventory`](jframe_inventory) 提供声明式组件（Button / StorageBox / Filler / Panel）+ 自动布局 + 假方块延迟打开，并内置物品栏编解码（[`InventoryCodec`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/codec/InventoryCodec.java)）。
-- **注解驱动持久化**：[`@SaveField`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/annotation/SaveField.java) 标记字段，[`DataSaver`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 一行完成对象 ↔ JSON 文件的序列化，支持别名、必需校验、字段级适配器、跨插件隔离。
-- **实体 AI 能力**：[`jframe_ai`](jframe_ai) 提供 A\* / 贪心双策略寻路与七工厂行为 API（`path` / `walk` / `chase` / `wander` / `loop` / `attack` / `see`），覆盖导航、追逐、游荡、通用循环、战斗与视野感知，另有单实体与团队战术，可驱动任意 `cn.nukkit.entity.Entity`。
-- **响应式纠缠值**：[`EntangledValue`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledValue.java) 让多个值「纠缠」在一起，一处变化多处感知（如同一份血量同时驱动 HUD、Boss 血条、计分板）。
-- **Spring IoC 装配**：各模块提供 `*SpringConfig`，由 [`MainSpringConfig`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/config/MainSpringConfig.java) 统一 `@Import` 全量装配；各 API 自动注册到 Nukkit `ServiceManager`，供其他插件发现。
+- **自研模块容器（替代 Spring IoC）**：一个模块 = 一个工厂类（[`JFrameModule`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/module/JFrameModule.java)）= 一组懒加载单例；对象间引用在工厂内用普通 Java 组装，零反射注入。支持无参 new / 工厂函数 / 工厂类 / 现成实例四种注册形式与 `@JBean` / `@JFactory` / `@JFactoryClass` 注解包扫描。
+- **声明式事件系统**：用注解（`@EventHandler` / `@EventRoute` / `@KeyExtractor` / `@InstanceProvider`）声明事件处理器，框架自动完成类型过滤、身份提取、实例创建和优先级分发。
+- **声明式命令路由**：把 Spring MVC 的 `@Controller` / `@RequestMapping` 体验搬到 Minecraft 命令处理——`@CommandController` + `@CommandMapping` 自动完成路径匹配、参数解析与类型转换。
+- **ECS 游戏引擎 + 行为树**：YAML 数据驱动的 GameObject 定义、五类注解扫描注册、四级过滤事件分发、组件对象池；与 ECS 共享引擎的行为树决策子系统（`BtAPI`）。
+- **栈式表单导航 / 组件化箱子 GUI**：`FormView` 视图栈与声明式箱子组件 + 自动布局 + 物品编解码。
+- **注解驱动持久化**：`@SaveField` 标记字段，`DataSaver` 一行完成对象 ↔ JSON 序列化。
+- **实体 AI 能力**：A\* / 贪心双策略寻路与七工厂行为 API（`path` / `walk` / `chase` / `wander` / `loop` / `attack` / `see`），另有单实体与团队战术。
+- **浮空字**：发包假实体渲染（零服务器实体）、瞬态与常驻组、观众重连对账。
+- **响应式纠缠值**：[`EntangledValue`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledValue.java) 让多个值「纠缠」在一起，一处变化多处感知。
 
 ---
 
@@ -42,13 +41,13 @@ JFrame 是一套面向 Nukkit 插件开发的**模块化框架**。它把服务�
 
 | 维度 | 传统 Nukkit 插件开发 | JFrame |
 |------|---------------------|--------|
-| **事件处理** | `implements Listener` + `Map<Player, State>` 手动管理状态 | [`@EventHandler`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/EventHandler.java) + [`@KeyExtractor`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/KeyExtractor.java) 对象级路由，自动按身份分发 |
-| **命令注册** | `onCommand` + `if/else if` 分支或 args 索引解析 | [`@CommandController`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/annotation/CommandController.java) + [`@CommandMapping`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/annotation/CommandMapping.java) 路径匹配 + 自动参数转换 |
-| **表单界面** | `FormWindow` + `switch(id)` 魔法索引 | [`FormView`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/FormView.java) 视图栈 + 按钮对象回调 + 栈式导航 |
-| **数据持久化** | 手写 JSON 读写 / Config 库逐字段 | [`@SaveField`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/annotation/SaveField.java) 注解标记，一行序列化 |
-| **依赖注入** | 手动 `new` 或静态单例 | Spring IoC 容器统一装配，`@Autowired` 即用 |
+| **事件处理** | `implements Listener` + `Map<Player, State>` 手动管理状态 | `@EventHandler` + `@KeyExtractor` 对象级路由，自动按身份分发 |
+| **命令注册** | `onCommand` + `if/else if` 分支或 args 索引解析 | `@CommandController` + `@CommandMapping` 路径匹配 + 自动参数转换 |
+| **表单界面** | `FormWindow` + `switch(id)` 魔法索引 | `FormView` 视图栈 + 按钮对象回调 + 栈式导航 |
+| **数据持久化** | 手写 JSON 读写 / Config 库逐字段 | `@SaveField` 注解标记，一行序列化 |
+| **模块管理** | 手动 `new` 或静态单例，全部启动即初始化 | 自研模块容器统一装配，**按需懒加载**，关服按序清理 |
 | **模块复用** | 各插件各自实现/打包重复代码 | 前置插件共享容器，业务插件 `depend: [JFrame]` 直接复用 |
-| **实体 AI** | 自行实现寻路与行为 | [`AiAPI`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/AiAPI.java) 提供寻路 / 导航 / 战术 / 战斗开箱即用 |
+| **实体 AI / ECS** | 自行实现 | `AiAPI` / `EcsAPI` / `BtAPI` 开箱即用 |
 
 ---
 
@@ -58,63 +57,58 @@ JFrame 是一套面向 Nukkit 插件开发的**模块化框架**。它把服务�
 |------|------|------|
 | JDK | 24 | 编译目标版本 |
 | Nukkit | MOT-SNAPSHOT | 基岩版服务端（`provided`） |
-| Spring | 6.2.1 | IoC 容器（core / beans / context / expression） |
+| spring-core / spring-expression | 6.2.1 | **纯工具库**（Resource 抽象 + SpEL，供 ECS `when` 条件与模板渲染）；IoC 容器已由自研 `ModuleManager` 取代 |
 | Lombok | 1.18.42 | 样板代码消除（`provided`） |
 | Gson | — | 数据模块 JSON 序列化（由服务端提供） |
+| JUnit 5 | 5.11.4 | 单元测试（`test`） |
 
 ---
 
 ## 📦 模块总览
 
 ```
-JFrame (父 POM，聚合 11 个模块)
-├── jframe_core        核心基础：PluginAware 绑定、响应式纠缠值、功能 Map
-├── jframe_main        框架入口：JFrameMain 前置插件、MainSpringConfig 全量装配
-├── jframe_event       事件系统：声明式注解、对象级路由、优先级独占
-├── jframe_command     命令系统：6 注解声明式路由（类 Spring MVC）
-├── jframe_form        表单/GUI：FormView 视图栈、ViewManager 单玩家管理
-├── jframe_inventory   箱子界面：声明式组件 + 布局 + 物品编解码
-├── jframe_data        数据持久化：@SaveField 注解驱动 JSON 序列化
-├── jframe_thread      异步任务：命名线程池、串行队列
-├── jframe_ai          实体 AI：寻路 / 导航 / 战术 / 战斗 / 视野感知
-├── jframe_example     完整示例插件（依赖前置 JFrame，演示全模块）
-└── jframe_title       标题模块（规划中）
+JFrame (父 POM，聚合 17 个模块)
+├── jframe_core                        核心基础：模块容器（ModuleManager）、注解扫描器、PluginAware、纠缠值
+├── jframe_main                        框架入口：JFrameMain 前置插件、ConfigEnum、config.yml 预加载
+├── jframe_listener                    事件系统：声明式注解、对象级路由、优先级独占
+├── jframe_command                     命令系统：6 注解声明式路由（类 Spring MVC）
+├── jframe_form                        表单/GUI：FormView 视图栈、ViewManager 单玩家管理
+├── jframe_inventory                   箱子界面：声明式组件 + 布局 + 物品编解码
+├── jframe_data                        数据持久化：@SaveField 注解驱动 JSON 序列化
+├── jframe_async                       异步任务：ThreadAPI / TaskAPI / ThreadFlow / ReleaseAPI
+├── jframe_ai                          实体 AI：寻路 / 导航 / 战术 / 战斗 / 视野感知
+├── jframe_template                    内容模板：XML 模板 + SpEL 渲染（计分板/标题共用）
+├── jframe_scoreboard_depend_template  计分板：模板驱动动态计分板
+├── jframe_title_depend_template       标题：Title/Subtitle/ActionBar 模板驱动
+├── jframe_engine                      游戏引擎：ECS（注册表/引擎/调度/事件桥/对象池）+ 行为树
+├── jframe_floatingtext                浮空字：发包假实体渲染、瞬态/常驻组
+├── jframe_nbt                         NBT 编解码库（被动库，未接入模块体系）
+├── jframe_logger                      统一日志：LoggerAPI 统一入口 + /jlog 手动启停 Web 展示（多实例聚合）
+└── jframe_example                     ECS / 统一日志示例插件（依赖前置 JFrame）
 ```
 
-| 模块 | 作用 | 关键类 / API |
-|------|------|--------|
-| [`jframe_core`](jframe_core) | 框架公共基础 | [`PluginAware`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/module/PluginAware.java)、[`EntangledValue`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledValue.java)、[`EntangledChannel`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledChannel.java)、[`LruCacheMap`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/map/LruCacheMap.java)、[`PlayerDataMap`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/map/PlayerDataMap.java) |
-| [`jframe_main`](jframe_main) | 框架入口与模块装配 | [`JFrameMain`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java)、[`MainSpringConfig`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/config/MainSpringConfig.java)、[`ConfigEnum`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/utils/ConfigEnum.java) |
-| [`jframe_event`](jframe_event) | 声明式事件路由 | [`EventAPI`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/EventAPI.java)、[`EventEngine`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/EventEngine.java)、[`HandlerRegistry`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/routing/HandlerRegistry.java) |
-| [`jframe_command`](jframe_command) | 声明式命令路由 | [`CommandAPI`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/CommandAPI.java)、[`CommandEngine`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/CommandEngine.java)、[`CommandRegistry`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/routing/CommandRegistry.java) |
-| [`jframe_form`](jframe_form) | 表单界面与栈式导航 | [`ViewAPI`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/ViewAPI.java)、[`FormView`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/FormView.java)、[`ViewManager`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/ViewManager.java) |
-| [`jframe_inventory`](jframe_inventory) | 箱子界面与物品编解码 | [`InventoryAPI`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/InventoryAPI.java)、[`InventoryView`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/view/InventoryView.java)、[`InventoryCodec`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/codec/InventoryCodec.java) |
-| [`jframe_data`](jframe_data) | 注解驱动 JSON 持久化 | [`DataSaver`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/DataSaver.java)、[`@SaveField`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/annotation/SaveField.java)、[`SaveFieldAdapter`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java) |
-| [`jframe_thread`](jframe_thread) | 异步任务队列 | [`ThreadAPI`](jframe_thread/src/main/java/io/github/JiangHu/jframe/thread/ThreadAPI.java) |
-| [`jframe_ai`](jframe_ai) | 实体 AI 能力 | [`AiAPI`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/AiAPI.java)（七工厂门面）、[`AStarPathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/astar/AStarPathFinder.java)、[`GreedyPathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/greedy/GreedyPathFinder.java)、[`LoopBehavior`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/behavior/LoopBehavior.java)、[`NavigatorManager`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/navigation/NavigatorManager.java) |
-| [`jframe_example`](jframe_example) | 端到端示例 | [`ExamplePlugin`](jframe_example/src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java) |
-| [`jframe_title`](jframe_title) | 标题模块（规划中） | — |
+| 模块 id | 提供的公开服务（懒加载触发点） |
+|---------|------------------------------|
+| `event` | `EventAPI` |
+| `command` | `CommandAPI` |
+| `async` | `ThreadAPI` / `TaskAPI` / `ThreadFlow` / `ReleaseAPI` |
+| `form` | `ViewAPI` |
+| `inventory` | `InventoryAPI` |
+| `data` | `DataSaver` |
+| `ai` | `AiAPI` |
+| `scoreboard` | `ScoreboardAPI` |
+| `title` | `TitleAPI` |
+| `engine` | `EcsAPI` / `BtAPI`（共享 EcsEngine，一个模块两个服务） |
+| `floatingtext` | `FloatingTextAPI` |
+| `logger` | `LoggerAPI`（统一日志入口；`/jlog` 指令首次执行亦触发加载） |
 
-### 模块依赖关系
-
-```
-                    jframe_core（基础）
-                    ▲   ▲   ▲   ▲   ▲   ▲
-                    │   │   │   │   │   │
-  jframe_event  command │ form │ inventory │ thread │ data │ ai
-                    │       │       │       │     │     │
-                    └───────┴───────┴───┬───┴─────┴─────┘
-                                        │
-                            jframe_main（聚合入口 / 前置插件）
-                                        │
-                            jframe_example（示例，depend: JFrame）
-```
+每个模块由一个 `XxxModule` 工厂类一对一替代原 Spring `*SpringConfig` + `*-spring.xml`（如 [`EventModule`](jframe_listener/src/main/java/io/github/JiangHu/jframe/event/EventModule.java)、[`EngineModule`](jframe_engine/src/main/java/io/github/JiangHu/jframe/engine/EngineModule.java)），对象图在 `load(ModuleContext)` 内用普通 Java 组装。
 
 ---
 
 ## 🚀 快速开始
 
-JFrame 采用**前置插件**模式：框架自身部署为一个 Nukkit 插件，业务插件通过 `depend` 依赖它，直接复用其已创建好的 Spring 容器与各模块 API。
+JFrame 采用**前置插件**模式：框架自身部署为一个 Nukkit 插件，业务插件通过 `depend` 依赖它，复用其模块容器与各模块 API。
 
 ### 1. 构建并部署前置插件
 
@@ -130,7 +124,7 @@ mvn clean package
 # 产物：jframe_main/target/jframe_main.jar
 ```
 
-把 `jframe_main.jar` 放入 Nukkit 服务端的 `plugins/` 目录。启动时 [`JFrameMain`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 会自动创建 Spring 容器、加载全部模块、绑定插件实例，并把各 API 注册到 Nukkit `ServiceManager`。
+把 `jframe_main.jar` 放入 Nukkit 服务端的 `plugins/` 目录。启动时 [`JFrameMain`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 登记全部模块并读取 `config.yml` 的 `modules:` 预加载列表（默认为空 = 全部懒加载）。
 
 ### 2. 业务插件依赖 JFrame
 
@@ -141,207 +135,159 @@ name: MyPlugin
 depend: [JFrame]
 ```
 
-`pom.xml` 中将 `jframe_main` 设为 `provided` 作用域（不重复打包框架类）：
-
-```xml
-<dependency>
-    <groupId>io.github.JiangHu.jframe</groupId>
-    <artifactId>jframe_main</artifactId>
-    <version>1.0-SNAPSHOT</version>
-    <scope>provided</scope>
-</dependency>
-```
+`pom.xml` 中将 `jframe_main` 设为 `provided` 作用域（不重复打包框架类）。
 
 ### 3. 获取各模块 API 并使用
 
-业务插件在 `onEnable()` 中获取前置插件单例，直接复用其门面方法拿到现成的 API：
+推荐用**门面方法**（首次调用触发对应模块懒加载）：
 
 ```java
 public class MyPlugin extends PluginBase {
 
     private EventAPI eventAPI;
     private CommandAPI commandAPI;
-    private AiAPI aiAPI;
 
     @Override
     public void onEnable() {
-        // 1. 获取前置插件 JFrame 的单例（其 onEnable 时已创建好 Spring 容器）
-        Plugin jframePlugin = getServer().getPluginManager().getPlugin("JFrame");
-        JFrameMain jframe = (JFrameMain) jframePlugin;
+        // 1. 获取前置插件 JFrame 的单例
+        JFrameMain jframe = (JFrameMain) getServer().getPluginManager().getPlugin("JFrame");
 
-        // 2. 直接复用 JFrame 已装配好的各模块 API（无需自己创建容器）
+        // 2. 门面取 API——首次调用才初始化对应模块
         eventAPI = jframe.getEventAPI();
         commandAPI = jframe.getCommandAPI();
-        aiAPI = jframe.getAiAPI();
-        // 还有：getViewAPI() / getThreadAPI() / getInventoryAPI() / getDataSaver()
+        // 还有：getViewAPI / getThreadAPI / getTaskAPI / getThreadFlow / getReleaseAPI
+        //       getInventoryAPI / getDataSaver / getAiAPI / getScoreboardAPI / getTitleAPI
+        //       getEcsAPI / getBtAPI / getFloatingTextAPI / getLoggerAPI
+        // 或静态：JFrameMain.getApi(EventAPI.class)
 
-        // 3. 用本插件类加载器扫描自身 jar 内的处理器并注册到共享容器
-        eventAPI.scan(getClass().getClassLoader(), "com.example.myplugin.wrapper");
-        commandAPI.scan(getClass().getClassLoader(), "com.example.myplugin.command");
+        // 3. 用本插件类加载器扫描自身 jar 内的处理器并注册
+        eventAPI.forPlugin(this).scan("com.example.myplugin.wrapper");
+        commandAPI.forPlugin(this).scan("com.example.myplugin.command");
     }
 }
 ```
 
-> 💡 也可通过 Nukkit `ServiceManager` 获取 API（等价）：
-> `getServer().getServiceManager().getProvider(EventAPI.class).getProvider()`。
-> [`JFrameMain`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 在 [`onEnable()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:232) 时已自动注册全部模块服务。
+> 💡 Nukkit `ServiceManager` 也可获取 API，但服务在模块**真实加载后**才注册
+> （`getServer().getServiceManager().getProvider(EventAPI.class).getProvider()`）。
+> 未加载模块返回 `null`；若其他插件需要即时可查，可在 JFrame 的 `config.yml`
+> 中配置 `modules: [event, command]` 预加载。
 
 ### JFrameMain 门面方法一览
 
-| 方法 | 返回类型 | 说明 |
+| 方法 | 返回类型 | 模块 |
 |------|----------|------|
-| [`getEventAPI()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:128) | [`EventAPI`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/EventAPI.java) | 事件模块 |
-| [`getCommandAPI()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:155) | [`CommandAPI`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/CommandAPI.java) | 命令模块 |
-| [`getViewAPI()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:137) | [`ViewAPI`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/ViewAPI.java) | 表单模块 |
-| [`getInventoryAPI()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:164) | [`InventoryAPI`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/InventoryAPI.java) | 箱子界面模块 |
-| [`getThreadAPI()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:146) | [`ThreadAPI`](jframe_thread/src/main/java/io/github/JiangHu/jframe/thread/ThreadAPI.java) | 异步任务模块 |
-| [`getAiAPI()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:175) | [`AiAPI`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/AiAPI.java) | AI 模块 |
-| [`getDataSaver()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:191) | [`DataSaver`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) | 数据持久化（业务插件应再调 `forPlugin(this)` 隔离目录） |
+| `getEventAPI()` | `EventAPI` | 事件 |
+| `getCommandAPI()` | `CommandAPI` | 命令 |
+| `getViewAPI()` | `ViewAPI` | 表单 |
+| `getThreadAPI()` / `getTaskAPI()` / `getThreadFlow()` / `getReleaseAPI()` | — | 异步 |
+| `getInventoryAPI()` | `InventoryAPI` | 箱子界面 |
+| `getDataSaver()` | `DataSaver` | 数据持久化（业务插件应再调 `forPlugin(this)` 隔离目录） |
+| `getAiAPI()` | `AiAPI` | 实体 AI |
+| `getScoreboardAPI()` | `ScoreboardAPI` | 计分板 |
+| `getTitleAPI()` | `TitleAPI` | 标题 |
+| `getEcsAPI()` / `getBtAPI()` | `EcsAPI` / `BtAPI` | 游戏引擎 |
+| `getFloatingTextAPI()` | `FloatingTextAPI` | 浮空字 |
+| `getLoggerAPI()` | `LoggerAPI` | 统一日志（`forPlugin(this)` 取静默日志器） |
 
 ---
 
-## 🧩 各模块速览
+## 📝 统一日志（logger 模块）
 
-### jframe_core · 核心基础
-
-- [`PluginAware`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/module/PluginAware.java)：模块插件绑定接口。实现该接口的 Spring Bean 会在框架启动时由 [`JFrameMain`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 自动调用 [`bindPlugin()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:110) 注入插件实例——这样需要 `Plugin` 才能注册监听 / 调度任务的 Bean（如 [`EventEngine`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/EventEngine.java)）无需手动赋值。
-- **响应式纠缠值**：[`EntangledValue`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledValue.java) 灵感取自量子纠缠，多个值「纠缠」后任一处更新都会通知其余；[`EntangledChannel`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledChannel.java) 是协调中枢，支持成员角色（SOURCE/SINK/BOTH/MUTE）与通道级监听。适合「一处变化、多处感知」。
-- **功能 Map**：[`LruCacheMap`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/map/LruCacheMap.java)（线程安全 LRU 缓存）、[`PlayerDataMap`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/map/PlayerDataMap.java)（以玩家为键、退出自动清理）。
-
-> 📖 详细文档见 [`core/data/README.md`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/README.md)。
-
-### jframe_main · 框架入口
-
-- [`JFrameMain`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java)：框架主类，继承 `PluginBase`，作为**前置插件**部署。构造时通过 [`MainSpringConfig`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/config/MainSpringConfig.java) 创建 `AnnotationConfigApplicationContext`，一次性 `@Import` 全部模块配置；[`onEnable()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:232) 时绑定插件并把各 API 注册到 `ServiceManager`。
-- **类加载器修正**：创建容器期间临时切换线程上下文类加载器为插件类加载器，解决 Nukkit 插件隔离导致 Spring 找不到 `classpath:` 资源的经典问题。
-- [`ConfigEnum`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/utils/ConfigEnum.java)：模块枚举（`CORE` / `THREAD` / `FORM` / `EVENT` / `COMMAND` / `INVENTORY` / `AI`），映射各模块的配置类。
-
-### jframe_event · 事件系统
-
-基于「**身份标识的对象处理器**」模型，通过注解声明处理器：
-
-| 注解 | 作用 |
-|------|------|
-| [`@KeyExtractor`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/KeyExtractor.java) | 标记 static 方法为身份提取器（从事件提取身份标识） |
-| [`@EventHandler`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/EventHandler.java) | 标记方法为处理器，声明优先级与独占 |
-| [`@EventRoute`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/EventRoute.java) | 声明处理什么事件、什么条件下处理（SpEL `condition` 或 `filter`） |
-| [`@InstanceProvider`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/InstanceProvider.java) | 标记 static 方法为实例工厂（自定义创建/查找逻辑） |
-| [`@Wrapper`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/annotation/Wrapper.java) | 标记事件包装器类（包扫描入口） |
-
-每个玩家/方块/实体拥有独立实例，只收到属于自己的事件；高优先级处理器可**独占**事件，阻止低优先级执行。[`EventEngine`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/EventEngine.java) 以固定 `LOWEST` 优先级向 Nukkit 注册，确保所有事件只触发一次分发。
-
-> 📖 详细文档见 [`event/README.md`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/README.md)，维护者文档见 [`DEVELOPER.md`](jframe_event/src/main/java/io/github/JiangHu/jframe/event/DEVELOPER.md)。
-
-### jframe_command · 命令系统
-
-把 Spring MVC 的 `@Controller` / `@RequestMapping` / `@PathVariable` 体验搬到 Minecraft 命令处理，通过 **6 个注解**声明命令处理器：
-
-| 注解 | 作用 |
-|------|------|
-| [`@CommandController`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/annotation/CommandController.java) | 声明命令控制器，指定**根命令** |
-| [`@CommandMapping`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/annotation/CommandMapping.java) | 声明命令处理方法，指定**子路径**与权限 |
-| [`@PathVariable`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/annotation/PathVariable.java) | 绑定**路径变量**（`{name}` / `{*msg}` 贪婪） |
-| [`@CommandParam`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/annotation/CommandParam.java) | 绑定**命名参数**（`--key value` / `--key=value`） |
-| [`@Sender`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/annotation/Sender.java) | 注入**命令发送者**（`Player` 类型强制仅玩家） |
-| [`@RawArgs`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/annotation/RawArgs.java) | 注入**原始参数数组** |
-
-一个根命令下可挂载任意子命令，框架自动完成路径匹配、特异性排序（静态段多的优先）、参数类型转换与 Nukkit 注册。
+所有依赖插件的日志不再打进 Nukkit 控制台（MCSM 面板），而是写入统一日志库，按需用 **手动指令** 开启 Web 端口查看，不用时零资源占用：
 
 ```java
-@CommandController("guild")   // 根命令：/guild
-public class GuildController {
+public class MyPlugin extends PluginBase {
+    @Override
+    public void onEnable() {
+        JFrameMain jframe = (JFrameMain) getServer().getPluginManager().getPlugin("JFrame");
+        JLogger log = jframe.getLoggerAPI().forPlugin(this);
 
-    // /guild create 我的公会  →  name = "我的公会"
-    @CommandMapping("create {name}")
-    public void create(@Sender CommandSender sender,
-                       @PathVariable("name") String name) {
-        sender.sendMessage("§a已创建公会: " + name);
+        log.info("玩家进入经济系统");                       // 默认静默：不进 MCSM，仅入统一日志库
+        log.error("扣款失败", e);                           // 异常堆栈随条目保存，Web 端可折叠查看
+        log.setConsoleMirror(true);                         // 可选：镜像回控制台
     }
 }
 ```
 
-> 📖 详细文档见 [`command/README.md`](jframe_command/src/main/java/io/github/JiangHu/jframe/command/README.md)。
+Web 展示端口由 `/jlog` 手动启停（op 权限；首次执行即懒加载 logger 模块）：
 
-### jframe_form · 表单界面
+| 命令 | 行为 |
+|------|------|
+| `/jlog start` | 探测 config 端口（默认 18080）：空闲则本机监听；被本机其它 JFrame logger 占用则**自动挂靠**（不重复开端） |
+| `/jlog start <端口>` | 指定端口启动（占用/冲突回报原因） |
+| `/jlog start auto` | 先探测 config 端口；否则由 OS 原子分配未占用端口 |
+| `/jlog stop` / `/jlog status` | 停止释放 / 查看角色与状态 |
 
-- [`FormView`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/FormView.java)：界面抽象基类。子类构建表单、处理点击；通过栈式导航支持「进入子菜单 / 返回上一级 / 同层替换」。
-- [`ViewManager`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/ViewManager.java)：为单个玩家维护视图栈，栈顶即当前界面，并系统性修复了 Nukkit 表单的多个已知 Bug（回调异常卡死、发送异常吞掉、formId=-1 静默失败、网络线程并发等）。
-- [`ViewAPI`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/ViewAPI.java)：全局入口，为玩家打开界面（自动创建管理器）。
+浏览器访问：**根路由 `/` 汇总全部子服日志**（按时间交错、子服着色），**`/s/<server-id>` 分面板单独审验**；支持来源/级别/关键字筛选与 SSE 实时推送。
 
-> 📖 详细文档见 [`form/README.md`](jframe_form/src/main/java/io/github/JiangHu/jframe/form/README.md)。
+**同 IP 多面板**（一台机器多个 Nukkit 实例）：各实例 `/jlog start` 同端口时自动形成 host/agent——先到者监听，后来者挂靠推送，host 死亡后挂靠实例自动接管。子服标识默认 `server-<本服端口>`，可用 `config.yml` 的 `logger.web.server-id` 覆盖；可选 `persist: true` 按天/按插件落盘（默认关）、`token` 简单校验。
 
-### jframe_inventory · 箱子界面
+---
 
-- **声明式组件**：[`Button`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/component/Button.java) / [`StorageBox`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/component/StorageBox.java) / [`Filler`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/component/Filler.java) / [`Panel`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/component/Panel.java) 等，配合布局（Border / Grid / Manual）自动渲染。
-- [`InventoryView`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/view/InventoryView.java)：箱子视图基类，支持 SlotType 交易控制（BUTTON / DISPLAY / LOCKED / STORAGE）与假方块延迟打开。
-- [`InventoryAPI`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/InventoryAPI.java)：全局入口，[`openView()`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/InventoryAPI.java) 为玩家打开界面。
-- **物品编解码**：[`InventoryCodec`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/codec/InventoryCodec.java) / [`ItemCodec`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/codec/ItemCodec.java) 将物品栏与物品在 NBT / JSON 间互转，便于持久化。
+## 🧩 业务插件自建模块容器
 
-> 📖 详细文档见 [`inventory/ui/README.md`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/README.md) 与 [`codec/README.md`](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/codec/README.md)。
-
-### jframe_data · 数据持久化
-
-通过 [`@SaveField`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/annotation/SaveField.java) 注解标记需保存的字段，[`DataSaver`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 将对象序列化为 JSON 文件或反向加载：
+`ModuleManager` 不是 JFrame 专属单例——任何插件都可以 `new ModuleManager(this)` 得到一份**独立注册表**（与 JFrame 及其他插件的容器互不相通），享受与内置模块同等的懒加载、`PluginAware` 绑定、以宿主名义注册 ServiceManager、按序关闭机制：
 
 ```java
-public class PlayerData {
-    @SaveField(value = "player_name", required = true)
-    private String name;
-    @SaveField
-    private int level;
-}
+public class MyPlugin extends PluginBase {
 
-// 保存 → rootDir/players/steve.json
-saver.save(data, "players/steve");
-// 加载
-PlayerData loaded = saver.load(PlayerData.class, "players/steve");
-```
+    private ModuleManager container;
 
-支持别名、必需校验、容器与嵌套对象递归、字段级自定义适配器（[`SaveFieldAdapter`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/adapter/SaveFieldAdapter.java)）、子路径导航（`sub` / `parent` / `root`）、跨插件隔离（`forPlugin`）、加载或新建（`loadOrSave`）。
+    @Override
+    public void onEnable() {
+        container = new ModuleManager(this);   // 本插件自己的容器
 
-> 📖 详细文档见 [`data/README.md`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/README.md)。
+        // 形式 1：无工厂 —— 首次 get 时无参 new（私有 Bean）
+        container.register(ConfigService.class);
 
-### jframe_thread · 异步任务
+        // 形式 1b：单类型工厂函数
+        container.registerFactory(DbService.class, () -> new DbService(loadConfig()));
 
-- [`ThreadAPI`](jframe_thread/src/main/java/io/github/JiangHu/jframe/thread/ThreadAPI.java)：基于「命名线程池」的异步任务管理。每个队列内部为单线程执行器，保证同队列任务串行执行；工作线程命名为 `jframe-thread-{name}-{n}` 且为守护线程，便于调试、不阻塞 JVM 退出。支持按名创建 / 移除队列、全局异常处理器。
+        // 形式 2：工厂类 —— 一次产出多个对象，引用在工厂内解决
+        container.register("economy", Set.of(Economy.class, Bank.class), ctx -> {
+            Economy eco = new Economy();
+            ctx.bind(eco);                                    // PluginAware 内部 Bean
+            ctx.register(Bank.class, new Bank(eco));          // 公开服务
+            ctx.register(Economy.class, eco);
+        });
 
-### jframe_ai · 实体 AI
+        // 注解 + 包扫描（@JBean 产品类 / @JFactoryClass 工厂类）
+        container.forPlugin(this).scan("com.example.myplugin.beans");
 
-为 Nukkit MOT 服务端上的实体提供开箱即用的 AI 能力，自行实现面向方块世界的寻路与行为层（不依赖内置实体 AI），可驱动任意 `Entity`。对外是一个**七工厂门面**（[`AiAPI`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/AiAPI.java)），全部能力链式配置：
+        // 懒加载取用：Bank 持有的 Economy 与 get(Economy.class) 是同一单例
+        Bank bank = container.get(Bank.class);
+    }
 
-- **寻路（算法区）**：A\*（[`AStarPathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/astar/AStarPathFinder.java)，全局最优）与贪心（[`GreedyPathFinder`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/greedy/GreedyPathFinder.java)，低开销局部步进）双策略插槽（[`PathfindingStrategy`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/PathfindingStrategy.java)），支持外接评分器（[`StepCostFunction`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/pathfinding/astar/StepCostFunction.java)）。
-- **行为（七工厂）**：`path` / `walk` → [`NavigationExecutor`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/executor/NavigationExecutor.java)（两段式 `compute()` / `start()`，`continuous()` 走完自动续算）；`chase` / `wander` / `loop` → [`LoopBehavior`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/behavior/LoopBehavior.java)（周期「计算 → 执行 → 判断」循环，计算载体可换线程池）；`attack` → [`AttackExecutor`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/executor/AttackExecutor.java)；`see` → [`SeeQuery`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/vision/SeeQuery.java)。
-- **目标引用**：[`Target`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/targeting/Target.java) 活目标接口（静态点 / 实体 / 战术位置），每轮解析最新位置，目标失效自动结束行为。
-- **调度**：[`NavigatorManager`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/navigation/NavigatorManager.java) 多实体导航调度，同实体新导航自动替换旧的。
-- **战术**：找掩体 / 远离 / 包抄 / 寻找高地 / 占据视野点 / 模糊搜索，以及团队协同（钳形包抄 / 环形包围 / 集结阵型）。
-- **战斗**：近战攻击 / 射箭 / 投掷抛射物 / 使用物品。
-- **感知**：[`VisionSensor`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/core/vision/VisionSensor.java) 综合距离 + FOV 视野角度 + 视线遮挡判断。
-
-```java
-AiAPI ai = jframeMain.getAiAPI();
-
-ai.walk(zombie).to(player).speed(0.3).start();        // 单次导航
-ai.chase(zombie, player).start();                      // 追逐（目标丢失自动停）
-ai.wander(zombie, 12).start();                         // 半径内游荡
-ai.attack(skeleton).arrow(player, 1.5, 0.3).fire();    // 射箭（主线程）
-if (ai.see(zombie).range(24).fov(120).canSee(player)) {// 视野感知（任意线程）
-    ai.chase(zombie, player).start();
+    @Override
+    public void onDisable() {
+        container.shutdown();   // 按模块 shutdownOrder 升序清理
+    }
 }
 ```
 
-> 📖 详细文档见 [`ai/README.md`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/README.md)，维护者文档见 [`DEVELOPER.md`](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/DEVELOPER.md)。
+注解声明层两种形态：
 
-### jframe_example · 示例插件
+```java
+// 形态 A：产品类 + 可选 @JFactory 工厂方法
+@JBean
+public class Sword {
+    @JFactory
+    public static Sword create() { return new Sword(loadConfig()); }
+}
 
-一个完整的 Nukkit 插件，演示「依赖前置 JFrame」的用法，覆盖事件（对象级路由）、命令（`/ai` AI 测试）、表单（`/jframe` 菜单）、箱子界面（`/shop` / `/invtest`）、线程（异步任务）等模块的协同使用。
+// 形态 B：工厂类 + 多产品方法（B 持有 A 经 ctx.get 显式解决，同一单例）
+@JFactoryClass
+public class EconomyFactory {
+    @JBean public Economy economy() { return new Economy(); }
+    @JBean public Bank bank(ModuleContext ctx) { return new Bank(ctx.get(Economy.class)); }
+}
+```
 
-> 📖 详细说明见 [`ExamplePlugin`](jframe_example/src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java) 源码注释。
+语义约定：直接注册与注解 Bean 默认**私有**（不进 ServiceManager）；工厂类 `ctx.register` 的产物为**公开服务**；`@JBean(service = true)` 可显式公开。所有歧义（多个 `@JFactory`、`@JBean` 方法 void/参数不合法、类型重复注册、循环依赖等）在注册期 fail-fast 抛出。
 
 ---
 
 ## 🛠️ 构建与部署
-
-### 构建前置插件与示例
 
 ```bash
 # 1. 在根目录安装全部模块到本地仓库
@@ -351,62 +297,22 @@ mvn clean install -DskipTests
 cd jframe_main && mvn clean package
 # 产物：jframe_main/target/jframe_main.jar
 
-# 3. 打包示例插件（含 shade 打 fat jar）
+# 3. 打包示例插件
 cd ../jframe_example && mvn clean package
 # 产物：jframe_example/target/jframe_example.jar
 ```
 
-### 部署
-
-把 `jframe_main.jar` 与业务插件 jar 放入 Nukkit 服务端的 `plugins/` 目录（**前置插件必须先存在**），重启服务器即可。示例插件提供 `/jframe`（菜单）、`/shop`（商店箱子）、`/invtest`（箱子全特性测试）、`/ai`（AI 测试）、`/sword`（闪电剑）等命令。
-
----
-
-## 📂 目录结构
-
-```
-JFrame/
-├── pom.xml                          # 父 POM（聚合 11 个模块）
-├── README.md                        # 本文件
-├── CODE_REVIEW.md                   # 全模块代码审查报告
-├── plans/                           # 设计 / 重构方案文档
-├── jframe_core/                     # 核心基础（PluginAware、纠缠值、功能 Map）
-├── jframe_main/                     # 框架入口（前置插件）
-├── jframe_event/                    # 事件系统
-├── jframe_command/                  # 命令系统
-├── jframe_form/                     # 表单 / GUI
-├── jframe_inventory/                # 箱子界面 + 物品编解码
-├── jframe_data/                     # 数据持久化
-├── jframe_thread/                   # 异步任务
-├── jframe_ai/                       # 实体 AI
-├── jframe_example/                  # 示例插件
-└── jframe_title/                    # 标题模块（规划中）
-```
-
----
-
-## 📚 文档导航
-
-| 文档 | 内容 |
-|------|------|
-| [事件系统 README](jframe_event/src/main/java/io/github/JiangHu/jframe/event/README.md) | 事件模块完整用法、注解详解、用法示例 |
-| [事件系统 DEVELOPER](jframe_event/src/main/java/io/github/JiangHu/jframe/event/DEVELOPER.md) | 事件模块内部实现与维护者文档 |
-| [命令系统 README](jframe_command/src/main/java/io/github/JiangHu/jframe/command/README.md) | 命令模块 6 注解用法、路径匹配、参数绑定 |
-| [表单 README](jframe_form/src/main/java/io/github/JiangHu/jframe/form/README.md) | 表单视图栈、导航、元素 |
-| [箱子界面 README](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/ui/README.md) | 声明式组件、布局、SlotType |
-| [物品编解码 README](jframe_inventory/src/main/java/io/github/JiangHu/jframe/inventory/codec/README.md) | 物品栏 / 物品 NBT ↔ JSON 互转 |
-| [数据持久化 README](jframe_data/src/main/java/io/github/JiangHu/jframe/data/README.md) | `@SaveField` 注解、DataSaver 全 API |
-| [AI README](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/README.md) | 七工厂 API、双策略寻路、行为循环、战术 / 战斗 / 感知 |
-| [AI DEVELOPER](jframe_ai/src/main/java/io/github/JiangHu/jframe/ai/DEVELOPER.md) | AI 模块内部实现与维护者文档 |
-| [core 数据类型 README](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/README.md) | 响应式纠缠值、功能 Map |
-| [CODE_REVIEW.md](CODE_REVIEW.md) | 全模块代码审查报告（问题分级与修复记录） |
+把 `jframe_main.jar` 与业务插件 jar 放入 Nukkit 服务端的 `plugins/` 目录（**前置插件必须先存在**），重启服务器即可。示例插件提供 `/ecs`（ECS 引擎）等命令。
 
 ---
 
 ## ⚠️ 已知限制与注意事项
 
-- **Nukkit 类加载器隔离**：Spring 默认用线程上下文类加载器查找 `classpath:` 资源，而 Nukkit 主线程的上下文类加载器看不到插件 jar 内部资源。[`JFrameMain`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 创建容器时已自动处理（临时切换为插件类加载器并 try/finally 恢复）；若业务插件自行创建 Spring 上下文，需同样处理。
-- **数据写入非原子**：[`DataSaver`](jframe_data/src/main/java/io/github/JiangHu/jframe/data/DataSaver.java) 的文件写入若进程崩溃可能产生半截损坏文件，关键数据建议配合备份（详见 [CODE_REVIEW.md](CODE_REVIEW.md) 问题 #1）。
-- **跨插件数据隔离**：业务插件通过 [`getDataSaver()`](jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java:191) 获取的保存器默认指向 JFrame 目录，应再调用 `forPlugin(this)` 得到以自身数据目录为根的独立保存器，避免污染 JFrame 目录。
-- **跨线程操作主线程 API**：[`ThreadAPI`](jframe_thread/src/main/java/io/github/JiangHu/jframe/thread/ThreadAPI.java) 的任务运行在异步线程，若需修改方块、传送等主线程操作，应额外调度回主线程。
-- **`jframe_title` 尚未实现**：该模块目前为空占位，处于规划阶段。
+- **模块懒加载**：未用到的模块首次调用对应 `getXxxAPI()` 前不初始化，`ServiceManager.getProvider(XxxAPI.class)` 对未加载模块返回 `null`。需要启动即可用的模块请写入 JFrame `config.yml` 的 `modules:` 预加载列表。
+- **logger Web 端口手动启停**：`/jlog start` 开启、`/jlog stop` 关闭；模块加载与服务器启动均**不**自动开启端口（不用时无监听、无线程）。agent 挂靠/接管仅限同机回环，跨机器聚合需自行反代。
+- **主线程约定**：模块 API 与容器 `get()` 约定在 Nukkit 主线程调用（内部有并发防御，但跨线程懒加载初始化监听器等副作用应由调用方保证时序）。
+- **数据写入非原子**：`DataSaver` 的文件写入若进程崩溃可能产生半截损坏文件，关键数据建议配合备份（详见 [CODE_REVIEW.md](CODE_REVIEW.md)）。
+- **跨插件数据隔离**：业务插件通过 `getDataSaver()` 获取的保存器默认指向 JFrame 目录，应再调用 `forPlugin(this)` 得到以自身数据目录为根的独立保存器。
+- **跨线程操作主线程 API**：`ThreadAPI` 的任务运行在异步线程，若需修改方块、传送等主线程操作，应额外调度回主线程。
+- **SpEL 保留依赖**：ECS `when` 条件与计分板/标题模板渲染仍使用 `spring-expression`（纯表达式求值库，无容器语义）；事件 `@EventRoute.condition` SpEL 参数已移除，条件过滤统一走 `filter` 方法。
+- **`jframe_nbt`**：被动 NBT 编解码库，未注册进模块体系（维持历史行为）。

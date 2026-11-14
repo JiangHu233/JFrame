@@ -2,6 +2,8 @@ package io.github.JiangHu.jframe.inventory.ui.component;
 
 import cn.nukkit.Player;
 import cn.nukkit.item.Item;
+import io.github.JiangHu.jframe.inventory.ui.model.SlotType;
+import io.github.JiangHu.jframe.inventory.ui.model.event.BeforeStoreEvent;
 import io.github.JiangHu.jframe.inventory.ui.model.event.ClickEvent;
 import io.github.JiangHu.jframe.inventory.ui.model.event.StoreEvent;
 import io.github.JiangHu.jframe.inventory.ui.view.InventoryView;
@@ -33,7 +35,8 @@ import java.util.List;
  * <ul>
  *   <li>{@link #onRender} —— 渲染阶段，用 {@code ctx.slot()} 填充格子（核心方法）</li>
  *   <li>{@link #onClick} —— 点击 BUTTON 格子时触发</li>
- *   <li>{@link #onStore} —— STORAGE 格子物品变化时触发</li>
+ *   <li>{@link #onStore} —— STORAGE 格子物品变化时触发（交易提交后通知）</li>
+ *   <li>{@link #onBeforeStore} —— STORAGE 格子存取守卫钩子（交易提交前，可否决）</li>
  *   <li>{@link #onMount} —— 挂载到箱子时初始化</li>
  *   <li>{@link #onUnmount} —— 卸载时清理</li>
  * </ul>
@@ -100,6 +103,27 @@ public abstract class InventoryComponent {
     }
 
     /**
+     * STORAGE 格子存取前置事件钩子（存取守卫，交易提交前触发）。
+     * <p>
+     * 仅对本组件渲染为 {@link SlotType#STORAGE} 的格子触发。默认空实现（放行），
+     * 子类重写本方法即可实现存取守卫策略：
+     * <ul>
+     *   <li>调用 {@link BeforeStoreEvent#cancel()} / {@link BeforeStoreEvent#cancel(String)}
+     *       否决本次存取 —— 整笔交易取消，客户端物品弹回，且不触发 {@code onStore}</li>
+     *   <li>配合 {@link BeforeStoreEvent#isEntering()} / {@link BeforeStoreEvent#isLeaving()}
+     *       区分放入 / 取出 / 交换方向</li>
+     * </ul>
+     * <p>
+     * 注意：守卫在主线程交易事件内执行，实现必须轻量，禁止耗时操作。
+     * 派生类（如 {@code StorageBox}）若已内置守卫便捷 API（filter / withdrawFilter /
+     * beforeStore），重写本方法时须调用 {@code super.onBeforeStore(event)} 以保留其行为。
+     *
+     * @param event 存取前置事件（可取消）
+     */
+    protected void onBeforeStore(BeforeStoreEvent event) {
+    }
+
+    /**
      * 挂载到箱子时调用（初始化）。
      */
     protected void onMount() {
@@ -159,6 +183,18 @@ public abstract class InventoryComponent {
      */
     public final void dispatchStore(int slot, Player player, Item sourceItem, Item targetItem) {
         onStore(new StoreEvent(player, slot, sourceItem, targetItem));
+    }
+
+    /**
+     * 分发存取前置事件到当前组件（框架内部调用）。
+     * <p>
+     * 由 {@code InventoryManager} 在交易提交前经 {@code InventoryView.handleBeforeStore}
+     * 调用，转发到 {@link #onBeforeStore} 钩子。
+     *
+     * @param event 存取前置事件（可取消）
+     */
+    public final void dispatchBeforeStore(BeforeStoreEvent event) {
+        onBeforeStore(event);
     }
 
     // -------------------- 子组件管理 --------------------

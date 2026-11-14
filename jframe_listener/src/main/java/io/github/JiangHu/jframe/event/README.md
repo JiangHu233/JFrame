@@ -1,6 +1,6 @@
 # 事件系统 (Event System)
 
-> 基于 Nukkit + Spring 的高性能、面向对象的事件路由框架。
+> 基于 Nukkit 的高性能、面向对象的事件路由框架。
 >
 > 通过 **4 个注解** 声明事件处理器，框架自动完成类型过滤、身份提取、实例创建和优先级分发。
 >
@@ -52,7 +52,7 @@
 | **监听粒度** | 类级单例（一个 Listener 处理所有同类事件） | 对象级（每个玩家/实体/物品独立实例） |
 | **状态管理** | 手动维护 `Map<Player, State>`，需自行加锁 | 实例字段即状态，框架按身份缓存 |
 | **身份路由** | 每次事件都需 `if (player == ...)` 判断 | `@KeyExtractor` 自动提取身份并路由 |
-| **条件过滤** | 方法体内 `if` 判断，逻辑与处理耦合 | `@EventRoute(condition/filter)` 声明式过滤 |
+| **条件过滤** | 方法体内 `if` 判断，逻辑与处理耦合 | `@EventRoute(filter)` 声明式过滤 |
 | **优先级独占** | 仅靠 `EventPriority`，无法阻止低优先级 | `exclusive = true` 跨优先级独占 |
 | **实例生命周期** | 手动 `put`/`remove`，易内存泄漏 | `evict()` 清理，或 `@InstanceProvider` 自定义 |
 | **热路径性能** | 反射调用 + 每次创建临时集合 | `MethodHandle` + `ThreadLocal` 零分配 |
@@ -91,14 +91,14 @@
 
 ### 前置：初始化框架
 
-在插件主类 `onEnable()` 中设置 Plugin 实例：
+在插件主类 `onEnable()` 中获取前置 JFrame 的 API（首次调用触发事件模块懒加载，`bindPlugin` 已由容器自动完成）：
 
 ```java
 @Override
 public void onEnable() {
-    ApplicationContext ctx = ...;
-    EventAPI eventAPI = ctx.getBean(EventAPI.class);
-    eventAPI.bindPlugin(this);  // 必须！
+    JFrameMain jframe = (JFrameMain) getServer().getPluginManager().getPlugin("JFrame");
+    EventAPI eventAPI = jframe.getEventAPI();
+    eventAPI.forPlugin(this).scan("com.example.myplugin.event");  // 推荐：包扫描注册
 }
 ```
 
@@ -214,39 +214,9 @@ MagicSwordWrapper.registerSword(magicSwordItem);
 
 ---
 
-### 用法三：条件过滤（SpEL 表达式）
+### 用法三：条件过滤（filter 方法引用）⭐
 
-只在满足特定条件时处理事件。
-
-```java
-public class CreativeOnlyWrapper {
-
-    @KeyExtractor
-    public static Player extract(PlayerEvent event) {
-        return event.getPlayer();
-    }
-
-    // SpEL 条件：只在创造模式时处理
-    @EventHandler
-    @EventRoute(condition = "#event.player.gamemode == 1")
-    public void onCreative(PlayerEvent event) {
-        event.getPlayer().sendMessage("你是创造模式！");
-    }
-}
-```
-
-**SpEL 表达式说明：**
-- `#event` — 事件对象本身
-- `#target` — 处理器对象（即 `this`）
-- 可调用任何 getter：`#event.player`、`#event.message`
-- 支持比较运算：`==`、`!=`、`>`、`<`、`and`、`or`
-- 表达式在**注册时解析一次**并缓存，运行时反复求值，开销极小
-
----
-
-### 用法四：复杂条件过滤（filter 方法引用）⭐
-
-条件逻辑太复杂，SpEL 写不下时，用 `filter` 引用一个 Java 方法。
+只在满足特定条件时处理事件——用 `filter` 引用一个 Java 方法。
 
 ```java
 public class ChatFilterWrapper {
@@ -273,20 +243,19 @@ public class ChatFilterWrapper {
 }
 ```
 
-**`condition` vs `filter` 对比：**
-
-| | `condition`（SpEL） | `filter`（方法引用） |
-|---|---|---|
-| 适合 | 简单属性比较 | 复杂多条件逻辑 |
-| IDE 补全 | ❌ | ✅ |
-| 编译检查 | ❌ 运行时发现错误 | ✅ 编译时发现 |
-| 性能 | SpEL 求值（略慢） | 直接方法调用（最快） |
-
-> **⚠️ `condition` 和 `filter` 不能同时使用。**
+> **⚠️ 迁移说明（breaking change）**：旧版本的 `@EventRoute(condition = "...")` SpEL 条件参数已移除。
+> 原有 `condition` 用法请改写为等价的 `filter` 方法，例如
+> `condition = "#event.message.contains('spam')"` → `filter = "containsSpam"`：
+>
+> ```java
+> private boolean containsSpam(PlayerChatEvent event) {
+>     return event.getMessage().contains("spam");
+> }
+> ```
 
 ---
 
-### 用法五：优先级与独占 ⭐ 核心特性
+### 用法四：优先级与独占 ⭐ 核心特性
 
 高优先级处理器可以**独占**事件，阻止低优先级处理器执行。
 
@@ -322,7 +291,7 @@ HIGHEST → HIGH → NORMAL → LOW → LOWEST → MONITOR
 
 ---
 
-### 用法六：多槽位身份提取（OR 语义）
+### 用法五：多槽位身份提取（OR 语义）
 
 一个事件可能包含多个同类型对象（如攻击者和受害者都是 Entity）。
 
@@ -352,7 +321,7 @@ public class CombatantWrapper {
 
 ---
 
-### 用法七：单例处理器（SINGLETON 模式）⭐
+### 用法六：单例处理器（SINGLETON 模式）⭐
 
 当处理器需要"所有事件路由到同一个实例"（类似经典 Listener 的单例监听），但 handler 是**实例方法**（需要访问实例字段）时，**不声明 `@KeyExtractor`** 即可。框架自动判定为 SINGLETON 模式，创建一个共享单例。
 
@@ -382,7 +351,7 @@ eventAPI.register(ChatLogger.class);
 
 ---
 
-### 用法八：静态全局处理器（STATIC 模式）⭐⭐
+### 用法七：静态全局处理器（STATIC 模式）⭐⭐
 
 当处理器是**纯无状态的 static 方法**（不需要实例字段），用于全局兜底监听（如日志、统计、监控）时，将所有 handler 声明为 `static` 且不声明 `@KeyExtractor`。框架自动判定为 STATIC 模式。
 
@@ -443,8 +412,7 @@ eventAPI.register(EventMonitor.class);
 | 属性 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `value` | `Class<? extends Event>` | 自动推断 | 事件类型，不填时从方法参数推断 |
-| `condition` | `String` (SpEL) | `""` | SpEL 过滤条件，满足才执行 |
-| `filter` | `String` | `""` | 引用类中的筛选方法名（与 condition 互斥） |
+| `filter` | `String` | `""` | 引用类中的筛选方法名，返回 `true` 才执行 |
 
 ---
 

@@ -1,229 +1,127 @@
-# JFrame 示例插件（jframe_example）
+# JFrame ECS 示例插件（jframe_example）
 
-> 一个完整可运行的 Nukkit 插件样例，演示如何**作为业务插件依赖前置 JFrame**，复用其 Spring 容器，调用事件 / 表单 / 线程 / 命令 / 箱子界面 / AI 六大模块的 API。
+> 一个完整可运行的 Nukkit 插件样例，用于**实机测试 jframe_ecs 模块**（实体-组件-系统引擎）：
+> 四组演示场景 + `/ecs` 命令控制台，把引擎全部特性变成游戏内"点一下就见效"的现象。
 
 ---
 
 ## 📑 目录
 
 - [一、它演示什么](#一它演示什么)
-- [二、与传统写法的对比](#二与传统写法的对比)
-- [三、目录结构](#三目录结构)
-- [四、构建与部署](#四构建与部署)
-- [五、接入流程（核心）](#五接入流程核心)
-- [六、示例清单](#六示例清单)
-- [七、游戏内命令](#七游戏内命令)
-- [八、游戏内验证步骤](#八游戏内验证步骤)
+- [二、目录结构](#二目录结构)
+- [三、构建与部署](#三构建与部署)
+- [四、游戏内命令](#四游戏内命令)
+- [五、实机验收清单](#五实机验收清单)
+- [六、常见现象与排查](#六常见现象与排查)
 
 ---
 
 ## 一、它演示什么
 
-本插件展示了一个真实业务插件的**标准接入姿势**：
+四组场景覆盖 jframe_ecs 引擎的全部特性，全部"零门槛触发"（右键箱子、打一下僵尸、敲一条命令），
+反馈全部走聊天栏消息 + 控制台日志：
 
-1. 在 [`plugin.yml`](src/main/resources/plugin.yml) 声明 `depend: [JFrame]`，依赖前置插件。
-2. [`ExamplePlugin.onEnable()`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:72) 获取 [`JFrameMain`](../jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 单例，直接复用其已创建好的容器中的各模块 API。
-3. 用**自身类加载器**扫描 jar 内的 `@Wrapper`（事件）、`@CommandController`（命令），注册到框架共享容器。
-4. 通过命令打开表单 / 箱子界面、测试 AI 功能。
+| 场景 | 触发方式 | 覆盖的引擎特性 |
+|------|---------|---------------|
+| **A 魔法箱** | 右键 / 打开一个箱子 | 内置 `blockentity-class` 选择器（存量+后放全识别）、方法内首行守卫（右键回话/左键不回话）、事件桥内置 `block-interact` 解析器、自定义解析器 `chest-holder`（库存持有者这种"歪门邪道对象"） |
+| **B 精英僵尸** | 刷一只僵尸、打它一下 | 内置 `entity-class` 选择器、系统 query（名牌显血）、方法内首行守卫（重击阈值直接读 `this` 字段） |
+| **C 守卫区** | 在出生点 64 格内右键箱子 | 自定义参数化选择器 `near-spawn`（distance/tag 注入）、**多定义并集**（同一事件两条消息同时出现） |
+| **D 幽灵波次** | `/ecs wave`，杀光幽灵 | 自定义生成器 `ghost-pack`（参数化生成）、**纯虚拟 gameobject**（波次管理器）、系统消费引擎 diff 卸载语义做波次结算 |
+| **E 进服播报** | 任意玩家进服 | **系统事件**（`@OnEcsEvent` 上系统类，全局处理器无需解析器）、`EcsEngineAware` 处理器内全局 query |
 
-> 本插件**不创建自己的 Spring 容器**，也不重复打包框架类（`pom.xml` 中 `jframe_main` 为 `provided` 作用域）。容器、生命周期、类加载器问题全部由前置插件 [`JFrameMain`](../jframe_main/src/main/java/io/github/JiangHu/jframe/main/JFrameMain.java) 统一处理。
-
----
-
-## 二、与传统写法的对比
-
-| 能力 | 传统 Nukkit 写法 | 本示例演示的 JFrame 写法 |
-|------|------|------|
-| **事件监听** | 实现 `Listener` + `@EventHandler`，每个事件一个方法，手动管理监听器注册/注销 | [`@Wrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/PlayerGameWrapper.java) 类 + `@EventRoute`，支持对象级路由、SpEL 条件、优先级独占 |
-| **命令处理** | 覆写 `onCommand`，手写 `if/else` 分发子命令、手动 `parseInt` 转换 | [`@CommandController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) + `@CommandMapping`，路径变量 / 命名参数 / 类型转换全自动 |
-| **表单界面** | 手写 `FormWindow`、手动管理打开/回调、导航要自己维护栈 | 继承 `FormView`，声明式构建 + 内置栈式导航（[`addStack`](src/main/java/io/github/JiangHu/jframe/example/view/NavigationDemoView.java) / `replaceThis`） |
-| **箱子界面** | 手动操作虚拟箱子坐标、处理点击事件、布局全靠算坐标 | 声明式组件（Button/StorageBox/Filler）+ 自动布局（[`InventoryTestView`](src/main/java/io/github/JiangHu/jframe/example/inventory/InventoryTestView.java)） |
-| **异步任务** | `scheduleAsyncTask` 或裸 `new Thread`，无队列概念 | [`ThreadAPI`](../jframe_async/src/main/java/io/github/JiangHu/jframe/async/thread/ThreadAPI.java) 命名队列，串行保证 |
-| **AI 行为** | 从零实现寻路 / 战术逻辑 | [`AiAPI`](src/main/java/io/github/JiangHu/jframe/example/command/AiController.java) 一行调用寻路、导航、战术 |
+另由 `/ecs start` 演示**存量回溯**（启动瞬间统计已有箱子/僵尸挂载数）与 `/ecs stop` 演示
+**逆序卸载**（控制台逐条 onUnmount 日志）。
 
 ---
 
-## 三、目录结构
+## 二、目录结构
 
 ```
 jframe_example/
-├── pom.xml                          # provided 依赖 jframe_main，shade 打 fat jar
+├── pom.xml                              # provided 依赖 jframe_main（spring-expression 显式 provided 防类冲突）
 └── src/main/
-    ├── java/.../example/
-    │   ├── ExamplePlugin.java       # 主类：获取前置 JFrame、扫描注册、命令分发
-    │   ├── wrapper/                 # 事件模块示例（@Wrapper）
-    │   │   ├── PlayerGameWrapper.java     # 对象级：每玩家独立统计实例
-    │   │   ├── ChatGuardWrapper.java      # 全局单例：聊天审核（优先级+独占）
-    │   │   ├── ThunderSwordWrapper.java   # 事件触发：闪电钻石剑
-    │   │   └── Template.java              # 空模板：复制即用
-    │   ├── command/                 # 命令模块示例（@CommandController）
-    │   │   ├── KitController.java         # /kit：路径变量/命名参数/贪婪变量/权限
-    │   │   └── AiController.java          # /ai：AI 寻路与战术测试
-    │   ├── view/                    # 表单模块示例（FormView）
-    │   │   ├── FormDemoView.java          # 表单基础
-    │   │   ├── CustomFormDemoView.java    # 自定义表单
-    │   │   ├── ModalFormDemoView.java     # 模态表单
-    │   │   ├── IconDemoView.java          # 图标
-    │   │   ├── NavigationDemoView.java    # 栈式导航（含 SubView / ReplacedView）
-    │   │   ├── DataBusDemoView.java       # 数据总线
-    │   │   ├── OnDataDemoView.java        # 数据回调（含 DetailView）
-    │   │   ├── BuildStrategyDemoView.java # 构建策略
-    │   │   ├── ShopSubView.java           # 商店子视图
-    │   │   └── StatsView.java             # 统计视图
-    │   ├── inventory/               # 箱子界面示例（InventoryView）
-    │   │   ├── ShopInventoryView.java     # 商店：声明式组件
-    │   │   └── InventoryTestView.java     # 全特性测试：所有组件/布局/事件/外观
-    │   └── entity/
-    │       └── TestNpcEntity.java         # AI 测试用 NPC 实体
-    └── resources/
-        └── plugin.yml               # depend:[JFrame] + 命令/权限声明
+    ├── resources/
+    │   ├── plugin.yml                   # depend [JFrame]；根命令 /ecs 由命令模块动态注册
+    │   └── gameobjects/example.yml      # 五条 GameObject 定义（打进 jar，classpath 扫描加载）
+    └── java/.../example/
+        ├── ExamplePlugin.java           # 主类：扫描五类注解 + 加载定义（不启动，/ecs start 手动启动）
+        └── ecs/
+            ├── command/EcsTestController.java    # /ecs 命令控制台
+            ├── component/                        # 5 组件
+            │   ├── MagicChestComponent.java      #   魔法箱（首行守卫 + 双解析链路）
+            │   ├── EliteComponent.java           #   精英（首行守卫 + lastPercent 判重）
+            │   ├── GuardAuraComponent.java       #   守卫光环（并集第二组件）
+            │   ├── GhostMarkComponent.java       #   幽灵标记（倒排查询锚点）
+            │   └── WaveStateComponent.java       #   波次状态（挂纯虚拟实体）
+            ├── selector/NearSpawnSelector.java   # 自定义参数化选择器
+            ├── spawner/GhostPackSpawner.java     # 自定义生成器
+            ├── resolver/ChestHolderResolver.java # 自定义宿主解析器
+            └── system/
+                ├── EliteTagSystem.java           # 每秒名牌显血（interval 20）
+                ├── WaveSystem.java               # 每 2 秒波次结算（interval 40）
+                └── JoinEchoSystem.java           # 系统事件：进服播报（无 tick、无解析器）
 ```
 
 ---
 
-## 四、构建与部署
-
-### 1. 前置条件
-
-- JDK 24（与框架一致）
-- 已在本地 Maven 仓库安装好框架各模块：在**项目根目录**执行
-  ```bash
-  mvn clean install -DskipTests
-  ```
-
-### 2. 打包示例插件
+## 三、构建与部署
 
 ```bash
-cd jframe_example
-mvn clean package
-```
-产物：`jframe_example/target/jframe_example.jar`
-
-### 3. 部署
-
-服务器 `plugins/` 目录需**先放** `jframe_main.jar`（前置插件），**再放** `jframe_example.jar`。启动服务器后，JFrame 先加载并创建容器，本插件随后复用。
-
----
-
-## 五、接入流程（核心）
-
-[`ExamplePlugin.onEnable()`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:72) 是接入的标准模板，分五步：
-
-```java
-@Override
-public void onEnable() {
-    // ① 获取前置插件 JFrame 单例
-    Plugin jframePlugin = getServer().getPluginManager().getPlugin("JFrame");
-    JFrameMain jframeMain = (JFrameMain) jframePlugin;
-
-    // ② 复用 JFrame 容器中的各模块 API（无需自己创建容器）
-    eventAPI     = jframeMain.getEventAPI();
-    viewAPI      = jframeMain.getViewAPI();
-    threadAPI    = jframeMain.getThreadAPI();
-    commandAPI   = jframeMain.getCommandAPI();
-    inventoryAPI = jframeMain.getInventoryAPI();
-    aiAPI        = jframeMain.getAiAPI();
-
-    // ③ 扫描本插件 jar 内的 @Wrapper（必须传自身类加载器）
-    eventAPI.scan(getClass().getClassLoader(), "...example.wrapper");
-
-    // ④ 扫描 @CommandController（根命令会自动注册到 Nukkit，无需 plugin.yml）
-    commandAPI.scan(getClass().getClassLoader(), "...example.command");
-
-    // ⑤ 创建本插件专用的异步任务队列
-    threadAPI.createThreadTask("example");
-}
+mvn -pl jframe_example -am package
 ```
 
-> **关键点**：`scan` 必须传入 `getClass().getClassLoader()`（本插件的类加载器），否则扫描不到本插件 jar 内的类。框架容器由 JFrame 持有，但业务类由业务插件的类加载器加载。
+部署（顺序重要）：
+
+1. `jframe_main/target/jframe_main.jar` → 服务器 `plugins/`（框架 + ECS 引擎，先放）
+2. `jframe_example/target/jframe_example.jar` → 服务器 `plugins/`（本示例，后放）
+3. 启动服务器，控制台出现 `ECS 示例插件已启用：已注册 5 条定义但引擎未启动` 即部署成功
 
 ---
 
-## 六、示例清单
+## 四、游戏内命令
 
-### 事件模块（`wrapper/`）
-
-| 文件 | 演示能力 |
-|------|----------|
-| [`PlayerGameWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/PlayerGameWrapper.java) | 对象级路由（每玩家一实例）、`@KeyExtractor`、自定义实例工厂、SpEL 条件处理器 |
-| [`ChatGuardWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/ChatGuardWrapper.java) | 全局单例、优先级 + 独占（拦截后阻止低优先级）、filter 方法引用 |
-| [`ThunderSwordWrapper`](src/main/java/io/github/JiangHu/jframe/example/wrapper/ThunderSwordWrapper.java) | 事件触发道具（右键方块召唤闪电） |
-| [`Template`](src/main/java/io/github/JiangHu/jframe/example/wrapper/Template.java) | 空模板，复制即用 |
-
-### 命令模块（`command/`）
-
-| 文件 | 演示能力 |
-|------|----------|
-| [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) | 路径变量 `{item} {count}`、命名参数 `--amount`、布尔标记 `--on`、贪婪变量 `{*msg}`、`@Sender Player` 权限校验 |
-| [`AiController`](src/main/java/io/github/JiangHu/jframe/example/command/AiController.java) | AI 寻路、实体导航、战术行为（找掩体/包抄/高地）、战斗动作 |
-
-### 表单模块（`view/`）
-
-| 文件 | 演示能力 |
-|------|----------|
-| [`FormDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/FormDemoView.java) | 表单基础构建与按钮回调 |
-| [`CustomFormDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/CustomFormDemoView.java) | 自定义表单（输入框/下拉/滑块等） |
-| [`ModalFormDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/ModalFormDemoView.java) | 模态表单（是/否） |
-| [`IconDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/IconDemoView.java) | 按钮图标 |
-| [`NavigationDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/NavigationDemoView.java) | 栈式导航（含 `SubView` / `ReplacedView`，演示 `addStack` / `replaceThis`） |
-| [`DataBusDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/DataBusDemoView.java) | 数据总线（跨视图共享数据） |
-| [`OnDataDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/OnDataDemoView.java) | 数据回调（含 `DetailView`） |
-| [`BuildStrategyDemoView`](src/main/java/io/github/JiangHu/jframe/example/view/BuildStrategyDemoView.java) | 构建策略 |
-| [`StatsView`](src/main/java/io/github/JiangHu/jframe/example/view/StatsView.java) | 统计展示 |
-
-### 箱子界面模块（`inventory/`）
-
-| 文件 | 演示能力 |
-|------|----------|
-| [`ShopInventoryView`](src/main/java/io/github/JiangHu/jframe/example/inventory/ShopInventoryView.java) | 声明式组件（Button/StorageBox）+ 自动布局 |
-| [`InventoryTestView`](src/main/java/io/github/JiangHu/jframe/example/inventory/InventoryTestView.java) | 全特性集中测试：所有组件 / 布局 / 事件 / 外观 / 图层 / 动态更新 |
-
-### 实体（`entity/`）
-
-| 文件 | 演示能力 |
-|------|----------|
-| [`TestNpcEntity`](src/main/java/io/github/JiangHu/jframe/example/entity/TestNpcEntity.java) | AI 测试用 NPC（无怪物默认 AI，供寻路/战术测试） |
-
----
-
-## 七、游戏内命令
-
-| 命令 | 来源 | 说明 |
-|------|------|------|
-| `/jframe` | [`plugin.yml`](src/main/resources/plugin.yml) | 打开示例菜单 |
-| `/sword` | [`plugin.yml`](src/main/resources/plugin.yml) + [`onCommand`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:115) | 获得闪电钻石剑 |
-| `/shop` | [`plugin.yml`](src/main/resources/plugin.yml) + [`onCommand`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:128) | 打开声明式商店箱子 |
-| `/inv <jframe>` | [`plugin.yml`](src/main/resources/plugin.yml) + [`onCommand`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:151) | 用 jframe_inventory 打开箱子 |
-| `/invtest` | [`plugin.yml`](src/main/resources/plugin.yml) + [`onCommand`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:141) | 打开箱子全特性测试界面 |
-| `/kit ...` | [`KitController`](src/main/java/io/github/JiangHu/jframe/example/command/KitController.java) 动态注册 | 命令模块示例（无需 plugin.yml 声明） |
-| `/ai ...` | [`AiController`](src/main/java/io/github/JiangHu/jframe/example/command/AiController.java) 动态注册 | AI 模块示例（无需 plugin.yml 声明） |
-
-> `/kit`、`/ai` 由 [`CommandAPI.scan()`](src/main/java/io/github/JiangHu/jframe/example/ExamplePlugin.java:103) 扫描 `@CommandController` 后自动注册到 Nukkit，**无需在 plugin.yml 声明**；其余命令走传统 `plugin.yml` + `onCommand`。
-
----
-
-## 八、游戏内验证步骤
-
-服务器启动后，用玩家账号进服，按以下步骤验证：
-
-### 事件
-- **进服欢迎**：玩家进入收到欢迎消息；OP 额外收到管理员上线提示（验证 SpEL 条件）。
-- **移动计数**：移动累计达到阈值收到计数提示（验证对象级路由）。
-- **聊天审核**：发送违禁词被拦截且不计入聊天次数（验证优先级 + 独占）；正常消息计数 +1。
-
-### 命令（`/kit`）
-| 操作 | 预期 |
+| 命令 | 行为 |
 |------|------|
-| `/kit give 264 64` | 获得 64 个物品（路径变量 + 类型转换） |
-| `/kit give 264 abc` | 返回参数错误（转换失败） |
-| `/kit heal --amount 10` | 生命恢复至 10（命名参数） |
-| `/kit fly --on` | 启用飞行（布尔标记） |
-| `/kit broadcast 你好 世界` | 全服广播（贪婪变量） |
-| `/kit whoami`（控制台） | 提示仅玩家可用（`@Sender Player`） |
+| `/ecs` | 显示帮助 |
+| `/ecs start` | 启动引擎，**回显存量识别统计**（魔法箱/精英/守卫/幽灵/管理器各挂载几个） |
+| `/ecs stop` | 停止引擎（全部组件逆序卸载，控制台逐条可见） |
+| `/ecs status` | 运行状态 + 各组件挂载数 + 当前波次 |
+| `/ecs list` | 已加载的 5 条定义（选择器/生成器/组件明细） |
+| `/ecs spawn <定义名>` | 以自身位置现场生成（`night-ghosts` / `wave-manager`；**未 start 也可用**） |
+| `/ecs wave` | 一键波次：自动补建管理器 + 生成 2 只幽灵 |
+| `/ecs refresh` | 全实体手动重评（演示"只补挂不卸载"） |
 
-### 表单 / 箱子 / AI
-- `/jframe` 打开菜单，点击进入子界面验证栈式导航。
-- `/shop`、`/invtest` 验证声明式箱子组件与布局。
-- `/ai spawn` 生成 NPC，`/ai <寻路/战术>` 验证 AI 行为。
+---
 
-> 维护者文档请看 [DEVELOPER.md](DEVELOPER.md)。
+## 五、实机验收清单
+
+按顺序走一遍，每步都有肉眼可见的现象：
+
+1. `/ecs list` → 显示 5 条定义（all-chests / elite-zombies / guardian-chests / night-ghosts / wave-manager）；
+2. `/ecs start` → 回显"存量识别：魔法箱 N、精英僵尸 M…"（世界里已有的箱子/僵尸立即全部挂载）；
+3. **后放识别**：新放一个箱子 → 首次互动当 tick 挂载（零延迟）；未互动 ≤5 秒对账收养日志；砸掉 → 即时卸载日志；
+4. **魔法箱**：右键箱子 → 连续两条消息（触碰 + 打开，事件双连发属预期）；左键 → 无消息（方法内守卫）；
+5. **守卫区并集**：在出生点 64 格内右键箱子 → **两条**消息（magic-chest + guard-aura）；64 格外 → 仅一条（自定义选择器边界）；
+6. **精英僵尸**：刷一只僵尸 → 名牌 1 秒内出现"§c精英 §7HP 100%"且**受击后数值刷新**（变化才更新，无闪烁）；打它一下（空手/剑均可）→ 全服"精英受到重击"（方法内首行守卫）；）；
+7. **幽灵波次**：`/ecs wave` → 生成 2 只"幽灵"（循环单生成，计数精确）；每杀一只全服广播"剩余幽灵 N"；杀光 → 广播波次 +1；
+8. **系统事件**：任意玩家进服 → 全服播报"欢迎 XX！当前跟踪实体 N / 魔法箱 M / 精英 K"（无解析器事件的全局处理器）；
+9. **零延迟跟踪**：放箱后**首次互动（右键/打开）当 tick 挂载并立即回话**；未互动箱子 ≤5 秒对账收养（控制台日志）；砸箱即时卸载；
+10. **停止**：`/ecs status` 各计数实时变化；`/ecs stop` → 控制台逐条输出卸载日志。
+
+---
+
+## 六、常见现象与排查
+
+| 现象 | 说明 |
+|------|------|
+| 右键箱子一次出**两条**消息 | 预期：先 `PlayerInteractEvent`（触碰）后 `InventoryOpenEvent`（打开），两条解析链路各回一条 |
+| 左键箱子无消息 | 预期：`onInteract` 方法内首行守卫拦截（仅右键方块放行） |
+| 名牌血量不是每秒变 | 预期：变化才更新+重发（Nukkit `setNameTag` 不广播，每秒重发会闪烁） |
+| `/ecs spawn` 未 start 也能生成 | 预期：spawn 只依赖定义加载，不依赖引擎主循环 |
+| 同一实体命中多条定义且组件 id 相同 | 只挂**首个**（按定义加载顺序）；差异化请用不同组件 id（本示例 guard-aura 即为此设计） |
+| 幽灵用 Skeleton 而非 Zombie | 刻意规避：僵尸会被 elite-zombies 选择器同时命中（名牌互相覆盖、重击消息串台） |
+| 改了 example.yml 数值不生效 | 定义在插件启用时一次性加载，不热更——重启服务器（或重载插件）生效 |
+| 控制台大量"魔法箱挂载/卸载"日志 | 世界 diff 正常行为；区块加载/卸载也会触发，观察完可 `/ecs stop` 安静 |
+
+> 维护者文档请看 [DEVELOPER.md](DEVELOPER.md)；引擎原理与完整 API 见
+> [jframe_ecs README](../jframe_ecs/src/main/java/io/github/JiangHu/jframe/ecs/README.md)。

@@ -2,40 +2,15 @@ name: JFrameExample
 main: io.github.JiangHu.jframe.example.ExamplePlugin
 version: "1.0.0"
 api: ["1.0.0"]
-# 运行时依赖 FakeInventories 插件：需将 libs/fakeinventories-1.0.3-MOT-SNAPSHOT.jar
-# 放入服务器 plugins 目录作为独立插件，本插件才能访问其类（/inv fake 对比功能）。
 author: JiangHu
-# 依赖前置插件 JFrame（jframe_main）：框架类（jframe_command / jframe_ai / jframe_inventory 等）
-# 由 JFrame 的类加载器统一加载，本插件不再重复打包框架类（pom 中 jframe_main 为 provided scope），
-# 避免两个插件各持一份框架类导致 Nukkit 多插件类加载器冲突（IllegalAccessError）。
+# 依赖前置插件 JFrame（jframe_main）：框架类（jframe_ecs / jframe_command 等）
+# 由 JFrame 的类加载器统一加载，本插件不重复打包框架类（pom 中 jframe_main 为 provided scope）。
 # 部署时需先放入 jframe_main.jar，再放入 jframe_example.jar。
 depend:
   - JFrame
-description: JFrame 框架示例插件，演示事件 / 表单 / 线程 / 命令 / 箱子界面 / AI 模块的用法。
-
-commands:
-  jframe:
-    description: "打开 JFrame 示例菜单"
-    usage: "/jframe"
-    permission: jframe.example.use
-  sword:
-    description: "获得一把名为 aaa 的闪电钻石剑"
-    usage: "/sword"
-    permission: jframe.example.use
-  shop:
-    description: "打开 jframe 商店界面（声明式箱子）"
-    usage: "/shop"
-    permission: jframe.example.use
-  inv:
-    description: "对比 jframe_inventory 与第三方 fakeinventories 两种箱子实现"
-    usage: "/inv <jframe|fake>"
-    permission: jframe.example.use
-  invtest:
-    description: "打开 jframe_inventory 全特性测试界面（集中测试所有组件/布局/事件/外观特性）"
-    usage: "/invtest"
-    permission: jframe.example.use
-
+description: JFrame 示例插件 —— /ecs 命令实机测试实体-组件-系统引擎；/logdemo 演示统一日志（配合 /jlog start 网页查看）。
+# 根命令 /ecs 由 jframe_command 动态注册（@CommandController），无需在此声明。
 permissions:
   jframe.example.use:
-    description: "允许使用示例插件命令"
+    description: 允许使用示例插件命令
     default: true

@@ -56,6 +56,19 @@
             <version>5.3.24</version>
             <scope>provided</scope>
         </dependency>
+        <!--
+          spring-expression：根 pom 对全部模块默认 compile 注入（listener 模块的
+          SpEL 条件依赖它；jframe_ecs 已移除 SpEL 不再使用）。
+          此处仍必须显式降为 provided —— 否则 shade 会把它打进本插件 jar，
+          与 jframe_main.jar 中的同名类形成 Nukkit 多插件类加载器冲突（IllegalAccessError），
+          与上方其它 spring 件的处理方式一致。
+        -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-expression</artifactId>
+            <version>5.3.24</version>
+            <scope>provided</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-aop</artifactId>

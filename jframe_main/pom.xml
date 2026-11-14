@@ -88,14 +88,32 @@
             <version>1.0-SNAPSHOT</version>
             <scope>compile</scope>
         </dependency>
+        <dependency>
+            <groupId>io.github.JiangHu.jframe</groupId>
+            <artifactId>jframe_engine</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.github.JiangHu.jframe</groupId>
+            <artifactId>jframe_floatingtext</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.github.JiangHu.jframe</groupId>
+            <artifactId>jframe_logger</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <scope>compile</scope>
+        </dependency>
     </dependencies>
 
     <build>
         <finalName>${project.artifactId}</finalName>
         <plugins>
             <!--
-              maven-shade-plugin：把 jframe 各子模块与 Spring 打包成单个可部署的「前置插件」jar。
-              Nukkit（服务端）与 Lombok（编译期）不打包。
+              maven-shade-plugin：把 jframe 各子模块与保留的 Spring 工具库（core/expression）
+              打包成单个可部署的「前置插件」jar。Nukkit（服务端）与 Lombok（编译期）不打包。
               产物 jframe_main.jar 可直接放入服务器 plugins 目录，供其他插件 depend 使用。
             -->
             <plugin>
@@ -119,15 +137,8 @@
                                 </excludes>
                             </artifactSet>
                             <transformers>
-                                <!-- 合并 META-INF/services（Spring 等可能用到） -->
+                                <!-- 合并 META-INF/services -->
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
-                                <!-- 合并 Spring 的 schema/handlers 映射，避免 XML 解析失败 -->
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
-                                    <resource>META-INF/spring.handlers</resource>
-                                </transformer>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
-                                    <resource>META-INF/spring.schemas</resource>
-                                </transformer>
                             </transformers>
                         </configuration>
                     </execution>

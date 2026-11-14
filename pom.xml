@@ -23,6 +23,9 @@
         <module>jframe_scoreboard_depend_template</module>
         <module>jframe_template</module>
         <module>jframe_nbt</module>
+        <module>jframe_engine</module>
+        <module>jframe_floatingtext</module>
+        <module>jframe_logger</module>
     </modules>
 
     <properties>
@@ -52,21 +55,12 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Spring -->
+        <!-- Spring（仅保留工具库：core 的 Resource 抽象 + expression 的 SpEL，供 ECS when 条件与模板渲染使用；
+             IoC 容器 spring-context/spring-beans 已由自研模块容器 ModuleManager 取代） -->
 
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-core</artifactId>
-            <version>${spring.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-beans</artifactId>
-            <version>${spring.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-context</artifactId>
             <version>${spring.version}</version>
         </dependency>
         <dependency>

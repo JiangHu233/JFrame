@@ -4,6 +4,7 @@ import cn.nukkit.inventory.Inventory;
 import cn.nukkit.item.Item;
 import io.github.JiangHu.jframe.inventory.ui.model.SlotAppearance;
 import io.github.JiangHu.jframe.inventory.ui.model.SlotType;
+import io.github.JiangHu.jframe.inventory.ui.model.event.BeforeStoreEvent;
 import io.github.JiangHu.jframe.inventory.ui.model.event.StoreEvent;
 import io.github.JiangHu.jframe.inventory.ui.view.InventoryView;
 import io.github.JiangHu.jframe.inventory.ui.view.RenderContext;
@@ -76,6 +77,9 @@ public class SharedInventorySlice extends InventoryComponent {
     /** 存取回调（可选） */
     private Consumer<StoreEvent> storeHandler;
 
+    /** 存取守卫回调（可选）：玩家操作提交前触发，可否决（否决则不写回外部库存） */
+    private Consumer<BeforeStoreEvent> beforeStoreHandler;
+
     /** 渲染时记录的绝对基准行（用于计算格子绝对序号） */
     private int absBaseRow = 0;
     /** 渲染时记录的绝对基准列（用于计算格子绝对序号） */
@@ -108,6 +112,20 @@ public class SharedInventorySlice extends InventoryComponent {
      */
     public SharedInventorySlice onStore(Consumer<StoreEvent> handler) {
         this.storeHandler = handler;
+        return this;
+    }
+
+    /**
+     * 设置存取守卫回调（BeforeStoreEvent，交易提交前触发）。
+     * <p>
+     * 可用于准入控制（如仅成员可存入公共仓库）。否决（{@code cancel}）时整笔交易取消：
+     * {@code onStore} 不会执行、<b>不写回外部库存</b>、不同步其他同源切片。
+     *
+     * @param handler 守卫回调
+     * @return 当前组件（链式调用）
+     */
+    public SharedInventorySlice beforeStore(Consumer<BeforeStoreEvent> handler) {
+        this.beforeStoreHandler = handler;
         return this;
     }
 
@@ -155,6 +173,20 @@ public class SharedInventorySlice extends InventoryComponent {
                     view.setSlotItem(absSlot, item != null ? item : Item.get(Item.AIR), false);
                 }
             }
+        }
+    }
+
+    // -------------------- 存取守卫 --------------------
+
+    /**
+     * 存取守卫默认实现：转发到 beforeStore 注册的回调。
+     * 被否决时交易取消，onStore 不会执行（不写回外部库存）。
+     * 子类重写时须调用 {@code super.onBeforeStore(event)} 以保留注册回调的行为。
+     */
+    @Override
+    protected void onBeforeStore(BeforeStoreEvent event) {
+        if (beforeStoreHandler != null) {
+            beforeStoreHandler.accept(event);
         }
     }
 

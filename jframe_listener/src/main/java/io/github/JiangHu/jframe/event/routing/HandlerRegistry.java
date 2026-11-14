@@ -718,7 +718,6 @@ public class HandlerRegistry {
     /** 默认 @EventRoute 实例（无 @EventRoute 注解时使用） */
     private static final EventRoute DEFAULT_ROUTE = new EventRoute() {
         @Override public Class<? extends Event> value() { return Event.class; }
-        @Override public String condition() { return ""; }
         @Override public String filter() { return ""; }
         @Override public Class<? extends EventRoute> annotationType() { return EventRoute.class; }
     };

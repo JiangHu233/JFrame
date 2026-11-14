@@ -1,0 +1,5 @@
+classpath-nested:
+  selector: { use: tag, params: { tag: loot } }
+  components:
+    - id: counter
+      params: { value: 2, name: "nested" }

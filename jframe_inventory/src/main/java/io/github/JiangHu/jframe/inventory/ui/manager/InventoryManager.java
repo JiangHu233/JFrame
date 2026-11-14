@@ -12,6 +12,7 @@ import cn.nukkit.inventory.transaction.action.SlotChangeAction;
 import cn.nukkit.plugin.Plugin;
 import io.github.JiangHu.jframe.inventory.ui.InventoryAPI;
 import io.github.JiangHu.jframe.inventory.ui.model.SlotType;
+import io.github.JiangHu.jframe.inventory.ui.model.event.BeforeStoreEvent;
 import io.github.JiangHu.jframe.inventory.ui.view.InventoryView;
 import io.github.JiangHu.jframe.inventory.ui.view.VirtualInventory;
 
@@ -36,7 +37,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * <tr><td>{@link SlotType#BUTTON}</td><td>触发点击回调，取消交易（禁止拿走物品）</td></tr>
  * <tr><td>{@link SlotType#DISPLAY}</td><td>取消交易（仅展示，禁止操作）</td></tr>
  * <tr><td>{@link SlotType#LOCKED}</td><td>取消交易（默认锁定，禁止操作）</td></tr>
- * <tr><td>{@link SlotType#STORAGE}</td><td>允许交易，触发存取回调</td></tr>
+ * <tr><td>{@link SlotType#STORAGE}</td><td>先经 {@code BeforeStoreEvent} 询问格子拥有者（存取守卫，可否决）；
+ *     放行则允许交易并触发存取回调，否决则整笔取消并发送提示</td></tr>
  * </table>
  *
  * @see InventoryView
@@ -222,11 +224,14 @@ public class InventoryManager implements Listener {
      * <ul>
      *   <li>BUTTON：触发 {@link InventoryView#handleClick}，取消交易</li>
      *   <li>DISPLAY/LOCKED：取消交易</li>
-     *   <li>STORAGE：允许交易，触发 {@link InventoryView#handleStore}</li>
+     *   <li>STORAGE：先经 {@link InventoryView#handleBeforeStore} 询问格子拥有者
+     *       （{@code BeforeStoreEvent} 存取守卫，可否决）；被否决则取消交易并发送
+     *       否决提示（每笔交易至多一条）；放行则允许交易并在提交后触发
+     *       {@link InventoryView#handleStore}</li>
      * </ul>
      * <p>
      * 如果交易中混合了 STORAGE 和非 STORAGE 操作（如拖拽），
-     * 整个交易会被取消（因为无法部分执行）。
+     * 或者任一 STORAGE 动作被存取守卫否决，整个交易会被取消（因为无法部分执行）。
      *
      * @param event 事件
      */
@@ -237,6 +242,10 @@ public class InventoryManager implements Listener {
         if (view == null) return;
 
         boolean hasNonStorage = false;
+        // 存取守卫否决标记：任一 STORAGE 动作被否决即整笔取消
+        boolean denied = false;
+        // 首个非空的否决提示消息（每笔交易至多发送一条，避免多槽拖拽刷屏）
+        String denyMessage = null;
         List<SlotChangeAction> buttonActions = new ArrayList<>();
         List<SlotChangeAction> storageActions = new ArrayList<>();
 
@@ -263,13 +272,25 @@ public class InventoryManager implements Listener {
                     hasNonStorage = true;
                     break;
                 case STORAGE:
-                    storageActions.add(slotAction);
+                    // 存取守卫：交易提交前询问格子拥有者，可否决（BeforeStoreEvent）
+                    BeforeStoreEvent before = new BeforeStoreEvent(
+                            player, slot, slotAction.getSourceItem(), slotAction.getTargetItem());
+                    view.handleBeforeStore(slot, before);
+                    if (before.isCancelled()) {
+                        denied = true;
+                        if (denyMessage == null) {
+                            denyMessage = before.denyMessage();
+                        }
+                    } else {
+                        storageActions.add(slotAction);
+                    }
                     break;
             }
         }
 
-        // 如果有非 STORAGE 操作，取消整个交易
-        if (hasNonStorage) {
+        // 如果有非 STORAGE 操作或被守卫否决，取消整个交易
+        boolean cancelTransaction = hasNonStorage || denied;
+        if (cancelTransaction) {
             event.setCancelled(true);
         }
 
@@ -278,12 +299,17 @@ public class InventoryManager implements Listener {
             view.handleClick(slotAction.getSlot(), player, slotAction.getSourceItem());
         }
 
-        // 如果交易没有被取消（全是 STORAGE 操作），触发存取回调
-        if (!hasNonStorage) {
+        // 如果交易没有被取消（全是 STORAGE 操作且全部通过守卫），触发存取回调
+        if (!cancelTransaction) {
             for (SlotChangeAction slotAction : storageActions) {
                 view.handleStore(slotAction.getSlot(), player,
                         slotAction.getSourceItem(), slotAction.getTargetItem());
             }
+        }
+
+        // 发送否决提示（至多一条）
+        if (denied && denyMessage != null) {
+            player.sendMessage(denyMessage);
         }
     }
 

@@ -1,48 +1,43 @@
 package io.github.JiangHu.jframe.core.scan;
 
 import io.github.JiangHu.jframe.core.JFrameLog;
-import org.springframework.beans.factory.config.BeanDefinition;
-import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
-import org.springframework.core.io.DefaultResourceLoader;
-import org.springframework.core.type.filter.AnnotationTypeFilter;
 
+import java.io.IOException;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.Modifier;
+import java.net.JarURLConnection;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Enumeration;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
- * 注解类路径扫描器 — 封装 Spring {@link ClassPathScanningCandidateComponentProvider} 的配置样板。
+ * 注解类路径扫描器 — 无 Spring 依赖的自研实现（原实现封装 Spring 的
+ * {@code ClassPathScanningCandidateComponentProvider}，去除 IoC 容器时重写）。
  *
- * <h3>设计动机</h3>
- * <p>
- * {@code CommandScanner} 和 {@code WrapperScanner} 中存在几乎完全相同的 {@code createProvider} 方法：
- * <pre>
- * ClassPathScanningCandidateComponentProvider provider =
- *     new ClassPathScanningCandidateComponentProvider(false);  // 关闭默认过滤器
- * provider.addIncludeFilter(new AnnotationTypeFilter(XXX));    // 唯一差异：注解类型
- * provider.setResourceLoader(new DefaultResourceLoader(cl));   // 绑定 ClassLoader
- * </pre>
- * 本类将这段样板提取为通用工具，消除重复代码。各模块只需传入注解类型即可。
+ * <h3>实现原理</h3>
+ * <ol>
+ *   <li>{@link ClassLoader#getResources(String)} 枚举基础包对应的全部 classpath 根
+ *       （jar 或目录，Nukkit 插件 jar / IDE 的 target/classes 均覆盖）</li>
+ *   <li>jar 根遍历 {@link java.util.jar.JarFile} entry，目录根 {@link Files#walk} 递归</li>
+ *   <li>收集 {@code .class} 限定名，{@link Class#forName(String, boolean, ClassLoader)}
+ *       不初始化加载后检查目标注解</li>
+ * </ol>
  *
- * <h3>核心功能</h3>
- * <ul>
- *   <li>{@link #scan} — 扫描指定包，返回标注了目标注解的具体类集合</li>
- *   <li>{@link #resolveClassLoader()} — TCCL 回退工具方法（静态）</li>
- * </ul>
+ * <h3>过滤规则</h3>
+ * 即使标注了目标注解，接口、抽象类、注解类型也会被自动跳过；
+ * 单个类加载失败记 warning 跳过，不中断整体扫描（保持原实现行为）。
  *
  * <h3>使用示例</h3>
  * <pre>{@code
  * // 扫描 @CommandController
  * AnnotatedClassScanner scanner = new AnnotatedClassScanner(CommandController.class);
  * Set<Class<?>> classes = scanner.scan(pluginClassLoader, "com.myplugin.command");
- *
- * // 扫描 @Wrapper
- * AnnotatedClassScanner scanner = new AnnotatedClassScanner(Wrapper.class);
- * Set<Class<?>> classes = scanner.scan(pluginClassLoader, "com.myplugin.event");
  * }</pre>
- *
- * <h3>过滤规则</h3>
- * Spring 扫描器内置过滤：即使标注了目标注解，接口、抽象类、注解类型也会被自动跳过。
  */
 public class AnnotatedClassScanner {
 
@@ -73,40 +68,115 @@ public class AnnotatedClassScanner {
         if (basePackages == null || basePackages.length == 0) {
             return result;
         }
-
-        ClassPathScanningCandidateComponentProvider provider = createProvider(classLoader);
-
         for (String basePackage : basePackages) {
-            if (basePackage == null || basePackage.isBlank()) continue;
-            for (BeanDefinition bd : provider.findCandidateComponents(basePackage.trim())) {
-                String className = bd.getBeanClassName();
-                try {
-                    result.add(Class.forName(className, false, classLoader));
-                } catch (Throwable e) {
-                    JFrameLog.warning("AnnotatedClassScanner",
-                            "跳过无法加载的类: " + className
-                                    + " (" + e.getClass().getSimpleName() + ")");
-                }
+            if (basePackage == null || basePackage.isBlank()) {
+                continue;
+            }
+            String packagePath = basePackage.trim().replace('.', '/');
+            Enumeration<URL> roots;
+            try {
+                roots = classLoader.getResources(packagePath);
+            } catch (IOException e) {
+                warn("枚举包资源失败: " + basePackage + " (" + e + ")");
+                continue;
+            }
+            while (roots.hasMoreElements()) {
+                collect(roots.nextElement(), packagePath, classLoader, result);
             }
         }
         return result;
     }
 
     /**
-     * 创建配置好的 Spring 类路径扫描器。
-     * <p>
-     * 关闭默认过滤器（不自动扫描 {@code @Component} 等），仅添加目标注解过滤器，
-     * 并绑定指定类加载器以扫描 Nukkit 插件 jar 内的类。
-     *
-     * @param classLoader 类加载器
-     * @return 配置好的 Spring 扫描器
+     * 从单个 classpath 根（jar 或目录）收集候选类。
      */
-    private ClassPathScanningCandidateComponentProvider createProvider(ClassLoader classLoader) {
-        ClassPathScanningCandidateComponentProvider provider =
-                new ClassPathScanningCandidateComponentProvider(false);
-        provider.addIncludeFilter(new AnnotationTypeFilter(annotationType));
-        provider.setResourceLoader(new DefaultResourceLoader(classLoader));
-        return provider;
+    private void collect(URL root, String packagePath, ClassLoader classLoader, Set<Class<?>> result) {
+        String protocol = root.getProtocol();
+        if ("jar".equals(protocol)) {
+            collectFromJar(root, packagePath, classLoader, result);
+        } else if ("file".equals(protocol)) {
+            collectFromDirectory(root, packagePath, classLoader, result);
+        } else {
+            warn("跳过不支持的 classpath 协议: " + root);
+        }
+    }
+
+    /**
+     * jar 根：遍历 JarFile entry。
+     */
+    private void collectFromJar(URL root, String packagePath, ClassLoader classLoader, Set<Class<?>> result) {
+        String prefix = packagePath + "/";
+        try {
+            JarURLConnection connection = (JarURLConnection) root.openConnection();
+            connection.setUseCaches(false);
+            try (var jar = connection.getJarFile()) {
+                var entries = jar.entries();
+                while (entries.hasMoreElements()) {
+                    var entry = entries.nextElement();
+                    String name = entry.getName();
+                    if (entry.isDirectory() || !name.startsWith(prefix) || !name.endsWith(".class")) {
+                        continue;
+                    }
+                    String className = name.replace('/', '.');
+                    offerClassName(className.substring(0, className.length() - ".class".length()), classLoader, result);
+                }
+            }
+        } catch (Exception e) {
+            warn("读取 jar 失败: " + root + " (" + e + ")");
+        }
+    }
+
+    /**
+     * 目录根：递归遍历文件树（IDE / 测试环境的 target/classes）。
+     */
+    private void collectFromDirectory(URL root, String packagePath, ClassLoader classLoader, Set<Class<?>> result) {
+        try {
+            Path dir = Paths.get(root.toURI());
+            String packagePrefix = packagePath.replace('/', '.');
+            int drop = ".class".length();
+            try (Stream<Path> files = Files.walk(dir)) {
+                files.filter(Files::isRegularFile)
+                        .map(dir::relativize)
+                        .map(p -> p.toString().replace(java.io.File.separatorChar, '.'))
+                        .filter(n -> n.endsWith(".class"))
+                        .map(n -> packagePrefix + "." + n.substring(0, n.length() - drop))
+                        .forEach(n -> offerClassName(n, classLoader, result));
+            }
+        } catch (Exception e) {
+            warn("扫描目录失败: " + root + " (" + e + ")");
+        }
+    }
+
+    /**
+     * 加载并校验候选类：标注目标注解且非接口/抽象类/注解类型才收录。
+     */
+    private void offerClassName(String className, ClassLoader classLoader, Set<Class<?>> result) {
+        try {
+            Class<?> cls = Class.forName(className, false, classLoader);
+            if (!cls.isAnnotationPresent(annotationType)) {
+                return;
+            }
+            int modifiers = cls.getModifiers();
+            if (cls.isInterface() || cls.isAnnotation()
+                    || Modifier.isAbstract(modifiers)) {
+                return;
+            }
+            result.add(cls);
+        } catch (Throwable e) {
+            warn("跳过无法加载的类: " + className + " (" + e.getClass().getSimpleName() + ")");
+        }
+    }
+
+    /**
+     * 输出警告日志；Server 未初始化（如单元测试）时降级为静默，
+     * 保证扫描器在无服务端环境下可用。
+     */
+    private static void warn(String message) {
+        try {
+            JFrameLog.warning("AnnotatedClassScanner", message);
+        } catch (Throwable ignored) {
+            // 无 Server 环境（单元测试）下降级为静默
+        }
     }
 
     /**

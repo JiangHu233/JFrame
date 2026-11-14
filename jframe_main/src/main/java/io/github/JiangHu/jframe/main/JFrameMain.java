@@ -1,129 +1,134 @@
 package io.github.JiangHu.jframe.main;
 
-import cn.nukkit.Server;
+import cn.nukkit.command.Command;
+import cn.nukkit.command.CommandSender;
 import cn.nukkit.plugin.PluginBase;
-import cn.nukkit.plugin.service.ServicePriority;
 import io.github.JiangHu.jframe.ai.AiAPI;
-import io.github.JiangHu.jframe.command.CommandAPI;
-import io.github.JiangHu.jframe.core.config.CoreSpringConfig;
-import io.github.JiangHu.jframe.core.module.PluginAware;
-import io.github.JiangHu.jframe.data.DataSaver;
-import io.github.JiangHu.jframe.event.EventAPI;
-import io.github.JiangHu.jframe.form.ViewAPI;
-import io.github.JiangHu.jframe.inventory.ui.InventoryAPI;
-import io.github.JiangHu.jframe.main.config.MainSpringConfig;
-import io.github.JiangHu.jframe.main.utils.ConfigEnum;
+import io.github.JiangHu.jframe.ai.AiModule;
+import io.github.JiangHu.jframe.async.AsyncModule;
 import io.github.JiangHu.jframe.async.flow.ThreadFlow;
 import io.github.JiangHu.jframe.async.release.ReleaseAPI;
 import io.github.JiangHu.jframe.async.task.TaskAPI;
 import io.github.JiangHu.jframe.async.thread.ThreadAPI;
+import io.github.JiangHu.jframe.command.CommandAPI;
+import io.github.JiangHu.jframe.command.CommandModule;
+import io.github.JiangHu.jframe.core.module.ModuleManager;
+import io.github.JiangHu.jframe.data.DataModule;
+import io.github.JiangHu.jframe.data.DataSaver;
+import io.github.JiangHu.jframe.engine.EngineModule;
+import io.github.JiangHu.jframe.engine.ecs.EcsAPI;
+import io.github.JiangHu.jframe.event.EventAPI;
+import io.github.JiangHu.jframe.event.EventModule;
+import io.github.JiangHu.jframe.floatingtext.FloatingTextAPI;
+import io.github.JiangHu.jframe.floatingtext.FloatingTextModule;
+import io.github.JiangHu.jframe.form.FormModule;
+import io.github.JiangHu.jframe.form.ViewAPI;
+import io.github.JiangHu.jframe.inventory.InventoryModule;
+import io.github.JiangHu.jframe.inventory.ui.InventoryAPI;
+import io.github.JiangHu.jframe.logger.JLogCommand;
+import io.github.JiangHu.jframe.logger.LoggerAPI;
+import io.github.JiangHu.jframe.logger.LoggerModule;
+import io.github.JiangHu.jframe.main.utils.ConfigEnum;
 import io.github.JiangHu.jframe.scoreboard.ScoreboardAPI;
+import io.github.JiangHu.jframe.scoreboard.ScoreboardModule;
 import io.github.JiangHu.jframe.title.TitleAPI;
+import io.github.JiangHu.jframe.title.TitleModule;
 import lombok.Getter;
-import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * JFrame 框架主类。
  * <p>
- * 框架入口，负责加载核心模块。
- * <p>
- * 框架启动时，会自动加载核心模块（{@link CoreSpringConfig}），
- * 并注册其他模块的 SpringConfig。
+ * 框架入口，持有自研模块容器 {@link ModuleManager} 并登记全部内置模块。
+ * 各模块<b>按需加载</b>：首次调用 {@code getXxxAPI()} 时才执行对应模块工厂，
+ * 未用到的模块不创建任何对象；{@code config.yml} 的 {@code modules:} 列表
+ * 可选地预加载部分模块。
  *
  * <h3>作为「前置插件」使用</h3>
  * 本类本身是一个 Nukkit 插件，可部署为「前置插件 / 库插件」。
  * 其他业务插件在自身 {@code plugin.yml} 中声明 {@code depend: [JFrame]} 后，
- * 即可共享本插件启动的 Spring 容器与各模块 API，无需各自打包框架代码。
- * 获取 API 有两种等价方式：
+ * 即可复用本插件的模块容器与各模块 API，无需各自打包框架代码。
+ * 获取 API 的推荐方式是<b>门面方法</b>（首次调用触发懒加载）：
  * <ul>
- *   <li><strong>门面方法</strong> —— {@code JFrameMain.getInstance().getEventAPI()} 等</li>
- *   <li><strong>ServiceManager</strong> ——
- *       {@code getServer().getServiceManager().getProvider(EventAPI.class).getProvider()}
- *       （框架在 {@link #onEnable()} 时已自动注册全部模块服务）</li>
+ *   <li>{@code JFrameMain.getInstance().getEventAPI()} 等</li>
+ *   <li>{@code JFrameMain.getApi(EventAPI.class)}</li>
  * </ul>
- * 业务插件可调用 {@link EventAPI#scan(ClassLoader, String...)} /
- * {@link CommandAPI#scan(ClassLoader, String...)} 传入<b>自身类加载器</b>，
- * 将自己 jar 内的 {@code @Wrapper} / {@code @CommandController} 注册到框架共享容器中。
+ * Nukkit {@code ServiceManager} 在模块<b>真实加载后</b>才注册对应服务
+ * （未加载模块 {@code getProvider(XxxAPI.class)} 返回 null，可经
+ * {@code config.yml} 预加载规避）。
+ * <p>
+ * 业务插件可调用 {@link EventAPI} / {@link CommandAPI} 的
+ * {@code forPlugin(...).scan(...)} 传入<b>自身类加载器</b>，
+ * 将自己 jar 内的 {@code @Wrapper} / {@code @CommandController} 注册到框架。
+ * 也可 {@code new ModuleManager(this)} 创建<b>自己的隔离容器</b>
+ * （详见 core 模块 {@link ModuleManager} 的 javadoc）。
  *
  * @see ConfigEnum
+ * @see ModuleManager
  */
 public class JFrameMain extends PluginBase {
     public static final String ON_LOAD = "JFrame loaded";
 
+    /** 框架自身单例（构造时赋值，getApi 等静态入口依赖它） */
     @Getter
     protected static JFrameMain instance;
 
+    /** 自研模块容器（懒加载 / PluginAware 绑定 / ServiceManager 注册 / 按序关闭） */
     @Getter
-    protected AnnotationConfigApplicationContext applicationContext;
-    @Getter
-    protected Set<ConfigEnum> modules = new HashSet<ConfigEnum>(List.of(ConfigEnum.CORE));
+    protected ModuleManager moduleManager;
 
+    /**
+     * 按类型获取模块 API（首次调用触发对应模块懒加载）。
+     *
+     * @param apiType API 类型
+     * @param <T>     API 泛型
+     * @return API 单例
+     */
+    public static <T> T getApi(Class<T> apiType) {
+        return instance.moduleManager.get(apiType);
+    }
+
+    /**
+     * 按类型获取 Bean —— 兼容旧 Spring 时代的入口。
+     *
+     * @param beanType Bean 类型
+     * @param <T>      Bean 泛型
+     * @return Bean 单例
+     * @deprecated Spring 容器已移除，请改用 {@link #getApi(Class)} 或门面方法
+     */
+    @Deprecated
     public static <T> T getBean(Class<T> beanType) {
-        return instance.applicationContext.getBean(beanType);
+        return getApi(beanType);
     }
 
     public JFrameMain() {
-        this.applicationContext = createApplicationContext();
+        instance = this;
+        this.moduleManager = new ModuleManager(this);
+        registerModules(moduleManager);
     }
 
     /**
-     * 创建并刷新 Spring 应用上下文。
-     * <p>
-     * <strong>类加载器修正（Nukkit 插件环境）：</strong>
-     * Nukkit 主线程的上下文类加载器是「服务器类加载器」，它看不到插件 jar 内部的
-     * classpath 资源（如各模块的 {@code *-spring.xml}）。而 Spring 解析 {@code classpath:}
-     * 资源时优先使用 {@link Thread#getContextClassLoader()}，因此会抛出
-     * {@code FileNotFoundException: class path resource [xxx-spring.xml] cannot be opened}。
-     * <p>
-     * 本方法在创建上下文期间临时将线程上下文类加载器切换为「插件类加载器」
-     * （即本类所在 jar 的类加载器），使 Spring 能正确加载插件内的 classpath 资源；
-     * 同时让上下文本身持有该类加载器，保证后续 Bean 类型解析与资源加载一致。
-     * 创建完成后恢复原线程上下文类加载器。
+     * 登记全部内置模块（仅登记元数据，零实例化——懒加载由首次 get 触发）。
      *
-     * @return 已完成刷新的应用上下文
+     * @param manager 模块容器
      */
-    private AnnotationConfigApplicationContext createApplicationContext() {
-        ClassLoader pluginLoader = getClass().getClassLoader();
-        ClassLoader prev = Thread.currentThread().getContextClassLoader();
-        Thread.currentThread().setContextClassLoader(pluginLoader);
-        try {
-            AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
-            // 让上下文本身也使用插件类加载器，确保后续类型解析、资源加载一致
-            context.setClassLoader(pluginLoader);
-            context.register(MainSpringConfig.class);
-            context.refresh();
-            return context;
-        } finally {
-            Thread.currentThread().setContextClassLoader(prev);
-        }
+    protected void registerModules(ModuleManager manager) {
+        manager.register(new EventModule());
+        manager.register(new CommandModule());
+        manager.register(new AsyncModule());
+        manager.register(new FormModule());
+        manager.register(new InventoryModule());
+        manager.register(new DataModule());
+        manager.register(new AiModule());
+        manager.register(new ScoreboardModule());
+        manager.register(new TitleModule());
+        manager.register(new EngineModule());
+        manager.register(new FloatingTextModule());
+        manager.register(new LoggerModule());
     }
 
-    /**
-     * 将当前插件实例绑定到容器中所有 {@link PluginAware} Bean。
-     * <p>
-     * 在以下时机自动调用：
-     * <ul>
-     *   <li>{@link #onEnable()}：插件启用时，为核心模块及已导入模块绑定一次</li>
-     * </ul>
-     * 单个 Bean 绑定异常会被捕获并记录，不影响其他 Bean。
-     */
-    protected void bindPlugin() {
-        Map<String, PluginAware> awareBeans = applicationContext.getBeansOfType(PluginAware.class);
-        for (PluginAware aware : awareBeans.values()) {
-            try {
-                aware.bindPlugin(this);
-            } catch (Exception e) {
-                getLogger().error("绑定 plugin 到 " + aware.getClass().getName() + " 失败", e);
-            }
-        }
-    }
-
-    // -------------------- 模块 API 门面 --------------------
+    // -------------------- 模块 API 门面（首次调用触发懒加载） --------------------
 
     /**
      * 事件模块 API。
@@ -131,7 +136,7 @@ public class JFrameMain extends PluginBase {
      * @return 事件服务
      */
     public EventAPI getEventAPI() {
-        return getApi(EventAPI.class);
+        return moduleManager.get(EventAPI.class);
     }
 
     /**
@@ -140,7 +145,7 @@ public class JFrameMain extends PluginBase {
      * @return 表单服务
      */
     public ViewAPI getViewAPI() {
-        return getApi(ViewAPI.class);
+        return moduleManager.get(ViewAPI.class);
     }
 
     /**
@@ -149,7 +154,7 @@ public class JFrameMain extends PluginBase {
      * @return 线程服务
      */
     public ThreadAPI getThreadAPI() {
-        return getApi(ThreadAPI.class);
+        return moduleManager.get(ThreadAPI.class);
     }
 
     /**
@@ -161,7 +166,7 @@ public class JFrameMain extends PluginBase {
      * @see TaskAPI
      */
     public TaskAPI getTaskAPI() {
-        return getApi(TaskAPI.class);
+        return moduleManager.get(TaskAPI.class);
     }
 
     /**
@@ -174,7 +179,7 @@ public class JFrameMain extends PluginBase {
      * @see ThreadFlow
      */
     public ThreadFlow getThreadFlow() {
-        return getApi(ThreadFlow.class);
+        return moduleManager.get(ThreadFlow.class);
     }
 
     /**
@@ -188,7 +193,7 @@ public class JFrameMain extends PluginBase {
      * @see ReleaseAPI
      */
     public ReleaseAPI getReleaseAPI() {
-        return getApi(ReleaseAPI.class);
+        return moduleManager.get(ReleaseAPI.class);
     }
 
     /**
@@ -197,7 +202,7 @@ public class JFrameMain extends PluginBase {
      * @return 命令服务
      */
     public CommandAPI getCommandAPI() {
-        return getApi(CommandAPI.class);
+        return moduleManager.get(CommandAPI.class);
     }
 
     /**
@@ -206,7 +211,7 @@ public class JFrameMain extends PluginBase {
      * @return 箱子界面服务
      */
     public InventoryAPI getInventoryAPI() {
-        return getApi(InventoryAPI.class);
+        return moduleManager.get(InventoryAPI.class);
     }
 
     /**
@@ -217,13 +222,13 @@ public class JFrameMain extends PluginBase {
      * @return AI 服务
      */
     public AiAPI getAiAPI() {
-        return getApi(AiAPI.class);
+        return moduleManager.get(AiAPI.class);
     }
 
     /**
      * 数据保存模块入口。
      * <p>
-     * 返回的 {@link DataSaver} 已通过 {@link PluginAware} 机制自动绑定插件实例，
+     * 返回的 {@link DataSaver} 已自动绑定 JFrame 插件实例，
      * rootDir 默认指向本插件（JFrame）数据目录（{@code getDataFolder()}）。
      * <p>
      * <b>业务插件注意</b>：若本类作为前置工具插件被其他插件调用，业务插件应通过
@@ -233,7 +238,7 @@ public class JFrameMain extends PluginBase {
      * @return 数据保存器
      */
     public DataSaver getDataSaver() {
-        return getApi(DataSaver.class);
+        return moduleManager.get(DataSaver.class);
     }
 
     /**
@@ -246,7 +251,7 @@ public class JFrameMain extends PluginBase {
      * @see ScoreboardAPI
      */
     public ScoreboardAPI getScoreboardAPI() {
-        return getApi(ScoreboardAPI.class);
+        return moduleManager.get(ScoreboardAPI.class);
     }
 
     /**
@@ -261,44 +266,65 @@ public class JFrameMain extends PluginBase {
      * @see TitleAPI
      */
     public TitleAPI getTitleAPI() {
-        return getApi(TitleAPI.class);
+        return moduleManager.get(TitleAPI.class);
     }
 
     /**
-     * 按类型从容器获取模块 API。
-     *
-     * @param apiType API 类型
-     * @param <T>     API 泛型
-     * @return API 实例
-     */
-    private <T> T getApi(Class<T> apiType) {
-        if (applicationContext == null) {
-            throw new IllegalStateException("JFrame 容器尚未初始化");
-        }
-        return applicationContext.getBean(apiType);
-    }
-
-    /**
-     * 将各模块 API 注册到 Nukkit {@link cn.nukkit.plugin.service.ServiceManager}，
-     * 供其他插件通过 {@code getServiceManager().getProvider(XxxAPI.class)} 获取。
+     * ECS 模块 API。
      * <p>
-     * 在 {@link #onEnable()} 中自动调用。
+     * 提供实体-组件-系统引擎：注解扫描注册（组件/选择器/生成器/解析器/系统）→
+     * YAML GameObject 定义加载（文件/字符串/classpath）→ start 启动
+     * （存量回溯挂载 + 世界 diff 监听 + 事件桥四级过滤分发 + System tick）。
+     *
+     * @return ECS 服务
+     * @see EcsAPI
      */
-    private void registerServices() {
-        Server server = getServer();
-        server.getServiceManager().register(EventAPI.class, getEventAPI(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(ViewAPI.class, getViewAPI(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(ThreadAPI.class, getThreadAPI(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(TaskAPI.class, getTaskAPI(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(ThreadFlow.class, getThreadFlow(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(ReleaseAPI.class, getReleaseAPI(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(CommandAPI.class, getCommandAPI(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(InventoryAPI.class, getInventoryAPI(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(AiAPI.class, getAiAPI(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(DataSaver.class, getDataSaver(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(ScoreboardAPI.class, getScoreboardAPI(), this, ServicePriority.NORMAL);
-        server.getServiceManager().register(TitleAPI.class, getTitleAPI(), this, ServicePriority.NORMAL);
+    public EcsAPI getEcsAPI() {
+        return moduleManager.get(EcsAPI.class);
     }
+
+    /**
+     * 行为树 API（游戏引擎模块中与 ECS 并列的决策子系统：
+     * 词表注册/数据驱动树加载/黑板——树=数据资产、词表=代码注册、效果输出纯函数）。
+     *
+     * @return BT 服务
+     * @see io.github.JiangHu.jframe.engine.behavior.BtAPI
+     */
+    public io.github.JiangHu.jframe.engine.behavior.BtAPI getBtAPI() {
+        return moduleManager.get(io.github.JiangHu.jframe.engine.behavior.BtAPI.class);
+    }
+
+    /**
+     * 浮空字模块 API。
+     * <p>
+     * 提供世界空间文字显示通用原语：瞬态（伤害数字/脚步，寿命+动画自动回收）与
+     * 常驻组（大厅全息，\n 多行 + 重连自动补发）；发包假实体渲染（零服务器实体）；
+     * 观众策略/自定义动画/中途改字等扩展点。
+     *
+     * @return 浮空字服务
+     * @see FloatingTextAPI
+     */
+    public FloatingTextAPI getFloatingTextAPI() {
+        return moduleManager.get(FloatingTextAPI.class);
+    }
+
+    /**
+     * 统一日志模块 API。
+     * <p>
+     * 业务插件经 {@code getLoggerAPI().forPlugin(this)} 取得 {@link LoggerAPI JLogger} 写入
+     * 统一日志库（默认静默不进控制台/MCSM 面板，可按插件开镜像）；Web 展示端口由
+     * {@code /jlog start|stop|status} 手动启停（首次执行本指令亦触发本模块懒加载），
+     * 同机多实例自动聚合（根路由汇总 / {@code /s/<子服>} 分面板）。
+     *
+     * @return 统一日志服务
+     * @see LoggerAPI
+     * @see JLogCommand
+     */
+    public LoggerAPI getLoggerAPI() {
+        return moduleManager.get(LoggerAPI.class);
+    }
+
+    // -------------------- 生命周期 --------------------
 
     @Override
     public void onLoad() {
@@ -307,61 +333,49 @@ public class JFrameMain extends PluginBase {
 
     @Override
     public void onEnable() {
-        instance = this;
-        // 插件启用时为已加载模块（含构造阶段加载的 core）绑定 plugin
-        bindPlugin();
-        // 将各模块 API 注册为服务，供依赖本插件的其他插件发现
-        registerServices();
-        getLogger().info("JFrame 前置插件已启用，各模块 API 已注册到 ServiceManager");
+        // 绑定插件：刷新暂存的 PluginAware 绑定与 ServiceManager 注册
+        moduleManager.bindPlugin(this);
+        // 读取 config.yml 的 modules 预加载列表（可选）
+        preloadFromConfig();
+        getLogger().info("JFrame 前置插件已启用：模块按需加载（首次 getXxxAPI() 触发），"
+                + "可用模块见 config.yml 注释");
     }
 
     @Override
     public void onDisable() {
-        // 先关闭可关闭的资源（箱子视图、线程池），再关闭 Spring 容器
-        try {
-            if (applicationContext != null && applicationContext.isActive()) {
-                applicationContext.getBean(InventoryAPI.class).closeAll();
-            }
-        } catch (Exception e) {
-            getLogger().error("关闭箱子视图失败", e);
+        // 按序关闭已加载模块（引擎最先、浮空字停拍清场、箱子视图、线程池……logger 最后收尾），
+        // 等价于旧版 onDisable 的硬编码清理链
+        moduleManager.shutdown();
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        // /jlog：统一日志 Web 端口手动开关（plugin.yml 静态声明；首次执行懒加载 logger 模块）
+        if (command.getName().equalsIgnoreCase("jlog")) {
+            return JLogCommand.execute(moduleManager.get(LoggerAPI.class), sender, args);
         }
-        try {
-            if (applicationContext != null && applicationContext.isActive()) {
-                applicationContext.getBean(ThreadAPI.class).stopAll();
-            }
-        } catch (Exception e) {
-            getLogger().error("关闭线程池失败", e);
+        return false;
+    }
+
+    /**
+     * 按 config.yml 的 {@code modules:} 列表预加载模块（可选项，非法 id 记警告）。
+     */
+    private void preloadFromConfig() {
+        List<String> modules = getConfig().getStringList("modules");
+        if (modules == null || modules.isEmpty()) {
+            return;
         }
-        try {
-            if (applicationContext != null && applicationContext.isActive()) {
-                applicationContext.getBean(TaskAPI.class).cancelAll();
+        for (String id : modules) {
+            String moduleId = id == null ? "" : id.trim();
+            if (moduleId.isEmpty()) {
+                continue;
             }
-        } catch (Exception e) {
-            getLogger().error("关闭可挂起任务失败", e);
-        }
-        try {
-            if (applicationContext != null && applicationContext.isActive()) {
-                applicationContext.getBean(ReleaseAPI.class).close();
+            try {
+                moduleManager.preload(moduleId);
+                getLogger().info("已预加载模块: " + moduleId);
+            } catch (Exception e) {
+                getLogger().warning("预加载模块失败: " + moduleId + "（" + e.getMessage() + "）");
             }
-        } catch (Exception e) {
-            getLogger().error("关闭主线程缓释调度器失败", e);
-        }
-        try {
-            if (applicationContext != null && applicationContext.isActive()) {
-                applicationContext.getBean(ScoreboardAPI.class).hideAll();
-            }
-        } catch (Exception e) {
-            getLogger().error("关闭计分板失败", e);
-        }
-        try {
-            if (applicationContext != null && applicationContext.isActive()) {
-                applicationContext.getBean(TitleAPI.class).disposeAll();
-            }
-        } catch (Exception e) {
-            getLogger().error("关闭标题视图失败", e);
-        }
-        if (this.applicationContext != null) {
-            this.applicationContext.close();
         }
     }
 }

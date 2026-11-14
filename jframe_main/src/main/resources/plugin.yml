@@ -4,7 +4,16 @@ version: "1.0.0"
 api: ["1.0.0"]
 author: JiangHu
 description: >-
-  JFrame 框架前置插件。提供事件 / 表单 / 线程 / 命令 / 箱子界面等模块的统一 API。
+  JFrame 框架前置插件。提供事件 / 表单 / 线程 / 命令 / 箱子界面 / 统一日志等模块的统一 API。
   其他插件可通过 depend: [JFrame] 引用本插件，再通过
   JFrameMain.getInstance().getXxxAPI() 或
   Server.getServiceManager().getProvider(XxxAPI.class) 获取各模块服务。
+commands:
+  jlog:
+    description: "JFrame 统一日志 Web 展示端口手动开关（同机多实例自动聚合）"
+    usage: "/jlog <start [端口|auto] | stop | status>"
+    permission: jframe.logger
+permissions:
+  jframe.logger:
+    description: "允许启停 JFrame logger Web 端口"
+    default: op
