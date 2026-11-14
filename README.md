@@ -302,7 +302,7 @@ cd ../jframe_example && mvn clean package
 # 产物：jframe_example/target/jframe_example.jar
 ```
 
-把 `jframe_main.jar` 与业务插件 jar 放入 Nukkit 服务端的 `plugins/` 目录（**前置插件必须先存在**），重启服务器即可。示例插件提供 `/ecs`（ECS 引擎）等命令。
+把 `jframe_main.jar` 与业务插件 jar 放入 Nukkit 服务端的 `plugins/` 目录（**前置插件必须先存在**），重启服务器即可。示例插件提供 `/ecs`（ECS 引擎实机测试）与 `/logdemo`（统一日志演示，配合 `/jlog start` 网页查看）等命令。
 
 ---
 
@@ -311,7 +311,7 @@ cd ../jframe_example && mvn clean package
 - **模块懒加载**：未用到的模块首次调用对应 `getXxxAPI()` 前不初始化，`ServiceManager.getProvider(XxxAPI.class)` 对未加载模块返回 `null`。需要启动即可用的模块请写入 JFrame `config.yml` 的 `modules:` 预加载列表。
 - **logger Web 端口手动启停**：`/jlog start` 开启、`/jlog stop` 关闭；模块加载与服务器启动均**不**自动开启端口（不用时无监听、无线程）。agent 挂靠/接管仅限同机回环，跨机器聚合需自行反代。
 - **主线程约定**：模块 API 与容器 `get()` 约定在 Nukkit 主线程调用（内部有并发防御，但跨线程懒加载初始化监听器等副作用应由调用方保证时序）。
-- **数据写入非原子**：`DataSaver` 的文件写入若进程崩溃可能产生半截损坏文件，关键数据建议配合备份（详见 [CODE_REVIEW.md](CODE_REVIEW.md)）。
+- **数据写入非原子**：`DataSaver` 的文件写入若进程崩溃可能产生半截损坏文件（写入非「临时文件 + 原子替换」模式），关键数据建议配合定期备份。
 - **跨插件数据隔离**：业务插件通过 `getDataSaver()` 获取的保存器默认指向 JFrame 目录，应再调用 `forPlugin(this)` 得到以自身数据目录为根的独立保存器。
 - **跨线程操作主线程 API**：`ThreadAPI` 的任务运行在异步线程，若需修改方块、传送等主线程操作，应额外调度回主线程。
 - **SpEL 保留依赖**：ECS `when` 条件与计分板/标题模板渲染仍使用 `spring-expression`（纯表达式求值库，无容器语义）；事件 `@EventRoute.condition` SpEL 参数已移除，条件过滤统一走 `filter` 方法。
