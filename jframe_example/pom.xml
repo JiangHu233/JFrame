@@ -37,6 +37,21 @@
             <scope>provided</scope>
         </dependency>
 
+        <!--
+          transform 模块的 bridge 类型编译期专用 artifact（HookContext / HookAt /
+          MethodHook / ReplaceHook）：主 artifact 为保证运行时"全 JVM 唯一副本"
+          排除了 bridge 包（设计方案 §2），下游编译经本 classifier 获得可见性。
+          provided：绝不打进业务插件 jar、不部署到服务器（运行时副本由 JFrame
+          自动注入系统类加载器）。禁止改为 compile / runtime！
+        -->
+        <dependency>
+            <groupId>io.github.JiangHu.jframe</groupId>
+            <artifactId>jframe_transform</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <classifier>bridge</classifier>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- spring 依赖 -->
         <dependency>
             <groupId>org.springframework</groupId>

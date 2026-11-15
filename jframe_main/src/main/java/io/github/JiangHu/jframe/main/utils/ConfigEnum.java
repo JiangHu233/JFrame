@@ -44,7 +44,10 @@ public enum ConfigEnum {
     FLOATING_TEXT("floatingtext"),
 
     /** 统一日志（logger）：LoggerAPI + /jlog 指令 */
-    LOGGER("logger");
+    LOGGER("logger"),
+
+    /** 动态类增强（jframe_transform）：TransformAPI（@HookOn / hook / replace） */
+    TRANSFORM("transform");
 
     private final String moduleId;
 

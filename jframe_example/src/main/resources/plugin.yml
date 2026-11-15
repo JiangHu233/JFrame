@@ -8,7 +8,7 @@ author: JiangHu
 # 部署时需先放入 jframe_main.jar，再放入 jframe_example.jar。
 depend:
   - JFrame
-description: JFrame 示例插件 —— /ecs 命令实机测试实体-组件-系统引擎；/logdemo 演示统一日志（配合 /jlog start 网页查看）。
+description: JFrame 示例插件 —— /ecs 命令实机测试实体-组件-系统引擎；/logdemo 演示统一日志（配合 /jlog start 网页查看）；/jtransform 演示运行中动态类增强。
 # 根命令 /ecs 由 jframe_command 动态注册（@CommandController），无需在此声明。
 permissions:
   jframe.example.use:

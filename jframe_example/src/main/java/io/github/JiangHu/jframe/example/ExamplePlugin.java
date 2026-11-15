@@ -6,6 +6,7 @@ import io.github.JiangHu.jframe.command.CommandAPI;
 import io.github.JiangHu.jframe.engine.ecs.EcsAPI;
 import io.github.JiangHu.jframe.example.ecs.command.EcsTestController;
 import io.github.JiangHu.jframe.example.logger.LogDemoController;
+import io.github.JiangHu.jframe.example.transform.TransformDemoController;
 import io.github.JiangHu.jframe.main.JFrameMain;
 
 /**
@@ -83,6 +84,11 @@ public class ExamplePlugin extends PluginBase {
         // 2b. 统一日志演示：/logdemo 写各级别统一日志（默认静默，/jlog start 后网页查看）
         LogDemoController.setLogger(jframeMain.getLoggerAPI().forPlugin(this));
         commandAPI.forPlugin(this).scan("io.github.JiangHu.jframe.example.logger");
+
+        // 2c. 动态类增强演示：/jtransform on|off|status 运行中增强 Server#getMotd /
+        //     getMaxPlayers 并可还原（on 时才注册、才触发 agent 自附加，零启动成本）
+        TransformDemoController.setTransform(jframeMain.getTransformAPI().forPlugin(this));
+        commandAPI.forPlugin(this).scan("io.github.JiangHu.jframe.example.transform");
 
         // 3. ECS 注册：扫描本插件 jar 内五类注解（组件/选择器/生成器/解析器/系统）
         ecs.forPlugin(this).scan("io.github.JiangHu.jframe.example.ecs");

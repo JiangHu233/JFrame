@@ -33,6 +33,8 @@ import io.github.JiangHu.jframe.scoreboard.ScoreboardAPI;
 import io.github.JiangHu.jframe.scoreboard.ScoreboardModule;
 import io.github.JiangHu.jframe.title.TitleAPI;
 import io.github.JiangHu.jframe.title.TitleModule;
+import io.github.JiangHu.jframe.transform.TransformAPI;
+import io.github.JiangHu.jframe.transform.TransformModule;
 import lombok.Getter;
 
 import java.util.List;
@@ -126,6 +128,7 @@ public class JFrameMain extends PluginBase {
         manager.register(new EngineModule());
         manager.register(new FloatingTextModule());
         manager.register(new LoggerModule());
+        manager.register(new TransformModule());
     }
 
     // -------------------- 模块 API 门面（首次调用触发懒加载） --------------------
@@ -322,6 +325,29 @@ public class JFrameMain extends PluginBase {
      */
     public LoggerAPI getLoggerAPI() {
         return moduleManager.get(LoggerAPI.class);
+    }
+
+    /**
+     * 动态类增强模块 API。
+     * <p>
+     * 依赖 JFrame 的插件可动态增强 Nukkit（及任意非 JDK 类）的<b>已加载</b>方法：
+     * <ul>
+     *   <li>注解声明式（推荐）：{@code getTransformAPI().forPlugin(this)
+     *       .scan("com.example.myplugin.hook")}——{@code @HookOn} 标注方法，
+     *       {@code at = HEAD/RETURN} 为 before/after，{@code at = REPLACE} 为
+     *       签名镜像整方法接管（同参同返回值）</li>
+     *   <li>命令式：{@code forPlugin(this).hook(...)/replace(...)} 动态挂/摘</li>
+     * </ul>
+     * 服务器<b>正常启动后</b>即可用（首次注册自动向 JVM 自附加 agent，零启动参数；
+     * JDK 21+ 控制台会打一条无害警告；可选 {@code -javaagent:jframe_main.jar}
+     * 预注入消除）。插件 disable 时自动停分发并还原字节码。
+     *
+     * @return 动态类增强服务
+     * @see TransformAPI
+     * @see io.github.JiangHu.jframe.transform.annotation.HookOn
+     */
+    public TransformAPI getTransformAPI() {
+        return moduleManager.get(TransformAPI.class);
     }
 
     // -------------------- 生命周期 --------------------

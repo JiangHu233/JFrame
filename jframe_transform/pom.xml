@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>io.github.JiangHu.jframe</groupId>
+        <artifactId>JFrame</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>jframe_transform</artifactId>
+
+    <properties>
+        <!--
+          本模块以 release 17 编译（低于仓库其余模块的 24）：
+          ByteBuddy 1.15.x 的 Advice 模板按字节码内联，读取模板 .class 时受其内置 ASM
+          支持的类文件版本上限约束（Java 23）。模板类以 17 编译规避；被增强的
+          Nukkit 类为更低版本字节码，不受影响。
+        -->
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <bytebuddy.version>1.15.4</bytebuddy.version>
+        <bridge.package.path>io/github/JiangHu/jframe/transform/bridge</bridge.package.path>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.github.JiangHu.jframe</groupId>
+            <artifactId>jframe_core</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+
+        <!--
+          字节码织入（Advice 内联，retransform 安全）+ 运行中自附加 agent。
+          jframe_main 打包时统一 relocate 到 io.github.JiangHu.jframe.shaded.net.bytebuddy。
+        -->
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy</artifactId>
+            <version>${bytebuddy.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.bytebuddy</groupId>
+            <artifactId>byte-buddy-agent</artifactId>
+            <version>${bytebuddy.version}</version>
+        </dependency>
+
+        <!-- 服务端（不打包） -->
+        <dependency>
+            <groupId>cn.nukkit</groupId>
+            <artifactId>Nukkit</artifactId>
+            <version>MOT-SNAPSHOT</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.42</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- 测试 -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.11.4</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+              bridge 包打包规则（设计方案 §2 / §3.7）：
+              1) target/classes 下 bridge 包的 .class 以资源形态拷贝到 META-INF/jframe-bridge/
+                 （保留包目录层级），运行时由 BridgeJarInstaller 组装成 bridge jar 注入
+                 系统类加载器 —— 全 JVM 唯一规范副本；
+              2) maven-jar-plugin 把 bridge 包从 jar 的类路径排除 —— jframe 插件类加载器
+                 与业务插件的 PluginClassLoader 均解析不到自有副本，只能上溯系统加载器，
+                 不依赖 Nukkit PluginClassLoader 的委托顺序。
+              单元测试不受影响（surefire 直接使用 target/classes，两步均为拷贝非移动）。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>embed-bridge-classes</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <copy todir="${project.build.outputDirectory}/META-INF/jframe-bridge/${bridge.package.path}">
+                                    <fileset dir="${project.build.outputDirectory}/${bridge.package.path}">
+                                        <include name="**/*.class"/>
+                                    </fileset>
+                                </copy>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <!--
+                      主 artifact：bridge 包从类路径排除（运行时唯一规范副本 =
+                      系统类加载器中运行时注入的 bridge jar，设计方案 §2）。
+                    -->
+                    <execution>
+                        <id>default-jar</id>
+                        <configuration>
+                            <excludes>
+                                <exclude>${bridge.package.path}/**</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                    <!--
+                      bridge classifier：只含 bridge 包类的编译期专用小 jar。
+                      业务插件以 provided scope 依赖（classifier bridge）获得
+                      HookContext/HookAt 等类型的编译可见性；provided 保证绝不
+                      打进业务插件 jar / 不部署到服务器（运行时副本由 JFrame 注入）。
+                    -->
+                    <execution>
+                        <id>bridge-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                        <configuration>
+                            <classifier>bridge</classifier>
+                            <includes>
+                                <include>${bridge.package.path}/**</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

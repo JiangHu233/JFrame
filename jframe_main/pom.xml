@@ -106,6 +106,12 @@
             <version>1.0-SNAPSHOT</version>
             <scope>compile</scope>
         </dependency>
+        <dependency>
+            <groupId>io.github.JiangHu.jframe</groupId>
+            <artifactId>jframe_transform</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <scope>compile</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -139,7 +145,27 @@
                             <transformers>
                                 <!-- 合并 META-INF/services -->
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <!--
+                                  -javaagent 可选预注入路径：agentmain/premain 双入口 +
+                                  retransform 能力（TransformAgent；不配置时插件侧运行中自附加）
+                                -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <manifestEntries>
+                                        <Premain-Class>io.github.JiangHu.jframe.transform.agent.TransformAgent</Premain-Class>
+                                        <Agent-Class>io.github.JiangHu.jframe.transform.agent.TransformAgent</Agent-Class>
+                                        <Can-Retransform-Classes>true</Can-Retransform-Classes>
+                                    </manifestEntries>
+                                </transformer>
                             </transformers>
+                            <!--
+                              ByteBuddy（jframe_transform 传递依赖）以原名打包：
+                              shade 3.6.0 内置 ASM 不支持 JDK 24（v68）类文件，任何
+                              relocation 都会触发全 jar ASM 改写而失败，故不 relocate。
+                              冲突面：仅当其他插件自带 ByteBuddy 且经依赖链解析到
+                              JFrame 加载器时才可能版本混淆（Nukkit 生态罕见）——
+                              已列入模块 README 已知限制；后续 shade 支持更高类文件
+                              版本后可补 relocate（pattern: net.bytebuddy. → shaded）。
+                            -->
                         </configuration>
                     </execution>
                 </executions>

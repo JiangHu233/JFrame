@@ -26,6 +26,7 @@
         <module>jframe_engine</module>
         <module>jframe_floatingtext</module>
         <module>jframe_logger</module>
+        <module>jframe_transform</module>
     </modules>
 
     <properties>

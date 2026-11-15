@@ -2,6 +2,10 @@
 
 > 一个完整可运行的 Nukkit 插件样例，用于**实机测试 jframe_ecs 模块**（实体-组件-系统引擎）：
 > 四组演示场景 + `/ecs` 命令控制台，把引擎全部特性变成游戏内"点一下就见效"的现象。
+> 另含 `/logdemo`（统一日志）与 `/jtransform`（动态类增强：运行中增强
+> `Server#getMotd/#getMaxPlayers` 并可还原，见
+> [jframe_transform README](../jframe_transform/src/main/java/io/github/JiangHu/jframe/transform/README.md)）
+> 两组演示。
 
 ---
 

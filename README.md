@@ -67,7 +67,7 @@ JFrame 是一套面向 Nukkit 插件开发的**模块化框架**。它把服务�
 ## 📦 模块总览
 
 ```
-JFrame (父 POM，聚合 17 个模块)
+JFrame (父 POM，聚合 18 个模块)
 ├── jframe_core                        核心基础：模块容器（ModuleManager）、注解扫描器、PluginAware、纠缠值
 ├── jframe_main                        框架入口：JFrameMain 前置插件、ConfigEnum、config.yml 预加载
 ├── jframe_listener                    事件系统：声明式注解、对象级路由、优先级独占
@@ -84,7 +84,8 @@ JFrame (父 POM，聚合 17 个模块)
 ├── jframe_floatingtext                浮空字：发包假实体渲染、瞬态/常驻组
 ├── jframe_nbt                         NBT 编解码库（被动库，未接入模块体系）
 ├── jframe_logger                      统一日志：LoggerAPI 统一入口 + /jlog 手动启停 Web 展示（多实例聚合）
-└── jframe_example                     ECS / 统一日志示例插件（依赖前置 JFrame）
+├── jframe_transform                   动态类增强：@HookOn 注解 / 命令式 hook·replace，运行中增强已加载类（自附加 agent + retransform）
+└── jframe_example                     ECS / 统一日志 / 动态类增强示例插件（依赖前置 JFrame）
 ```
 
 | 模块 id | 提供的公开服务（懒加载触发点） |
@@ -101,6 +102,7 @@ JFrame (父 POM，聚合 17 个模块)
 | `engine` | `EcsAPI` / `BtAPI`（共享 EcsEngine，一个模块两个服务） |
 | `floatingtext` | `FloatingTextAPI` |
 | `logger` | `LoggerAPI`（统一日志入口；`/jlog` 指令首次执行亦触发加载） |
+| `transform` | `TransformAPI`（`getTransformAPI()`；首次注册 hook 亦触发加载） |
 
 每个模块由一个 `XxxModule` 工厂类一对一替代原 Spring `*SpringConfig` + `*-spring.xml`（如 [`EventModule`](jframe_listener/src/main/java/io/github/JiangHu/jframe/event/EventModule.java)、[`EngineModule`](jframe_engine/src/main/java/io/github/JiangHu/jframe/engine/EngineModule.java)），对象图在 `load(ModuleContext)` 内用普通 Java 组装。
 
@@ -157,7 +159,7 @@ public class MyPlugin extends PluginBase {
         commandAPI = jframe.getCommandAPI();
         // 还有：getViewAPI / getThreadAPI / getTaskAPI / getThreadFlow / getReleaseAPI
         //       getInventoryAPI / getDataSaver / getAiAPI / getScoreboardAPI / getTitleAPI
-        //       getEcsAPI / getBtAPI / getFloatingTextAPI / getLoggerAPI
+        //       getEcsAPI / getBtAPI / getFloatingTextAPI / getLoggerAPI / getTransformAPI
         // 或静态：JFrameMain.getApi(EventAPI.class)
 
         // 3. 用本插件类加载器扫描自身 jar 内的处理器并注册
@@ -188,6 +190,7 @@ public class MyPlugin extends PluginBase {
 | `getEcsAPI()` / `getBtAPI()` | `EcsAPI` / `BtAPI` | 游戏引擎 |
 | `getFloatingTextAPI()` | `FloatingTextAPI` | 浮空字 |
 | `getLoggerAPI()` | `LoggerAPI` | 统一日志（`forPlugin(this)` 取静默日志器） |
+| `getTransformAPI()` | `TransformAPI` | 动态类增强（`@HookOn` 注解 / `hook`/`replace` 命令式；见 [jframe_transform](jframe_transform/src/main/java/io/github/JiangHu/jframe/transform/README.md)） |
 
 ---
 
