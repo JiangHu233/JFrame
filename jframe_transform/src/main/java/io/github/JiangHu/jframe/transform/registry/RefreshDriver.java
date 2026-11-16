@@ -79,6 +79,9 @@ final class RefreshDriver {
                 instrumentation.retransformClasses(targets.toArray(new Class[0]));
             } catch (Throwable t) {
                 TLog.error("关服还原 retransform 失败（" + targets.size() + " 类）", t);
+                // 外部审查 P3：还原失败时旧 inline id 可能残留在已加载类中，与
+                // 新注册表的 id 撞号会错误分发（已用随机盐值缓解，仍需显式告知）
+                TLog.warn("旧织入可能残留在已加载类中，热重载不保证安全——建议重启 JVM 后再加载新版本插件");
             }
         }
     }
@@ -99,5 +102,23 @@ final class RefreshDriver {
                 registry.markClassFailed(cls.getName(), t);
             }
         }
+    }
+
+    /**
+     * 注册诊断探针 transformer（测试用）。
+     *
+     * @param transformer 探针
+     */
+    void addProbe(java.lang.instrument.ClassFileTransformer transformer) {
+        instrumentation.addTransformer(transformer, false);
+    }
+
+    /**
+     * 移除诊断探针 transformer。
+     *
+     * @param transformer 探针
+     */
+    void removeProbe(java.lang.instrument.ClassFileTransformer transformer) {
+        instrumentation.removeTransformer(transformer);
     }
 }

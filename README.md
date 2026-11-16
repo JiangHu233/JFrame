@@ -84,7 +84,7 @@ JFrame (父 POM，聚合 18 个模块)
 ├── jframe_floatingtext                浮空字：发包假实体渲染、瞬态/常驻组
 ├── jframe_nbt                         NBT 编解码库（被动库，未接入模块体系）
 ├── jframe_logger                      统一日志：LoggerAPI 统一入口 + /jlog 手动启停 Web 展示（多实例聚合）
-├── jframe_transform                   动态类增强：@HookOn 注解 / 命令式 hook·replace，运行中增强已加载类（自附加 agent + retransform）
+├── jframe_transform                   动态类增强：@HookOn 注解 / 命令式 hook·replace，运行中按类名增强已加载类（自附加 agent + retransform；注册建议 onEnable 批量，运行中形状跃迁重织有 safepoint 停顿）
 └── jframe_example                     ECS / 统一日志 / 动态类增强示例插件（依赖前置 JFrame）
 ```
 

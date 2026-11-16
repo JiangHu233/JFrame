@@ -102,12 +102,17 @@ transform.replace("cn.nukkit.level.Level", "getWeatherDuration",
 
 | 相位 | 触发 | 能做什么 |
 |---|---|---|
-| `at = HEAD` / `before` | 方法体前 | `setArg` 改参（需 `needsArgs=true`）、`skip/skipWith` 短路、`forceThrow` |
+| `at = HEAD` / `before` | 方法体前 | `setArg` 改参（需 `needsArgs=true`，元数 ≤6；高元只读模板下 `setArg` 抛错）、`skip/skipWith` 短路、`forceThrow` |
 | `at = RETURN` / `after` | 方法体后（含抛出路径） | 读返回值/异常、`setReturn` 改返回值（正常路径）、`forceThrow` |
 | `at = REPLACE` | **替代原方法体** | 返回值即方法返回值；抛出即方法异常；私有/静态可挂 |
 
+- **异常传播对 void 方法同样成立**：`forceThrow` / REPLACE 抛出在 void 方法上也会
+  传播给调用方（needsEnter 时无条件织 exit 作为异常出口），不会静默吞掉。
 - **优先级链**：同方法多钩子 HIGHEST→LOWEST 依次执行（参数修改向后可见，任一 skip 截断），
   after 反序；多 REPLACE 最高优先级胜出（注册时警告）。
+- **按类名匹配**：hook 目标按类全限定名匹配——同一类名在**所有类加载器**中的类都会被
+  增强（跨插件同名类共享同一组钩子）；目标类的类加载器父链必须可见 bridge（即系统
+  类加载器），无父加载器的自定义加载器不支持。
 - **相位省略**：空相位不内联任何 dispatch 指令（注解层"方法不存在 = 相位不存在"；
   `needsArgs=false` 免装箱）——未被 hook 的类/相位零开销。
 - **同形状增删钩子**只改注册表（零 retransform）；形状跃迁才对单类重织（毫秒级）。
@@ -122,6 +127,11 @@ transform.replace("cn.nukkit.level.Level", "getWeatherDuration",
   （manifest 已带 `Premain-Class`/`Can-Retransform-Classes`）。
 - bridge jar 注入落盘于 `plugins/JFrame/transform/`（只读环境自动降级临时目录）。
 - 卸载/关服：停分发 → 移除 transformer → retransform 还原全部织入类（`/reload` 安全）。
+  **若日志出现"还原 retransform 失败"，旧织入可能残留（hook id 已加随机盐值缓解错误
+  分发），此时热重载不保证安全——建议重启 JVM 后再加载新版本插件。**
+- **在线注册策略**：优先在插件 `onEnable` 批量注册；运行中注册推荐仅做同形状链更新
+  （零 retransform、即时生效）；形状跃迁重织会触发 JVM safepoint 停顿（毫秒级），
+  高频在线变更与全 JVM 级性能影响尚未经实机验证，生产环境谨慎使用。
 
 ## 已知限制
 

@@ -45,6 +45,13 @@ public final class TransformerInstaller {
      */
     public static ClassFileTransformer install(HookRegistry registry, Instrumentation inst) {
         return new AgentBuilder.Default()
+                // 必须保持 RETRANSFORMATION（外部审查 P1 验证结论）：ByteBuddy 以
+                // strategy.isRetransforming() 决定 addTransformer 的 canRetransform
+                // 标志——DISABLED 会注册成不可重转的 transformer，RefreshDriver 的
+                // 显式 retransformClasses 将被 JVM 静默跳过（钩子无声失效）。
+                // 安装期批处理发生在首次 ensureAgent（specs 为空）：仅对全部已加载
+                // 类做名称匹配（无字节码解析、零重织），实际激活统一由
+                // RefreshDriver 显式 retransformClasses 完成。
                 .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
                 .with(new FailReportListener(registry))
                 .disableClassFormatChanges()

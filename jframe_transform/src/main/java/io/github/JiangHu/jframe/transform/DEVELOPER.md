@@ -47,10 +47,30 @@
 
 - `TargetSpec`（类/方法通配 + 参数签名）→ `weavePlan()` 在织入期为
   （类，方法，描述符）建立/复用 `MethodRegistration`（id 内联后永不重组）。
+- **needsEnter ⇒ 无条件织 exit**（外部审查 P0-B）：非 void 是短路返回值写回出口，
+  void 是 forceThrow / REPLACE 抛出异常的<b>唯一传播出口</b>——缺 exit 时 void 的
+  强制异常会被静默吞掉。
 - 注册/卸载：锁内重建链 → 形状对比；同形状原地换链（零 retransform），
   形状跃迁/链空 → `dirtyClasses` → `RefreshDriver.retransformClasses`。
 - 激活判定 `needsActivationWeave`：未织入类 OR 已织入类出现**首个命中某未织方法**的新规格
   （同方法后续注册走原地链更新）。
+- **id 随机盐值**（外部审查 P3）：`idSeq` 以随机 int 起算——`/reload` 还原失败时
+  旧类残留旧 inline id，与新表从 1 起算的 id 撞号会错误分发；随机盐值把撞号概率
+  降到 2^-32 量级。还原失败时 `restoreAll` 追加"建议重启 JVM"WARN。
+- 分发停用标志（§3.6）：置位后 `Bridge.enter/exit` 直接走原逻辑（内联的几条指令
+  空转返回），保证"停分发"立即生效且无回调副作用。
+- **按类名匹配语义**：Registry 键不含加载器身份——同名类在所有加载器中共享同一
+  方法登记与钩子链（`ClassLoaderIsolationTest` 验证：child-first 加载器新加载的
+  同名类在定义时被织入，unhook 后全部还原）。
+
+## 分发链路（续）：AgentBuilder 策略
+
+`RedefinitionStrategy` 必须保持 `RETRANSFORMATION`（外部审查 P1 验证结论）：
+ByteBuddy 以 `strategy.isRetransforming()` 决定 `addTransformer` 的 canRetransform
+标志——改 `DISABLED` 会把 transformer 注册成不可重转，`RefreshDriver` 的显式
+`retransformClasses` 被 JVM 静默跳过（钩子无声失效，已实测复现）。安装期批处理
+发生在首次 `ensureAgent`（specs 为空）：仅对全部已加载类做名称匹配（无字节码解析、
+零重织），实际激活统一由 RefreshDriver 显式 retransformClasses 完成。
 - 还原 = 类不再命中 matcher 的 retransform（JVM 对原始字节码重放全部 transformer）。
 
 ## 生命周期

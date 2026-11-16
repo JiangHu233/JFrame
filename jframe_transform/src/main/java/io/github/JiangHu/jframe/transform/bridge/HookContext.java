@@ -84,7 +84,8 @@ public final class HookContext {
     }
 
     /**
-     * 修改参数（仅 before 阶段且 {@code needsArgs=true} 时生效；after 阶段原体已执行，无效）。
+     * 修改参数（仅 before 阶段、needsArgs=true 且方法元数 ≤6 有写回模板时生效；
+     * 高元只读模板 / after 阶段抛 {@link IllegalStateException}）。
      *
      * @param index 参数下标
      * @param value 新值（基本类型传包装类）
@@ -94,7 +95,7 @@ public final class HookContext {
             throw new IllegalStateException("当前无参数数组：before 阶段需注册时 needsArgs=true");
         }
         if (!argsWritable) {
-            throw new IllegalStateException("setArg 仅 before 阶段有效（after 阶段原体已执行）");
+            throw new IllegalStateException("当前参数数组不可写（超过 6 参的只读模板 / after 阶段原体已执行）");
         }
         args[index] = value;
     }

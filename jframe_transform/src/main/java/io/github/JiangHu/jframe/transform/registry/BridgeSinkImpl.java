@@ -44,7 +44,9 @@ public final class BridgeSinkImpl implements Sink {
         if (chain.isEmpty()) {
             return null;
         }
-        HookContext ctx = new HookContext(self, args, args != null, mr.className, mr.methodName);
+        HookContext ctx = new HookContext(self, args,
+                args != null && mr.paramCount <= io.github.JiangHu.jframe.transform.bytebuddy.TransformerInstaller.WRITE_BACK_MAX_ARITY,
+                mr.className, mr.methodName);
         State st = new State();
         st.ctx = ctx;
         boolean engaged = false;

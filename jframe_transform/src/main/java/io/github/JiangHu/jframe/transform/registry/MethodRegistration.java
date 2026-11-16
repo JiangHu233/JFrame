@@ -76,11 +76,15 @@ final class MethodRegistration {
 
     /**
      * 计算链的相位要求（注册期与织入期共用的纯函数）。
+     * <p>
+     * needsEnter 时无条件织 exit：非 void 是短路返回值写回的出口；void 是
+     * forceThrow / REPLACE 抛出异常的<b>唯一传播出口</b>（缺少 exit 时异常会被
+     * 静默吞掉——外部审查 P0-B）。
      *
      * @param chain 钩子链
      * @return {needsEnter, needsArgs, needsExit, hasAfter}
      */
-    static boolean[] requirementsOf(List<HookRecord> chain, boolean voidReturn) {
+    static boolean[] requirementsOf(List<HookRecord> chain) {
         boolean needsEnter = false;
         boolean needsArgs = false;
         boolean needsExit = false;
@@ -97,8 +101,8 @@ final class MethodRegistration {
                 hasAfter = true;
             }
         }
-        if (needsEnter && !voidReturn) {
-            needsExit = true;   // 短路返回值写回需要 exit
+        if (needsEnter) {
+            needsExit = true;
         }
         return new boolean[]{needsEnter, needsArgs, needsExit, hasAfter};
     }

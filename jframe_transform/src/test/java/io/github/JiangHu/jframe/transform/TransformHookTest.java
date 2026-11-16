@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,6 +54,30 @@ class TransformHookTest {
                 throw new IllegalStateException("orig-boom");
             }
             return flag;
+        }
+
+        /** 零参 void（§9.1/§9.2 用例） */
+        public int tickCount;
+
+        public void tick() {
+            tickCount++;
+        }
+
+        /** 零参非 void（§9.1 用例） */
+        public int zero() {
+            return 7;
+        }
+
+        /** 零参条件抛出（§9.2 用例：原方法自身抛出 + after 可读） */
+        public void fail(boolean flag) {
+            if (flag) {
+                throw new IllegalStateException("void-boom");
+            }
+        }
+
+        /** 7 参（§9.2 用例：只读模板，setArg 拒绝） */
+        public int wide(int a, int b, int c, int d, int e, int f, int g) {
+            return a + b + c + d + e + f + g;
         }
     }
 
@@ -413,6 +438,195 @@ class TransformHookTest {
         }
         assertEquals(1, new WildA().value());
         assertEquals(2, new WildB().value());
+    }
+
+    // ==================== §9.1：零参模板守卫（外部审查 P0-A） ====================
+
+    @Test
+    void zeroArgNeedsArgsBodyExecutesExactlyOnce() {
+        List<Object> seen = new ArrayList<>();
+        HookHandle handle = TransformTestBase.scope().hook(cn(SampleTarget.class), "tick", null,
+                beforeHook(ctx -> seen.add(ctx.getArgs())), HookPriority.NORMAL, true);
+        try {
+            SampleTarget t = new SampleTarget();
+            t.tick();
+            assertEquals(1, seen.size());   // before 触发（空参数数组）
+            assertEquals(1, t.tickCount);   // A0 守卫：非短路 State 不得跳过原体
+        } finally {
+            handle.unhook();
+        }
+        SampleTarget after = new SampleTarget();   // 还原后正常自增
+        after.tick();
+        assertEquals(1, after.tickCount);
+    }
+
+    @Test
+    void zeroArgSkipAndReplace() {
+        TransformPluginScope scope = TransformTestBase.scope();
+        HookHandle skip = scope.hook(cn(SampleTarget.class), "tick", null,
+                beforeHook(ctx -> ctx.skip()), HookPriority.NORMAL, true);
+        try {
+            SampleTarget t = new SampleTarget();
+            t.tick();
+            assertEquals(0, t.tickCount);   // 短路：原体未执行
+        } finally {
+            skip.unhook();
+        }
+        HookHandle replace = scope.replace(cn(SampleTarget.class), "tick",
+                (io.github.JiangHu.jframe.transform.bridge.ReplaceHook) ctx -> null);   // void REPLACE
+        try {
+            SampleTarget t = new SampleTarget();
+            t.tick();
+            assertEquals(0, t.tickCount);
+        } finally {
+            replace.unhook();
+        }
+        SampleTarget restored = new SampleTarget();
+        restored.tick();
+        assertEquals(1, restored.tickCount);   // 还原
+    }
+
+    @Test
+    void zeroArgBeforeAndAfter() {
+        List<String> events = new ArrayList<>();
+        HookHandle handle = TransformTestBase.scope().hook(cn(SampleTarget.class), "zero", null,
+                new MethodHook() {
+                    @Override
+                    public void before(HookContext ctx) {
+                        events.add("before");
+                    }
+
+                    @Override
+                    public void after(HookContext ctx) {
+                        events.add("after:" + ctx.getReturn());
+                    }
+                }, HookPriority.NORMAL, true);
+        try {
+            assertEquals(7, new SampleTarget().zero());
+            assertEquals(List.of("before", "after:7"), events);
+        } finally {
+            handle.unhook();
+        }
+        assertEquals(7, new SampleTarget().zero());
+    }
+
+    // ==================== §9.2：void 异常传播 + 高元只读（外部审查 P0-B） ====================
+
+    @Test
+    void voidForceThrowPropagates() {
+        SampleTarget t = new SampleTarget();
+        HookHandle handle = TransformTestBase.scope().hook(cn(SampleTarget.class), "tick", null,
+                beforeHook(ctx -> ctx.forceThrow(new UnsupportedOperationException("void-blocked"))));
+        try {
+            UnsupportedOperationException ex = assertThrows(UnsupportedOperationException.class, t::tick);
+            assertEquals("void-blocked", ex.getMessage());   // void 方法异常必须传播（不静默吞掉）
+            assertEquals(0, t.tickCount);   // 原体未执行
+        } finally {
+            handle.unhook();
+        }
+        t.tick();
+        assertEquals(1, t.tickCount);   // 还原后正常
+    }
+
+    @Test
+    void voidReplaceThrowingPropagates() {
+        TransformPluginScope scope = TransformTestBase.scope();
+        HookHandle runtime = scope.replace(cn(SampleTarget.class), "tick",
+                (io.github.JiangHu.jframe.transform.bridge.ReplaceHook) ctx -> {
+                    throw new RuntimeException("void-replaced");
+                });
+        try {
+            SampleTarget t = new SampleTarget();
+            RuntimeException ex = assertThrows(RuntimeException.class, t::tick);
+            assertEquals("void-replaced", ex.getMessage());
+            assertEquals(0, t.tickCount);
+        } finally {
+            runtime.unhook();
+        }
+        HookHandle error = scope.replace(cn(SampleTarget.class), "tick",
+                (io.github.JiangHu.jframe.transform.bridge.ReplaceHook) ctx -> {
+                    throw new AssertionError("void-error");
+                });
+        try {
+            SampleTarget t = new SampleTarget();
+            assertThrows(AssertionError.class, t::tick);
+            assertEquals(0, t.tickCount);
+        } finally {
+            error.unhook();
+        }
+    }
+
+    @Test
+    void voidSkipReturnsNormally() {
+        SampleTarget t = new SampleTarget();
+        HookHandle handle = TransformTestBase.scope().hook(cn(SampleTarget.class), "tick", null,
+                beforeHook(ctx -> ctx.skip()));
+        try {
+            t.tick();   // 短路且无异常——正常返回
+            assertEquals(0, t.tickCount);
+        } finally {
+            handle.unhook();
+        }
+    }
+
+    @Test
+    void voidOriginalThrowVisibleToAfterAndNotSwallowed() {
+        List<Throwable> thrownSeen = new ArrayList<>();
+        HookHandle handle = TransformTestBase.scope().hook(cn(SampleTarget.class), "fail", null,
+                afterHook(ctx -> thrownSeen.add(ctx.getThrowable())));
+        try {
+            SampleTarget t = new SampleTarget();
+            IllegalStateException ex = assertThrows(IllegalStateException.class, () -> t.fail(true));
+            assertEquals(1, thrownSeen.size());
+            assertTrue(thrownSeen.get(0) instanceof IllegalStateException);   // after 读到原异常
+            assertEquals("void-boom", ((Throwable) thrownSeen.get(0)).getMessage());
+            assertSame(ex, thrownSeen.get(0));   // 不丢失、不重复、不意外覆盖
+            t.fail(false);   // 正常路径
+            assertNull(thrownSeen.get(1));
+        } finally {
+            handle.unhook();
+        }
+    }
+
+    @Test
+    void wideArityArgsReadOnlyAndSetArgRejected() {
+        List<Object> seen = new ArrayList<>();
+        HookHandle handle = TransformTestBase.scope().hook(cn(SampleTarget.class), "wide", null,
+                new MethodHook() {
+                    @Override
+                    public void before(HookContext ctx) {
+                        seen.add(ctx.getArgs());   // 只读模板：args 可读
+                    }
+                }, HookPriority.NORMAL, true);
+        try {
+            SampleTarget t = new SampleTarget();
+            assertEquals(28, t.wide(1, 2, 3, 4, 5, 6, 7));
+            Object[] args = (Object[]) seen.get(0);
+            assertEquals(7, args.length);
+            assertEquals(28, t.wide(1, 2, 3, 4, 5, 6, 7));   // 只读：参数不被篡改，结果不变
+        } finally {
+            handle.unhook();
+        }
+        // 只读模板：setArg 运行时拒绝（可观测），调用按未修改继续
+        List<Object> verdict = new ArrayList<>();
+        HookHandle modify = TransformTestBase.scope().hook(cn(SampleTarget.class), "wide", null,
+                new MethodHook() {
+                    @Override
+                    public void before(HookContext ctx) {
+                        try {
+                            ctx.setArg(0, 100);
+                            verdict.add("no-exception");
+                        } catch (IllegalStateException e) {
+                            verdict.add("rejected");
+                        }
+                    }
+                }, HookPriority.NORMAL, true);
+        try {
+            assertEquals(28, new SampleTarget().wide(1, 2, 3, 4, 5, 6, 7));
+            assertEquals("rejected", verdict.get(0));
+        } finally {
+            modify.unhook();
+        }
     }
 
     // ==================== 用例 14：相位省略 + 形状协调 ====================

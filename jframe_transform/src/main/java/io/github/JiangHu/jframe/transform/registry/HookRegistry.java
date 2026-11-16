@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -66,7 +67,12 @@ public final class HookRegistry {
     /** 待重织/还原类名（刷新驱动消费） */
     private final Set<String> dirtyClasses = new CopyOnWriteArraySet<>();
 
-    private final AtomicInteger idSeq = new AtomicInteger(1);
+    /**
+     * 分发 id 序列——随机盐值起算（外部审查 P3）：/reload 若还原 retransform 失败，
+     * 旧类残留的旧 inline id 与新注册表的 id 撞号会错误分发；随机起点把撞号概率
+     * 降到 2^-32 量级（单注册表内 2^32 个 id 不可耗尽）。
+     */
+    private final AtomicInteger idSeq = new AtomicInteger(ThreadLocalRandom.current().nextInt());
     private final AtomicInteger regSeq = new AtomicInteger(1);
 
     /** 分发总开关（关服清理时置 false，内联指令空转） */
@@ -439,7 +445,7 @@ public final class HookRegistry {
             return;
         }
 
-        boolean[] req = MethodRegistration.requirementsOf(chain, mr.voidReturn);
+        boolean[] req = MethodRegistration.requirementsOf(chain);
         boolean wasWoven = wasWoven(mr);
         boolean shapeChanged = wasWoven
                 && (req[0] != mr.wovenEnter || req[2] != mr.wovenExit || req[1] != mr.wovenArgs);
@@ -523,6 +529,24 @@ public final class HookRegistry {
      */
     public int retransformCount() {
         return retransformCount.get();
+    }
+
+    /**
+     * 注册临时探针 transformer（诊断用：观察 JVM 是否对某定义回调 transform）。
+     *
+     * @param transformer 探针
+     */
+    public void addProbeTransformer(java.lang.instrument.ClassFileTransformer transformer) {
+        driver.addProbe(transformer);
+    }
+
+    /**
+     * 移除探针 transformer。
+     *
+     * @param transformer 探针
+     */
+    public void removeProbeTransformer(java.lang.instrument.ClassFileTransformer transformer) {
+        driver.removeProbe(transformer);
     }
 
     /**

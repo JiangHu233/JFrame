@@ -29,7 +29,8 @@ public final class EnterAdviceArgs {
         @Advice.OnMethodEnter(skipOn = OnNonDefaultValue.class)
         static State enter(@HookIdMarker int id,
                            @Advice.This(optional = true) Object self) {
-            return Bridge.enter(id, self, new Object[0]);
+            State s = Bridge.enter(id, self, new Object[0]);
+            return s != null && s.skip ? s : null;
         }
     }
 
