@@ -13,7 +13,8 @@
 #   async        异步任务（ThreadAPI / TaskAPI / ThreadFlow / ReleaseAPI）
 #   form         表单界面
 #   inventory    箱子界面
-#   data         数据持久化
+#   file         文件持久化（原 data：FileAPI，@SaveField 注解驱动 JSON/YAML）
+#   db           数据库存取（DbAPI：适配器注册后提供 ORM/三层缓存/区域/Redis 直用）
 #   ai           实体 AI
 #   scoreboard   计分板
 #   title        标题

@@ -17,7 +17,9 @@
         <module>jframe_example</module>
         <module>jframe_command</module>
         <module>jframe_inventory</module>
-        <module>jframe_data</module>
+        <module>jframe_serialize</module>
+        <module>jframe_file</module>
+        <module>jframe_db</module>
         <module>jframe_ai</module>
         <module>jframe_title_depend_template</module>
         <module>jframe_scoreboard_depend_template</module>

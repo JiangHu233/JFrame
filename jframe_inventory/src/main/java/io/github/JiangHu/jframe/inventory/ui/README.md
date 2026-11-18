@@ -201,7 +201,7 @@ box.onStore(event -> {
 
 #### ⭐ 物品加载与导出（持久化）
 
-StorageBox 支持导出当前物品内容与从数据恢复物品，便于在玩家关闭/打开界面时保存与恢复物品（配合 `jframe_data` 等持久化方案）。
+StorageBox 支持导出当前物品内容与从数据恢复物品，便于在玩家关闭/打开界面时保存与恢复物品（配合 `jframe_file` 等持久化方案）。
 
 ```java
 StorageBox box = new StorageBox(3, 1);

@@ -27,7 +27,7 @@ import java.util.function.Predicate;
  * <h3>物品加载与导出（持久化）</h3>
  * <p>
  * StorageBox 支持将存储格内的物品内容导出（{@link #exportItems()}）与加载
- * （{@link #loadItems(Item[])}），便于配合 {@code jframe_data} 等持久化方案
+ * （{@link #loadItems(Item[])}），便于配合 {@code jframe_file} 等持久化方案
  * 在玩家关闭/打开界面时保存与恢复物品。
  *
  * <pre>{@code

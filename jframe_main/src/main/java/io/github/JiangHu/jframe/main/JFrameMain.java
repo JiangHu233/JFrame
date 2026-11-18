@@ -13,12 +13,14 @@ import io.github.JiangHu.jframe.async.thread.ThreadAPI;
 import io.github.JiangHu.jframe.command.CommandAPI;
 import io.github.JiangHu.jframe.command.CommandModule;
 import io.github.JiangHu.jframe.core.module.ModuleManager;
-import io.github.JiangHu.jframe.data.DataModule;
-import io.github.JiangHu.jframe.data.DataSaver;
+import io.github.JiangHu.jframe.db.DbAPI;
+import io.github.JiangHu.jframe.db.internal.DbModule;
 import io.github.JiangHu.jframe.engine.EngineModule;
 import io.github.JiangHu.jframe.engine.ecs.EcsAPI;
 import io.github.JiangHu.jframe.event.EventAPI;
 import io.github.JiangHu.jframe.event.EventModule;
+import io.github.JiangHu.jframe.file.FileAPI;
+import io.github.JiangHu.jframe.file.internal.FileModule;
 import io.github.JiangHu.jframe.floatingtext.FloatingTextAPI;
 import io.github.JiangHu.jframe.floatingtext.FloatingTextModule;
 import io.github.JiangHu.jframe.form.FormModule;
@@ -121,7 +123,8 @@ public class JFrameMain extends PluginBase {
         manager.register(new AsyncModule());
         manager.register(new FormModule());
         manager.register(new InventoryModule());
-        manager.register(new DataModule());
+        manager.register(new FileModule());
+        manager.register(new DbModule());
         manager.register(new AiModule());
         manager.register(new ScoreboardModule());
         manager.register(new TitleModule());
@@ -229,19 +232,35 @@ public class JFrameMain extends PluginBase {
     }
 
     /**
-     * 数据保存模块入口。
+     * 文件持久化模块入口（原 {@code getDataSaver()}，模块 id 由 {@code data} 更名为 {@code file}）。
      * <p>
-     * 返回的 {@link DataSaver} 已自动绑定 JFrame 插件实例，
+     * 返回的 {@link FileAPI} 已自动绑定 JFrame 插件实例，
      * rootDir 默认指向本插件（JFrame）数据目录（{@code getDataFolder()}）。
      * <p>
      * <b>业务插件注意</b>：若本类作为前置工具插件被其他插件调用，业务插件应通过
-     * {@code getDataSaver().forPlugin(this)} 获取以<b>自身数据目录</b>为根的独立保存器，
+     * {@code getFileAPI().forPlugin(this)} 获取以<b>自身数据目录</b>为根的独立保存器，
      * 避免把数据写进 JFrame 目录。
      *
-     * @return 数据保存器
+     * @return 文件持久化 API
      */
-    public DataSaver getDataSaver() {
-        return moduleManager.get(DataSaver.class);
+    public FileAPI getFileAPI() {
+        return moduleManager.get(FileAPI.class);
+    }
+
+    /**
+     * 数据库模块 API。
+     * <p>
+     * 提供零数据库依赖的数据存取：依赖插件实现
+     * {@link io.github.JiangHu.jframe.db.spi.RelationalStore RelationalStore}（SQL 型）与
+     * {@link io.github.JiangHu.jframe.db.spi.RedisStore RedisStore}（Redis 型）适配器并注册，
+     * 即可获得列映射 ORM（DataManager）、三层缓存组合、跨服共享数据池（RegionHandle）
+     * 与 Redis 直用（防重/互斥/跨服消息）能力。JFrame 自身不持有任何数据库连接。
+     *
+     * @return 数据库存取服务
+     * @see DbAPI
+     */
+    public DbAPI getDbAPI() {
+        return moduleManager.get(DbAPI.class);
     }
 
     /**

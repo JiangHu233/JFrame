@@ -22,7 +22,7 @@
  *   <li><b>完整保真</b>：序列化全部 NBT，不丢失附魔/名称/lore/自定义数据</li>
  *   <li><b>位置保留</b>：物品栏序列化记录每个槽位的索引，反序列化精确还原</li>
  *   <li><b>类型无关</b>：任意 Nukkit 原生物品栏（背包/箱子/末影箱/熔炉等）统一处理</li>
- *   <li><b>独立无依赖</b>：不依赖 {@code jframe_data} 的注解框架，仅依赖 Nukkit API 与 JDK</li>
+ *   <li><b>独立无依赖</b>：不依赖 {@code jframe_serialize} 的注解框架，仅依赖 Nukkit API 与 JDK</li>
  *   <li><b>可演进</b>：文本格式带版本号（{@code V1}），支持未来向后兼容扩展</li>
  * </ul>
  *

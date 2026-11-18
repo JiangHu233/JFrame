@@ -103,7 +103,7 @@ public class InventoryAPI implements PluginAware {
 - **完整保真**：[`NbtJsonConverter`](codec/NbtJsonConverter.java) 递归处理 CompoundTag，不丢失任何 NBT 附加数据。
 - **位置保留**：[`InventoryCodec`](codec/InventoryCodec.java) 记录每个槽位索引，反序列化精确还原到原位置。
 - **类型无关**：统一处理背包 / 箱子 / 末影箱 / 熔炉等任意 Nukkit 原生物品栏。
-- **独立于 jframe_data**：`codec` 是针对 Nukkit `Item` 的专用序列化，与 `jframe_data` 的注解驱动序列化框架无关，二者可并存。
+- **独立于 jframe_serialize**：`codec` 是针对 Nukkit `Item` 的专用序列化，与 `jframe_serialize` 的注解驱动序列化框架无关，二者可并存。
 
 ---
 

@@ -914,7 +914,7 @@ src/test/java/io/github/JiangHu/jframe/nbt/
 | `jframe_command` | 在 [ArgumentResolver](../jframe_command/src/main/java/io/github/JiangHu/jframe/command/resolve/ArgumentResolver.java) 注册 `NbtPath` 类型转换（命令参数直接写 `@PathVariable NbtPath path`，语法错误转为 `ArgumentConversionException`）；后续提供 `/nbt get/set` 示例控制器（放 jframe_example） | M3 |
 | `jframe_inventory` | `NbtJsonConverter` / `ItemCodec` 与本模块功能互补（它们做「整棵树 ↔ JSON/Base64」，本模块做「树内寻址加工」）；是否将 `NbtJsonConverter` 迁入 jframe_nbt 统一 NBT 工具入口 → 开放问题 9.5（注：4.3 的 `toJavaValue` 深解包已对齐其映射实践，迁移后可合并实现） | M3 评估 |
 | `jframe_core` | 复用 `LruCacheMap` 做 compile 缓存；`ForPlugin`/`PluginClassLoaderFactory` 预留跨插件作用域（本模块无扫描需求，暂不需要 PluginScope） | M1 |
-| `jframe_data` | 未来 `SaveFieldAdapter` 可用 NbtPath 表达「对象字段 ↔ NBT 深处某值」的映射（仅登记，不排期） | — |
+| `jframe_serialize` | 未来 `SaveFieldAdapter` 可用 NbtPath 表达「对象字段 ↔ NBT 深处某值」的映射（仅登记，不排期） | — |
 
 ### 5.4 模块内架构图
 

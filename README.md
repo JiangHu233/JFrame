@@ -30,7 +30,7 @@ JFrame 是一套面向 Nukkit 插件开发的**模块化框架**。它把服务�
 - **声明式命令路由**：把 Spring MVC 的 `@Controller` / `@RequestMapping` 体验搬到 Minecraft 命令处理——`@CommandController` + `@CommandMapping` 自动完成路径匹配、参数解析与类型转换。
 - **ECS 游戏引擎 + 行为树**：YAML 数据驱动的 GameObject 定义、五类注解扫描注册、四级过滤事件分发、组件对象池；与 ECS 共享引擎的行为树决策子系统（`BtAPI`）。
 - **栈式表单导航 / 组件化箱子 GUI**：`FormView` 视图栈与声明式箱子组件 + 自动布局 + 物品编解码。
-- **注解驱动持久化**：`@SaveField` 标记字段，`DataSaver` 一行完成对象 ↔ JSON 序列化。
+- **注解驱动持久化**：`@SaveField` 标记字段，`FileAPI` 一行完成对象 ↔ JSON/YAML 序列化；`jframe_db` 零数据库依赖接入 MySQL/Redis（适配器 SPI + 列映射 ORM + 三层缓存）。
 - **实体 AI 能力**：A\* / 贪心双策略寻路与七工厂行为 API（`path` / `walk` / `chase` / `wander` / `loop` / `attack` / `see`），另有单实体与团队战术。
 - **浮空字**：发包假实体渲染（零服务器实体）、瞬态与常驻组、观众重连对账。
 - **响应式纠缠值**：[`EntangledValue`](jframe_core/src/main/java/io/github/JiangHu/jframe/core/data/reactive/EntangledValue.java) 让多个值「纠缠」在一起，一处变化多处感知。
@@ -67,14 +67,16 @@ JFrame 是一套面向 Nukkit 插件开发的**模块化框架**。它把服务�
 ## 📦 模块总览
 
 ```
-JFrame (父 POM，聚合 18 个模块)
+JFrame (父 POM，聚合 20 个模块)
 ├── jframe_core                        核心基础：模块容器（ModuleManager）、注解扫描器、PluginAware、纠缠值
 ├── jframe_main                        框架入口：JFrameMain 前置插件、ConfigEnum、config.yml 预加载
 ├── jframe_listener                    事件系统：声明式注解、对象级路由、优先级独占
 ├── jframe_command                     命令系统：6 注解声明式路由（类 Spring MVC）
 ├── jframe_form                        表单/GUI：FormView 视图栈、ViewManager 单玩家管理
 ├── jframe_inventory                   箱子界面：声明式组件 + 布局 + 物品编解码
-├── jframe_data                        数据持久化：@SaveField 注解驱动 JSON 序列化
+├── jframe_serialize                   序列化内核（被动库）：@SaveField 注解驱动 对象↔JSON 编解码管线
+├── jframe_file                        文件持久化（原 jframe_data）：FileAPI JSON/YAML 文件存取
+├── jframe_db                          数据库存取：SPI 适配器 + 列映射 ORM + 三层缓存 + Redis 直用/区域（零数据库依赖）
 ├── jframe_async                       异步任务：ThreadAPI / TaskAPI / ThreadFlow / ReleaseAPI
 ├── jframe_ai                          实体 AI：寻路 / 导航 / 战术 / 战斗 / 视野感知
 ├── jframe_template                    内容模板：XML 模板 + SpEL 渲染（计分板/标题共用）
@@ -85,7 +87,7 @@ JFrame (父 POM，聚合 18 个模块)
 ├── jframe_nbt                         NBT 编解码库（被动库，未接入模块体系）
 ├── jframe_logger                      统一日志：LoggerAPI 统一入口 + /jlog 手动启停 Web 展示（多实例聚合）
 ├── jframe_transform                   动态类增强：@HookOn 注解 / 命令式 hook·replace，运行中按类名增强已加载类（自附加 agent + retransform；注册建议 onEnable 批量，运行中形状跃迁重织有 safepoint 停顿）
-└── jframe_example                     ECS / 统一日志 / 动态类增强示例插件（依赖前置 JFrame）
+└── jframe_example                     ECS / 统一日志 / 动态类增强 / 数据库示例插件（依赖前置 JFrame）
 ```
 
 | 模块 id | 提供的公开服务（懒加载触发点） |
@@ -95,7 +97,8 @@ JFrame (父 POM，聚合 18 个模块)
 | `async` | `ThreadAPI` / `TaskAPI` / `ThreadFlow` / `ReleaseAPI` |
 | `form` | `ViewAPI` |
 | `inventory` | `InventoryAPI` |
-| `data` | `DataSaver` |
+| `file`（原 `data`） | `FileAPI`（原 `DataSaver`；门面 `getFileAPI()`） |
+| `db` | `DbAPI`（门面 `getDbAPI()`；适配器插件注册 RelationalStore/RedisStore 后提供 ORM/缓存/区域） |
 | `ai` | `AiAPI` |
 | `scoreboard` | `ScoreboardAPI` |
 | `title` | `TitleAPI` |
@@ -158,7 +161,7 @@ public class MyPlugin extends PluginBase {
         eventAPI = jframe.getEventAPI();
         commandAPI = jframe.getCommandAPI();
         // 还有：getViewAPI / getThreadAPI / getTaskAPI / getThreadFlow / getReleaseAPI
-        //       getInventoryAPI / getDataSaver / getAiAPI / getScoreboardAPI / getTitleAPI
+        //       getInventoryAPI / getFileAPI / getDbAPI / getAiAPI / getScoreboardAPI / getTitleAPI
         //       getEcsAPI / getBtAPI / getFloatingTextAPI / getLoggerAPI / getTransformAPI
         // 或静态：JFrameMain.getApi(EventAPI.class)
 
@@ -183,7 +186,8 @@ public class MyPlugin extends PluginBase {
 | `getViewAPI()` | `ViewAPI` | 表单 |
 | `getThreadAPI()` / `getTaskAPI()` / `getThreadFlow()` / `getReleaseAPI()` | — | 异步 |
 | `getInventoryAPI()` | `InventoryAPI` | 箱子界面 |
-| `getDataSaver()` | `DataSaver` | 数据持久化（业务插件应再调 `forPlugin(this)` 隔离目录） |
+| `getFileAPI()` | `FileAPI` | 文件持久化（原 `getDataSaver()`；业务插件应再调 `forPlugin(this)` 隔离目录） |
+| `getDbAPI()` | `DbAPI` | 数据库存取（SPI 适配器注册后提供 ORM / 缓存 / 区域 / Redis 直用） |
 | `getAiAPI()` | `AiAPI` | 实体 AI |
 | `getScoreboardAPI()` | `ScoreboardAPI` | 计分板 |
 | `getTitleAPI()` | `TitleAPI` | 标题 |
@@ -314,8 +318,29 @@ cd ../jframe_example && mvn clean package
 - **模块懒加载**：未用到的模块首次调用对应 `getXxxAPI()` 前不初始化，`ServiceManager.getProvider(XxxAPI.class)` 对未加载模块返回 `null`。需要启动即可用的模块请写入 JFrame `config.yml` 的 `modules:` 预加载列表。
 - **logger Web 端口手动启停**：`/jlog start` 开启、`/jlog stop` 关闭；模块加载与服务器启动均**不**自动开启端口（不用时无监听、无线程）。agent 挂靠/接管仅限同机回环，跨机器聚合需自行反代。
 - **主线程约定**：模块 API 与容器 `get()` 约定在 Nukkit 主线程调用（内部有并发防御，但跨线程懒加载初始化监听器等副作用应由调用方保证时序）。
-- **数据写入非原子**：`DataSaver` 的文件写入若进程崩溃可能产生半截损坏文件（写入非「临时文件 + 原子替换」模式），关键数据建议配合定期备份。
-- **跨插件数据隔离**：业务插件通过 `getDataSaver()` 获取的保存器默认指向 JFrame 目录，应再调用 `forPlugin(this)` 得到以自身数据目录为根的独立保存器。
+- **数据写入非原子**：`FileAPI` 的文件写入若进程崩溃可能产生半截损坏文件（写入非「临时文件 + 原子替换」模式），关键数据建议配合定期备份。
+- **跨插件数据隔离**：业务插件通过 `getFileAPI()` 获取的保存器默认指向 JFrame 目录，应再调用 `forPlugin(this)` 得到以自身数据目录为根的独立保存器。
+- **数据库存取零依赖**：`jframe_db` 不持有任何数据库连接，需适配器插件实现 `RelationalStore`/`RedisStore` 并经 `getDbAPI()` 注册（适配器须以 JDK 24+ 工具链编译；指南见 `jframe_db/README.md`）。
 - **跨线程操作主线程 API**：`ThreadAPI` 的任务运行在异步线程，若需修改方块、传送等主线程操作，应额外调度回主线程。
 - **SpEL 保留依赖**：ECS `when` 条件与计分板/标题模板渲染仍使用 `spring-expression`（纯表达式求值库，无容器语义）；事件 `@EventRoute.condition` SpEL 参数已移除，条件过滤统一走 `filter` 方法。
 - **`jframe_nbt`**：被动 NBT 编解码库，未注册进模块体系（维持历史行为）。
+
+---
+
+## 🔄 迁移对照表（jframe_data → serialize / file / db，破坏性重构）
+
+原 `jframe_data` 模块拆分为三层：`jframe_serialize`（注解驱动序列化内核）+ `jframe_file`（文件持久化）+ `jframe_db`（数据库存取）。生态内业务插件按下表迁移：
+
+| 旧 | 新 |
+|----|----|
+| `io.github.JiangHu.jframe.data.annotation.SaveField` | `io.github.JiangHu.jframe.serialize.annotation.SaveField` |
+| `io.github.JiangHu.jframe.data.adapter.SaveFieldAdapter` | `io.github.JiangHu.jframe.serialize.adapter.SaveFieldAdapter` |
+| `io.github.JiangHu.jframe.data.value.SaveValue` | `io.github.JiangHu.jframe.serialize.value.SaveValue` |
+| `io.github.JiangHu.jframe.data.exception.DataException` | `io.github.JiangHu.jframe.serialize.exception.DataException` |
+| `io.github.JiangHu.jframe.data.SaveIdentifiable` | `io.github.JiangHu.jframe.serialize.SaveIdentifiable` |
+| `io.github.JiangHu.jframe.data.core.meta.*` / `core.engine.*` | `io.github.JiangHu.jframe.serialize.core.meta.*` / `core.engine.*` |
+| `DataSaver`（类） | `io.github.JiangHu.jframe.file.FileAPI` |
+| `SaveFormat` | `io.github.JiangHu.jframe.file.format.SaveFormat` |
+| `DataModule`（模块 id `data`） | `FileModule`（模块 id `file`；`config.yml` 预加载名单 `data` → `file`） |
+| `jframeMain.getDataSaver()` | `jframeMain.getFileAPI()` |
+| 数据库存取（新增能力） | `jframeMain.getDbAPI()`（适配器编写指南见 `jframe_db/README.md`） |

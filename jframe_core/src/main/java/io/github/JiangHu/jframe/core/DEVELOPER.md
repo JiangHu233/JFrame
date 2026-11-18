@@ -325,7 +325,7 @@ public static ClassLoader resolveClassLoader() {
 ```
 RuntimeException
   └── JFrameException          ← 本类（框架统一基类）
-        ├── DataException                    (jframe_data)
+        ├── DataException                    (jframe_serialize)
         ├── ArgumentConversionException      (jframe_command)
         ├── TemplateLoadException            (jframe_template)
         ├── TemplateNotFoundException        (jframe_template)

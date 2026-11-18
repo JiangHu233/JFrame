@@ -25,8 +25,11 @@ public enum ConfigEnum {
     /** 箱子界面（jframe_inventory）：InventoryAPI */
     INVENTORY("inventory"),
 
-    /** 数据持久化（jframe_data）：DataSaver */
-    DATA("data"),
+    /** 文件持久化（jframe_file，原 jframe_data）：FileAPI */
+    FILE("file"),
+
+    /** 数据库存取（jframe_db）：DbAPI（SPI 适配器注册后提供 ORM/缓存/区域） */
+    DB("db"),
 
     /** 实体 AI（jframe_ai）：AiAPI */
     AI("ai"),

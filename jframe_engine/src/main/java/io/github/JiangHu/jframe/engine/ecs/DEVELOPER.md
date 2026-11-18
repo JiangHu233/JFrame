@@ -339,7 +339,7 @@ io.github.JiangHu.jframe.ecs
 | 方法级事件条件 | 处理器方法内首行 `if` 守卫（直接读 `this` 字段；无外部机制——filter/SpEL 均已移除） |
 | 引擎未覆盖的销毁事件（LevelUnload 等） | 在 component 里加 `@OnEcsEvent` 监听方法，回调内手动回收或 `host().destroy()`（触发 despawn） |
 | 每帧逻辑 | 实现 `EcsSystem` + `@EcsSystemAnno`，`query()` 取目标实体 |
-| 组件挂载后持久化 | 边界外：当前不做落盘，后续可经 jframe_data 扩展（见 §8） |
+| 组件挂载后持久化 | 边界外：当前不做落盘，后续可经 jframe_db / jframe_file 扩展（见 §8） |
 
 ---
 

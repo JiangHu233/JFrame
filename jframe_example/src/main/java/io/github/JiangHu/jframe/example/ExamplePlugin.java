@@ -4,6 +4,7 @@ import cn.nukkit.plugin.Plugin;
 import cn.nukkit.plugin.PluginBase;
 import io.github.JiangHu.jframe.command.CommandAPI;
 import io.github.JiangHu.jframe.engine.ecs.EcsAPI;
+import io.github.JiangHu.jframe.example.db.DbDemoController;
 import io.github.JiangHu.jframe.example.ecs.command.EcsTestController;
 import io.github.JiangHu.jframe.example.logger.LogDemoController;
 import io.github.JiangHu.jframe.example.transform.TransformDemoController;
@@ -90,6 +91,10 @@ public class ExamplePlugin extends PluginBase {
         TransformDemoController.setTransform(jframeMain.getTransformAPI().forPlugin(this));
         commandAPI.forPlugin(this).scan("io.github.JiangHu.jframe.example.transform");
 
+        // 2d. 数据库模块演示：/dbdemo 用内存适配器跑通 ORM/三层缓存/区域/跨服消息全链路
+        DbDemoController.setDb(jframeMain.getDbAPI());
+        commandAPI.forPlugin(this).scan("io.github.JiangHu.jframe.example.db");
+
         // 3. ECS 注册：扫描本插件 jar 内五类注解（组件/选择器/生成器/解析器/系统）
         ecs.forPlugin(this).scan("io.github.JiangHu.jframe.example.ecs");
 
@@ -102,6 +107,11 @@ public class ExamplePlugin extends PluginBase {
                 + " 条定义但引擎未启动，输入 /ecs 查看帮助，/ecs start 启动");
     }
 
-    // onDisable 留空：引擎 stop 由 JFrameMain.onDisable 最先统一执行（未 start 时亦安全），
+    // onDisable：dbdemo 的区域/订阅随本插件停用释放；
+    // 引擎 stop 由 JFrameMain.onDisable 最先统一执行（未 start 时亦安全），
     // 命令随本插件卸载由命令模块处理。
+    @Override
+    public void onDisable() {
+        DbDemoController.shutdown();
+    }
 }
