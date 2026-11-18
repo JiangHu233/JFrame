@@ -10,6 +10,7 @@ import io.github.JiangHu.jframe.command.annotation.Sender;
 import io.github.JiangHu.jframe.command.resolve.ArgumentConversionException;
 import io.github.JiangHu.jframe.command.resolve.ArgumentResolver;
 import io.github.JiangHu.jframe.command.resolve.CommandContext;
+import io.github.JiangHu.jframe.core.JFrameLog;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -168,7 +169,12 @@ public class CommandRoute {
             return InvokeResult.ok();
         } catch (Exception e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            return InvokeResult.failure("§c命令执行异常: " + cause.getMessage());
+            // 诊断：完整堆栈落日志（此前只把 getMessage() 发给玩家，无消息异常完全不可定位）
+            JFrameLog.error("CommandRoute", "命令执行异常: /" + ctx.rootCommand()
+                    + " -> " + method.getName(), cause);
+            String detail = cause.getMessage() != null
+                    ? cause.getMessage() : cause.getClass().getName();
+            return InvokeResult.failure("§c命令执行异常: " + detail);
         }
     }
 
